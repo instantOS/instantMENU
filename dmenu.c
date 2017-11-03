@@ -545,6 +545,7 @@ setup(void)
 	XIM xim;
 	Window w, dw, *dws;
 	XWindowAttributes wa;
+	XClassHint ch = {"dmenu", "dmenu"};
 #ifdef XINERAMA
 	XineramaScreenInfo *info;
 	Window pw;
@@ -613,6 +614,7 @@ setup(void)
 	win = XCreateWindow(dpy, parentwin, x, y, mw, mh, 0,
 	                    CopyFromParent, CopyFromParent, CopyFromParent,
 	                    CWOverrideRedirect | CWBackPixel | CWEventMask, &swa);
+	XSetClassHint(dpy, win, &ch);
 
 	/* open input methods */
 	xim = XOpenIM(dpy, NULL, NULL, NULL);
