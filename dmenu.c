@@ -553,9 +553,8 @@ setup(void)
 #endif
 
 	/* init appearance */
-	scheme[SchemeNorm] = drw_scm_create(drw, colors[SchemeNorm], 2);
-	scheme[SchemeSel] = drw_scm_create(drw, colors[SchemeSel], 2);
-	scheme[SchemeOut] = drw_scm_create(drw, colors[SchemeOut], 2);
+	for (j = 0; j < SchemeLast; j++)
+		scheme[j] = drw_scm_create(drw, colors[j], 2);
 
 	clip = XInternAtom(dpy, "CLIPBOARD",   False);
 	utf8 = XInternAtom(dpy, "UTF8_STRING", False);
