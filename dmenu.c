@@ -541,7 +541,7 @@ run(void)
 static void
 setup(void)
 {
-	int x, y, i = 0;
+	int x, y, i, j = 0;
 	unsigned int du;
 	XSetWindowAttributes swa;
 	XIM xim;
@@ -551,9 +551,8 @@ setup(void)
 #ifdef XINERAMA
 	XineramaScreenInfo *info;
 	Window pw;
-	int a, j, di, n, area = 0;
+	int a, di, n, area = 0;
 #endif
-
 	/* init appearance */
 	for (j = 0; j < SchemeLast; j++)
 		scheme[j] = drw_scm_create(drw, colors[j], 2);
