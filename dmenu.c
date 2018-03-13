@@ -288,6 +288,22 @@ nextrune(int inc)
 }
 
 static void
+movewordedge(int dir)
+{
+	if (dir < 0) { /* move cursor to the start of the word*/
+		while (cursor > 0 && strchr(worddelimiters, text[nextrune(-1)]))
+			cursor = nextrune(-1);
+		while (cursor > 0 && !strchr(worddelimiters, text[nextrune(-1)]))
+			cursor = nextrune(-1);
+	} else { /* move cursor to the end of the word */
+		while (text[cursor] && strchr(worddelimiters, text[cursor]))
+			cursor = nextrune(+1);
+		while (text[cursor] && !strchr(worddelimiters, text[cursor]))
+			cursor = nextrune(+1);
+	}
+}
+
+static void
 keypress(XKeyEvent *ev)
 {
 	char buf[32];
@@ -334,6 +350,14 @@ keypress(XKeyEvent *ev)
 			XConvertSelection(dpy, (ev->state & ShiftMask) ? clip : XA_PRIMARY,
 			                  utf8, utf8, win, CurrentTime);
 			return;
+		case XK_Left:
+			movewordedge(-1);
+			ksym = NoSymbol;
+			break;
+		case XK_Right:
+			movewordedge(+1);
+			ksym = NoSymbol;
+			break;
 		case XK_Return:
 		case XK_KP_Enter:
 			break;
@@ -345,6 +369,14 @@ keypress(XKeyEvent *ev)
 		}
 	else if (ev->state & Mod1Mask)
 		switch(ksym) {
+		case XK_b:
+			movewordedge(-1);
+			ksym = NoSymbol;
+			break;
+		case XK_f:
+			movewordedge(+1);
+			ksym = NoSymbol;
+			break;
 		case XK_g: ksym = XK_Home;  break;
 		case XK_G: ksym = XK_End;   break;
 		case XK_h: ksym = XK_Up;    break;
@@ -358,6 +390,8 @@ keypress(XKeyEvent *ev)
 	default:
 		if (!iscntrl(*buf))
 			insert(buf, len);
+		break;
+	case NoSymbol:
 		break;
 	case XK_Delete:
 		if (text[cursor] == '\0')
