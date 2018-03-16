@@ -308,13 +308,21 @@ keypress(XKeyEvent *ev)
 {
 	char buf[32];
 	int len;
-	KeySym ksym = NoSymbol;
+	KeySym ksym;
 	Status status;
 
 	len = XmbLookupString(xic, ev, buf, sizeof buf, &ksym, &status);
-	if (status == XBufferOverflow)
+	switch (status) {
+	default: /* XLookupNone, XBufferOverflow */
 		return;
-	if (ev->state & ControlMask)
+	case XLookupChars:
+		goto insert;
+	case XLookupKeySym:
+	case XLookupBoth:
+		break;
+	}
+
+	if (ev->state & ControlMask) {
 		switch(ksym) {
 		case XK_a: ksym = XK_Home;      break;
 		case XK_b: ksym = XK_Left;      break;
@@ -352,12 +360,10 @@ keypress(XKeyEvent *ev)
 			return;
 		case XK_Left:
 			movewordedge(-1);
-			ksym = NoSymbol;
-			break;
+			goto draw;
 		case XK_Right:
 			movewordedge(+1);
-			ksym = NoSymbol;
-			break;
+			goto draw;
 		case XK_Return:
 		case XK_KP_Enter:
 			break;
@@ -367,16 +373,14 @@ keypress(XKeyEvent *ev)
 		default:
 			return;
 		}
-	else if (ev->state & Mod1Mask)
+	} else if (ev->state & Mod1Mask) {
 		switch(ksym) {
 		case XK_b:
 			movewordedge(-1);
-			ksym = NoSymbol;
-			break;
+			goto draw;
 		case XK_f:
 			movewordedge(+1);
-			ksym = NoSymbol;
-			break;
+			goto draw;
 		case XK_g: ksym = XK_Home;  break;
 		case XK_G: ksym = XK_End;   break;
 		case XK_h: ksym = XK_Up;    break;
@@ -386,12 +390,13 @@ keypress(XKeyEvent *ev)
 		default:
 			return;
 		}
+	}
+
 	switch(ksym) {
 	default:
+insert:
 		if (!iscntrl(*buf))
 			insert(buf, len);
-		break;
-	case NoSymbol:
 		break;
 	case XK_Delete:
 		if (text[cursor] == '\0')
@@ -489,6 +494,8 @@ keypress(XKeyEvent *ev)
 		match();
 		break;
 	}
+
+draw:
 	drawmenu();
 }
 
