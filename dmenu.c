@@ -24,6 +24,12 @@
 #define LENGTH(X)             (sizeof X / sizeof X[0])
 #define TEXTW(X)              (drw_fontset_getwidth(drw, (X)) + lrpad)
 
+#ifdef __OpenBSD__
+#include <unistd.h>
+#else
+#define pledge(a,b) 0
+#endif
+
 /* enums */
 enum { SchemeNorm, SchemeSel, SchemeOut, SchemeLast }; /* color schemes */
 
@@ -745,6 +751,9 @@ main(int argc, char *argv[])
 	if (!drw_fontset_create(drw, fonts, LENGTH(fonts)))
 		die("no fonts could be loaded.");
 	lrpad = drw->fonts->h;
+
+	if (pledge("stdio rpath", NULL) < 0)
+		die("pledge");
 
 	if (fast) {
 		grabkeyboard();
