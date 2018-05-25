@@ -6,6 +6,9 @@
 #include <string.h>
 #include <strings.h>
 #include <time.h>
+#ifdef __OpenBSD__
+#include <unistd.h>
+#endif
 
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
@@ -23,12 +26,6 @@
                              * MAX(0, MIN((y)+(h),(r).y_org+(r).height) - MAX((y),(r).y_org)))
 #define LENGTH(X)             (sizeof X / sizeof X[0])
 #define TEXTW(X)              (drw_fontset_getwidth(drw, (X)) + lrpad)
-
-#ifdef __OpenBSD__
-#include <unistd.h>
-#else
-#define pledge(a,b) 0
-#endif
 
 /* enums */
 enum { SchemeNorm, SchemeSel, SchemeOut, SchemeLast }; /* color schemes */
@@ -752,8 +749,10 @@ main(int argc, char *argv[])
 		die("no fonts could be loaded.");
 	lrpad = drw->fonts->h;
 
+#ifdef __OpenBSD__
 	if (pledge("stdio rpath", NULL) < 0)
 		die("pledge");
+#endif
 
 	if (fast) {
 		grabkeyboard();
