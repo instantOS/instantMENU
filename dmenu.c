@@ -6,9 +6,7 @@
 #include <string.h>
 #include <strings.h>
 #include <time.h>
-#ifdef __OpenBSD__
 #include <unistd.h>
-#endif
 
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
@@ -754,7 +752,7 @@ main(int argc, char *argv[])
 		die("pledge");
 #endif
 
-	if (fast) {
+	if (fast && !isatty(0)) {
 		grabkeyboard();
 		readstdin();
 	} else {
