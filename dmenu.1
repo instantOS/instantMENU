@@ -41,8 +41,8 @@ which lists programs in the user's $PATH and runs the result in their $SHELL.
 dmenu appears at the bottom of the screen.
 .TP
 .B \-f
-dmenu grabs the keyboard before reading stdin.  This is faster, but will lock up
-X until stdin reaches end\-of\-file.
+dmenu grabs the keyboard before reading stdin if not reading from a tty. This
+is faster, but will lock up X until stdin reaches end\-of\-file.
 .TP
 .B \-i
 dmenu matches menu items case insensitively.
