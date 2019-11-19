@@ -1,0 +1,4 @@
+	"SF-Mono-Bold:size=12"
+	[SchemeNorm] = { "#4c4c4c", "#fafafa" },
+	[SchemeSel] = { "#fafafa", "#007aff" },
+	[SchemeOut] = { "#000000", "#00ffff" },
