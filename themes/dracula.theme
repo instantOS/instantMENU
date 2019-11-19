@@ -1,4 +1,4 @@
-	"Monaco:size=12"
+	"Monaco-Nerd-Font-Complete-Mono:size=12"
 	[SchemeNorm] = { "#bd93f9", "#282a36" },
 	[SchemeSel] = { "#8be9fd", "#44475a" },
 	[SchemeOut] = { "#000000", "#00ffff" },
