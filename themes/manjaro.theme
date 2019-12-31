@@ -1,0 +1,4 @@
+	"Cantarell-Regular:size=12"
+	[SchemeNorm] = { "#A4ABAA", "#1B2224" },
+	[SchemeSel] = { "#ffffff", "#2EB398" },
+	[SchemeOut] = { "#000000", "#00ffff" },
