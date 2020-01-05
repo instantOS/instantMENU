@@ -236,19 +236,32 @@ drw_setscheme(Drw *drw, Clr *scm)
 }
 
 void
-drw_rect(Drw *drw, int x, int y, unsigned int w, unsigned int h, int filled, int invert)
+drw_rect(Drw *drw, int x, int y, unsigned int w, unsigned int h, int filled, int invert, int rounded)
 {
 	if (!drw || !drw->scheme)
 		return;
 	XSetForeground(drw->dpy, drw->gc, invert ? drw->scheme[ColBg].pixel : drw->scheme[ColFg].pixel);
-	if (filled)
-		XFillRectangle(drw->dpy, drw->drawable, drw->gc, x, y, w, h);
-	else
-		XDrawRectangle(drw->dpy, drw->drawable, drw->gc, x, y, w - 1, h - 1);
+	if (filled) {
+		if (rounded && w > h) {
+			XFillRectangle(drw->dpy, drw->drawable, drw->gc, x + 0.5*h, y, w - h, h);
+			XFillArc(drw->dpy, drw->drawable, drw->gc, x, y, h, h, 16*360, 32*360);
+			XFillArc(drw->dpy, drw->drawable, drw->gc, x + w - h, y, h, h, 48*360, 32*360);
+		} else {
+			XFillRectangle(drw->dpy, drw->drawable, drw->gc, x, y, w, h);
+		}
+	} else {
+		if (rounded && w > h) {
+			XDrawRectangle(drw->dpy, drw->drawable, drw->gc, x + 0.5*h, y, w - h, h);
+			XDrawArc(drw->dpy, drw->drawable, drw->gc, x, y, h, h, 16*360, 32*360);
+			XDrawArc(drw->dpy, drw->drawable, drw->gc, x + w - h, y, h, h, 48*360, 32*360);
+		} else {
+			XDrawRectangle(drw->dpy, drw->drawable, drw->gc, x, y, w, h);
+		}
+	}
 }
 
 int
-drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lpad, const char *text, int invert)
+drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lpad, const char *text, int invert, int rounded)
 {
 	char buf[1024];
 	int ty;
@@ -272,7 +285,14 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 		w = ~w;
 	} else {
 		XSetForeground(drw->dpy, drw->gc, drw->scheme[invert ? ColFg : ColBg].pixel);
-		XFillRectangle(drw->dpy, drw->drawable, drw->gc, x, y, w, h);
+		if (w > h && rounded) {
+			XFillRectangle(drw->dpy, drw->drawable, drw->gc, x + 0.5*h, y, w - h, h);
+			XFillArc(drw->dpy, drw->drawable, drw->gc, x, y, h, h, 16*360, 32*360);
+			XFillArc(drw->dpy, drw->drawable, drw->gc, x + w - h - 2, y, h, h, 48*360, 32*360);
+		} else {
+			XFillRectangle(drw->dpy, drw->drawable, drw->gc, x, y, w, h);
+		}
+		
 		d = XftDrawCreate(drw->dpy, drw->drawable,
 		                  DefaultVisual(drw->dpy, drw->screen),
 		                  DefaultColormap(drw->dpy, drw->screen));
@@ -393,7 +413,7 @@ drw_fontset_getwidth(Drw *drw, const char *text)
 {
 	if (!drw || !drw->fonts || !text)
 		return 0;
-	return drw_text(drw, 0, 0, 0, 0, 0, text, 0);
+	return drw_text(drw, 0, 0, 0, 0, 0, text, 0, 0);
 }
 
 void

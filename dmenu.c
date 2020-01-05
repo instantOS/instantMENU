@@ -131,8 +131,11 @@ drawitem(struct item *item, int x, int y, int w)
 		drw_setscheme(drw, scheme[SchemeOut]);
 	else
 		drw_setscheme(drw, scheme[SchemeNorm]);
+	if (item == sel)
+		return drw_text(drw, x, y, w, bh, lrpad / 2, item->text, 0, 1);
+	else
+		return drw_text(drw, x, y, w, bh, lrpad / 2, item->text, 0, 0);
 
-	return drw_text(drw, x, y, w, bh, lrpad / 2, item->text, 0);
 }
 
 
@@ -161,11 +164,11 @@ drawmenu(void)
 
 	char *censort;
 	drw_setscheme(drw, scheme[SchemeNorm]);
-	drw_rect(drw, 0, 0, mw, mh, 1, 1);
+	drw_rect(drw, 0, 0, mw, mh, 1, 1, 1);
 
 	if (prompt && *prompt) {
 		drw_setscheme(drw, scheme[SchemeSel]);
-		x = drw_text(drw, x, 0, promptw, bh, lrpad / 2, prompt, 0);
+		x = drw_text(drw, x, 0, promptw, bh, lrpad / 2, prompt, 0, 1);
 	}
 
 	/* draw input field */
@@ -175,14 +178,14 @@ drawmenu(void)
 	if (passwd) {
 			censort = ecalloc(1, sizeof(text));
 			memset(censort, '.', strlen(text));
-			drw_text(drw, x, 0, w, bh, lrpad / 2, censort, 0);
+			drw_text(drw, x, 0, w, bh, lrpad / 2, censort, 0, 0);
 			free(censort);
-	} else drw_text(drw, x, 0, w, bh, lrpad / 2, text, 0);
+	} else drw_text(drw, x, 0, w, bh, lrpad / 2, text, 0, 0);
 
 	curpos = TEXTW(text) - TEXTW(&text[cursor]);
 	if ((curpos += lrpad / 2 - 1) < w) {
 		drw_setscheme(drw, scheme[SchemeNorm]);
-		drw_rect(drw, x + curpos, 2 + (bh-fh)/2, 2, fh - 4, 1, 0);
+		drw_rect(drw, x + curpos, 2 + (bh-fh)/2, 2, fh - 4, 1, 0, 1);
 
 	}
 
@@ -198,7 +201,7 @@ drawmenu(void)
 		w = TEXTW("<");
 		if (curr->left) {
 			drw_setscheme(drw, scheme[SchemeNorm]);
-			drw_text(drw, x, 0, w, bh, lrpad / 2, "<", 0);
+			drw_text(drw, x, 0, w, bh, lrpad / 2, "<", 0, 0);
 		}
 		x += w;
 		for (item = curr; item != next; item = item->right)
@@ -207,13 +210,13 @@ drawmenu(void)
 		if (next) {
 			w = TEXTW(">");
 			drw_setscheme(drw, scheme[SchemeNorm]);
-			drw_text(drw, mw - w - TEXTW(numbers), 0, w, bh, lrpad / 2, ">", 0);
+			drw_text(drw, mw - w - TEXTW(numbers), 0, w, bh, lrpad / 2, ">", 0, 0);
 
 		}
 	}
 
 	drw_setscheme(drw, scheme[SchemeNorm]);
-	drw_text(drw, mw - TEXTW(numbers), 0, TEXTW(numbers), bh, lrpad / 2, numbers, 0);
+	drw_text(drw, mw - TEXTW(numbers), 0, TEXTW(numbers), bh, lrpad / 2, numbers, 0, 0);
 	drw_map(drw, win, 0, 0, mw, mh);
 }
 
