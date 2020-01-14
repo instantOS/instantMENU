@@ -8,13 +8,13 @@ static unsigned int lineheight = 0;         /* -h option; minimum height of a me
 
 /* -fn option overrides fonts[0]; default X11 font or font set */
 static const char *fonts[] = {
-	"Monaco-Nerd-Font-Complete-Mono:size=12"
+	"Cantarell-Regular:size=12"
 };
 static const char *prompt      = NULL;      /* -p  option; prompt to the left of input field */
 static const char *colors[SchemeLast][2] = {
 	/*     fg         bg       */
-	[SchemeNorm] = { "#bd93f9", "#282a36" },
-	[SchemeSel] = { "#8be9fd", "#44475a" },
+	[SchemeNorm] = { "#A4ABAA", "#1B2224" },
+	[SchemeSel] = { "#ffffff", "#2EB398" },
 	[SchemeOut] = { "#000000", "#00ffff" },
 };
 /* -l option; if nonzero, instantmenu uses vertical list with given number of lines */
