@@ -44,8 +44,8 @@ static char numbers[NUMBERSBUFSIZE] = "";
 static char text[BUFSIZ] = "";
 static char *embed;
 static int bh, mw, mh;
-static int dmx = 0, dmy = 0; /* put dmenu at these x and y offsets */
-static unsigned int dmw = 0; /* make dmenu this wide */
+static int dmx = 0, dmy = 0; /* put instantmenu at these x and y offsets */
+static unsigned int dmw = 0; /* make instantmenu this wide */
 static int inputw = 0, promptw, passwd = 0;
 static int lrpad; /* sum of left and right padding */
 static size_t cursor;
@@ -953,7 +953,7 @@ setup(void)
 static void
 usage(void)
 {
-	fputs("usage: dmenu [-bfinPv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
+	fputs("usage: instantmenu [-bfinPv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
 	      "             [-x xoffset] [-y yoffset] [-w width]\n"
 	      "             [-h height]\n"
 
@@ -970,7 +970,7 @@ main(int argc, char *argv[])
 	for (i = 1; i < argc; i++)
 		/* these options take no arguments */
 		if (!strcmp(argv[i], "-v")) {      /* prints version information */
-			puts("dmenu-"VERSION);
+			puts("instantmenu-"VERSION);
 			exit(0);
 		} else if (!strcmp(argv[i], "-b")) /* appears at the bottom of the screen */
 			topbar = 0;
@@ -994,7 +994,7 @@ main(int argc, char *argv[])
 			dmx = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-y"))   /* window y offset (from bottom up if -b) */
 			dmy = atoi(argv[++i]);
-		else if (!strcmp(argv[i], "-w"))   /* make dmenu this wide */
+		else if (!strcmp(argv[i], "-w"))   /* make instantmenu this wide */
 			dmw = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-m"))
 			mon = atoi(argv[++i]);

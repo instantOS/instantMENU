@@ -1,8 +1,8 @@
-.TH DMENU 1 dmenu\-VERSION
+.TH INSTANTMENU 1 instantmenu\-VERSION
 .SH NAME
-dmenu \- dynamic menu
+instantMENU \- menu for instantOS
 .SH SYNOPSIS
-.B dmenu
+.B instantmenu
 .RB [ \-bfivP ]
 .RB [ \-l
 .IR lines ]
@@ -23,48 +23,48 @@ dmenu \- dynamic menu
 .RB [ \-w
 .IR windowid ]
 .P
-.BR dmenu_run " ..."
+.BR instantmenu_run " ..."
 .SH DESCRIPTION
-.B dmenu
+.B instantmenu
 is a dynamic menu for X, which reads a list of newline\-separated items from
 stdin.  When the user selects an item and presses Return, their choice is printed
-to stdout and dmenu terminates.  Entering text will narrow the items to those
+to stdout and instantmenu terminates.  Entering text will narrow the items to those
 matching the tokens in the input.
 .P
-.B dmenu_run
+.B instantmenu_run
 is a script used by
 .IR dwm (1)
 which lists programs in the user's $PATH and runs the result in their $SHELL.
 .SH OPTIONS
 .TP
 .B \-b
-dmenu appears at the bottom of the screen.
+instantmenu appears at the bottom of the screen.
 .TP
 .B \-f
-dmenu grabs the keyboard before reading stdin if not reading from a tty. This
+instantmenu grabs the keyboard before reading stdin if not reading from a tty. This
 is faster, but will lock up X until stdin reaches end\-of\-file.
 .TP
 .B \-i
-dmenu matches menu items case insensitively.
+instantmenu matches menu items case insensitively.
 .TP
 .BI \-l " lines"
-dmenu lists items vertically, with the given number of lines.
+instantmenu lists items vertically, with the given number of lines.
 .TP
 .BI \-h " height"
-dmenu uses a menu line of at least 'height' pixels tall, but no less than 8.
+instantmenu uses a menu line of at least 'height' pixels tall, but no less than 8.
 .TP
 .B \-n
-dmenu instantly selects if only one match.
+instantmenu instantly selects if only one match.
 .TP
 .BI \-x " xoffset"
-dmenu is placed at this offset measured from the left side of the monitor.
+instantmenu is placed at this offset measured from the left side of the monitor.
 Can be negative.
 If option
 .B \-m
 is present, the measurement will use the given monitor.
 .TP
 .BI \-y " yoffset"
-dmenu is placed at this offset measured from the top of the monitor.  If the
+instantmenu is placed at this offset measured from the top of the monitor.  If the
 .B \-b
 option is used, the offset is measured from the bottom.  Can be negative.
 If option
@@ -72,10 +72,10 @@ If option
 is present, the measurement will use the given monitor.
 .TP
 .BI \-w " width"
-sets the width of the dmenu window.
+sets the width of the instantmenu window.
 .TP
 .BI \-m " monitor"
-dmenu is displayed on the monitor number supplied. Monitor numbers are starting
+instantmenu is displayed on the monitor number supplied. Monitor numbers are starting
 from 0.
 .TP
 .BI \-p " prompt"
@@ -105,7 +105,7 @@ prints version information to stdout, then exits.
 .BI \-w " windowid"
 embed into windowid.
 .SH USAGE
-dmenu is completely controlled by the keyboard.  Items are selected using the
+instantmenu is completely controlled by the keyboard.  Items are selected using the
 arrow keys, page up, page down, home, and end.
 .TP
 .B Tab

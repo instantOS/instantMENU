@@ -1,0 +1,2 @@
+#!/bin/sh
+instantmenu_path | instantmenu "$@" | ${SHELL:-"/bin/sh"} &
