@@ -291,7 +291,7 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 				XFillArc(drw->dpy, drw->drawable, drw->gc, x, y, h, h, 16*360, 32*360);
 				XFillArc(drw->dpy, drw->drawable, drw->gc, x + w - h - 2, y, h, h, 48*360, 32*360);
 			} else{
-				XFillRectangle(drw->dpy, drw->drawable, drw->gc, x, y + 0.5*w, w, h - w + 3);
+				XFillRectangle(drw->dpy, drw->drawable, drw->gc, x, y + 0.5*w -2, w, h - w + 4);
 				XFillArc(drw->dpy, drw->drawable, drw->gc, x, y, w, w, 0, 32*360);
 				XFillArc(drw->dpy, drw->drawable, drw->gc, x, y + h - w, w, w, 32*360, 32*360);
 			}
