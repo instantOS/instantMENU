@@ -285,10 +285,16 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 		w = ~w;
 	} else {
 		XSetForeground(drw->dpy, drw->gc, drw->scheme[invert ? ColFg : ColBg].pixel);
-		if (w > h && rounded) {
-			XFillRectangle(drw->dpy, drw->drawable, drw->gc, x + 0.5*h, y, w - h, h);
-			XFillArc(drw->dpy, drw->drawable, drw->gc, x, y, h, h, 16*360, 32*360);
-			XFillArc(drw->dpy, drw->drawable, drw->gc, x + w - h - 2, y, h, h, 48*360, 32*360);
+		if (rounded) {
+			if (w > h) {
+				XFillRectangle(drw->dpy, drw->drawable, drw->gc, x + 0.5*h, y, w - h, h);
+				XFillArc(drw->dpy, drw->drawable, drw->gc, x, y, h, h, 16*360, 32*360);
+				XFillArc(drw->dpy, drw->drawable, drw->gc, x + w - h - 2, y, h, h, 48*360, 32*360);
+			} else{
+				XFillRectangle(drw->dpy, drw->drawable, drw->gc, x, y + 0.5*w, w, h - w);
+				XFillArc(drw->dpy, drw->drawable, drw->gc, x, y, w, w, 0, 32*360);
+				XFillArc(drw->dpy, drw->drawable, drw->gc, x, y + h - w, w, w, 32*360, 32*360);
+			}
 		} else {
 			XFillRectangle(drw->dpy, drw->drawable, drw->gc, x, y, w, h);
 		}
