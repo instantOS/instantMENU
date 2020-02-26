@@ -241,7 +241,7 @@ drw_rect(Drw *drw, int x, int y, unsigned int w, unsigned int h, int filled, int
 	if (!drw || !drw->scheme)
 		return;
 	XSetForeground(drw->dpy, drw->gc, invert ? drw->scheme[ColBg].pixel : drw->scheme[ColFg].pixel);
-	if (filled) {
+	if (filled && h < 40) {
 		if (rounded && w > h) {
 			XFillRectangle(drw->dpy, drw->drawable, drw->gc, x + 0.5*h, y, w - h, h);
 			XFillArc(drw->dpy, drw->drawable, drw->gc, x, y, h, h, 16*360, 32*360);

@@ -13,8 +13,8 @@ static const char *fonts[] = {
 static const char *prompt      = NULL;      /* -p  option; prompt to the left of input field */
 static const char *colors[SchemeLast][2] = {
 	/*     fg         bg       */
-	[SchemeNorm] = { "#A4ABAA", "#1B2224" },
-	[SchemeSel] = { "#ffffff", "#2EB398" },
+	[SchemeNorm] = { "#ffffff", "#292f3a" },
+	[SchemeSel] = { "#ffffff", "#5294E2" },
 	[SchemeOut] = { "#000000", "#00ffff" },
 };
 /* -l option; if nonzero, instantmenu uses vertical list with given number of lines */
