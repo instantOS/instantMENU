@@ -18,7 +18,7 @@ it is used for instantASSIST and in some other places
 
 ## is this dmenu?
 
-instantMENU is a fork of dmenu and behaves largely the same. 
+instantMENU is a fork of dmenu and can be used as a drop in replacement. 
 
 --------
 ### instantOS is still in early beta, contributions always welcome
