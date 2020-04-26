@@ -14,12 +14,13 @@ static const char *fonts[] = {
 	"Cantarell-Regular:size=12"
 };
 static const char *prompt      = NULL;      /* -p  option; prompt to the left of input field */
-static const char *colors[SchemeLast][2] = {
+static const char *colors[SchemeLast][3] = {
 	/*     fg         bg       */
-	[SchemeNorm] = { "#ffffff", "#292f3a" },
-	[SchemeSel] = { "#ffffff", "#5294E2" },
-	[SchemeOut] = { "#000000", "#00ffff" },
+	[SchemeNorm] = { "#ffffff", "#292f3a", "#3579CA" },
+	[SchemeSel] = { "#ffffff", "#5294E2", "#3579CA" },
+	[SchemeOut] = { "#000000", "#3579CA", "#3579CA" },
 };
+
 /* -l option; if nonzero, instantmenu uses vertical list with given number of lines */
 static unsigned int lines      = 0;
 

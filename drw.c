@@ -242,21 +242,15 @@ drw_rect(Drw *drw, int x, int y, unsigned int w, unsigned int h, int filled, int
 		return;
 	XSetForeground(drw->dpy, drw->gc, invert ? drw->scheme[ColBg].pixel : drw->scheme[ColFg].pixel);
 	if (filled && h < 40) {
-		if (rounded && w > h && h < 100) {
-			XFillRectangle(drw->dpy, drw->drawable, drw->gc, x + 0.5*h, y, w - h, h);
-			XFillArc(drw->dpy, drw->drawable, drw->gc, x, y, h, h, 16*360, 32*360);
-			XFillArc(drw->dpy, drw->drawable, drw->gc, x + w - h, y, h, h, 48*360, 32*360);
+		if (rounded) {
+			XFillRectangle(drw->dpy, drw->drawable, drw->gc, x, y, w, h - 4);
+			XSetForeground(drw->dpy, drw->gc, drw->scheme[ColDetail].pixel);
+			XFillRectangle(drw->dpy, drw->drawable, drw->gc, x, y + h - 4, w, 4);
 		} else {
 			XFillRectangle(drw->dpy, drw->drawable, drw->gc, x, y, w, h);
 		}
 	} else {
-		if (rounded && w > h && h < 100) {
-			XDrawRectangle(drw->dpy, drw->drawable, drw->gc, x + 0.5*h, y, w - h, h);
-			XDrawArc(drw->dpy, drw->drawable, drw->gc, x, y, h, h, 16*360, 32*360);
-			XDrawArc(drw->dpy, drw->drawable, drw->gc, x + w - h, y, h, h, 48*360, 32*360);
-		} else {
-			XDrawRectangle(drw->dpy, drw->drawable, drw->gc, x, y, w, h);
-		}
+			XFillRectangle(drw->dpy, drw->drawable, drw->gc, x, y, w, h);
 	}
 }
 
@@ -285,14 +279,10 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 		w = ~w;
 	} else {
 		XSetForeground(drw->dpy, drw->gc, drw->scheme[invert ? ColFg : ColBg].pixel);
-		if (rounded && h < 100) {
-			if (w > h) {
-				XFillRectangle(drw->dpy, drw->drawable, drw->gc, x + 0.5*h, y, w - h, h);
-				XFillArc(drw->dpy, drw->drawable, drw->gc, x, y, h, h, 16*360, 32*360);
-				XFillArc(drw->dpy, drw->drawable, drw->gc, x + w - h - 2, y, h, h, 48*360, 32*360);
-			} else{
-				XFillArc(drw->dpy, drw->drawable, drw->gc, x, y + 0.5 * (h - w), w, w, 0, 64*360);
-			}
+		if (rounded) {
+			XFillRectangle(drw->dpy, drw->drawable, drw->gc, x, y, w, h - 4);
+			XSetForeground(drw->dpy, drw->gc, drw->scheme[ColDetail].pixel);
+			XFillRectangle(drw->dpy, drw->drawable, drw->gc, x, y + h - 4, w, 4);
 		} else {
 			XFillRectangle(drw->dpy, drw->drawable, drw->gc, x, y, w, h);
 		}
@@ -346,7 +336,7 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 				if (render) {
 					ty = y + (h - usedfont->h) / 2 + usedfont->xfont->ascent;
 					XftDrawStringUtf8(d, &drw->scheme[invert ? ColBg : ColFg],
-					                  usedfont->xfont, x, ty, (XftChar8 *)buf, len);
+					                  usedfont->xfont, x, ty - (rounded ? 2 : 0), (XftChar8 *)buf, len);
 				}
 				x += ew;
 				w -= ew;

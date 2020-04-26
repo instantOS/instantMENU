@@ -174,11 +174,11 @@ drawmenu(void)
 
 	char *censort;
 	drw_setscheme(drw, scheme[SchemeNorm]);
-	drw_rect(drw, 0, 0, mw, mh, 1, 1, 1);
+	drw_rect(drw, 0, 0, mw, mh, 1, 1, 0);
 
 	if (prompt && *prompt) {
 		drw_setscheme(drw, scheme[SchemeSel]);
-		x = drw_text(drw, x, 0, promptw, bh, lrpad / 2, prompt, 0, 1);
+		x = drw_text(drw, x, 0, promptw, bh * (lines + 1), lrpad / 2, prompt, 0, 1);
 	}
 
 	/* draw input field */
@@ -872,7 +872,7 @@ setup(void)
 #endif
 	/* init appearance */
 	for (j = 0; j < SchemeLast; j++)
-		scheme[j] = drw_scm_create(drw, colors[j], 2);
+		scheme[j] = drw_scm_create(drw, colors[j], 3);
 
 	clip = XInternAtom(dpy, "CLIPBOARD",   False);
 	utf8 = XInternAtom(dpy, "UTF8_STRING", False);
