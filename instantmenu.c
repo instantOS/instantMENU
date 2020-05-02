@@ -67,6 +67,16 @@ static Clr *scheme[SchemeLast];
 static int (*fstrncmp)(const char *, const char *, size_t) = strncmp;
 static char *(*fstrstr)(const char *, const char *) = strstr;
 
+int
+getrootptr(int *x, int *y)
+{
+	int di;
+	unsigned int dui;
+	Window dummy;
+
+	return XQueryPointer(dpy, root, &dummy, &dummy, x, y, &di, &di, &dui);
+}
+
 static void
 appenditem(struct item *item, struct item **list, struct item **last)
 {
@@ -930,8 +940,10 @@ setup(void)
 			mw = MIN(MAX(max_textw() + promptw, min_width), wa.width);
 			x = (wa.width  - mw) / 2;
 			y = (wa.height - mh) / 2;
+		} else if (followcursor){
+			getrootptr(&x, &y);
+			mw = MIN(MAX(max_textw() + promptw, min_width), wa.width);
 		} else {
-
 			x = dmx;
 			y = topbar ? dmy : wa.height - mh - dmy;
 			mw = (dmw>0 ? dmw : wa.width);
