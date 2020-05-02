@@ -3,6 +3,7 @@
 
 static int topbar = 1;                      /* -b  option; if 0, instantmenu appears at bottom     */
 static int centered = 0;                    /* -c option; centers dmenu on screen */
+static int followcursor = 0;                    /* -c option; centers dmenu on screen */
 static int min_width = 500;                    /* minimum width when centered */
 
 static int instant = 0;
