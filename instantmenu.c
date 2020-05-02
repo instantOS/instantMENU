@@ -924,6 +924,16 @@ setup(void)
 			mw = MIN(MAX(max_textw() + promptw, min_width), info[i].width);
 			x = info[i].x_org + ((info[i].width  - mw) / 2);
 			y = info[i].y_org + ((info[i].height - mh) / 2);
+		} else if (followcursor){
+			mw = MIN(MAX(max_textw() + promptw, min_width), wa.width);
+			fprintf(stderr, "hey %d \n", drw->w);
+			getrootptr(&x, &y);
+			if (x > info[i].x_org + (drw->w - info[i].x_org) / 2) {
+				x = x - mw;
+			}
+			if (y > info[i].y_org + (drw->h - info[i].y_org) / 2) {
+				y = y - mh;
+			}
 		} else {
 			x = info[i].x_org + dmx;
 			y = info[i].y_org + (topbar ? dmy : info[i].height - mh - dmy);
@@ -942,6 +952,12 @@ setup(void)
 			y = (wa.height - mh) / 2;
 		} else if (followcursor){
 			getrootptr(&x, &y);
+			if (x > drw->w / 2) {
+				x = x - mw;
+			}
+			if (y > drw->h / 2) {
+				y = y - mh;
+			}
 			mw = MIN(MAX(max_textw() + promptw, min_width), wa.width);
 		} else {
 			x = dmx;
