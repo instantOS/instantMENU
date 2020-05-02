@@ -664,6 +664,69 @@ draw:
 	drawmenu();
 }
 
+
+static void
+setselection(XEvent *e)
+{
+	struct item *item;
+	XMotionEvent *ev = &e->xmotion;
+	int x = 0, y = 0, h = bh, w;
+
+	if (ev->window != win)
+		return;
+
+	/* right-click: exit */
+	if (prompt && *prompt)
+		x += promptw;
+
+	/* input field */
+	w = (lines > 0 || !matches) ? mw - x : inputw;
+
+	/* left-click on input: clear input,
+	 * NOTE: if there is no left-arrow the space for < is reserved so
+	 *       add that to the input width */
+
+	if (lines > 0) {
+		/* vertical list: (ctrl)left-click on item */
+		w = mw - x;
+		for (item = curr; item != next; item = item->right) {
+			y += h;
+			if (ev->y >= y && ev->y <= (y + h)) {
+				if (sel == item)
+					return;
+				sel = item;
+				if (sel) {
+					//sel->out = 1;
+					drawmenu();
+				}
+				return;
+			}
+		}
+	} else if (matches) {
+		/* left-click on left arrow */
+		x += inputw;
+		w = TEXTW("<");
+		/* horizontal list: (ctrl)left-click on item */
+		for (item = curr; item != next; item = item->right) {
+			x += w;
+			w = MIN(TEXTW(item->text), mw - x - TEXTW(">"));
+			if (ev->x >= x && ev->x <= x + w) {
+				if (sel == item)
+					return;				
+				sel = item;
+				if (sel) {
+					//sel->out = 1;
+					drawmenu();
+				}
+				return;
+			}
+		}
+		/* left-click on right arrow */
+		w = TEXTW(">");
+		x = mw - w;
+	}
+}
+
 static void
 buttonpress(XEvent *e)
 {
@@ -833,11 +896,18 @@ static void
 run(void)
 {
 	XEvent ev;
+	Time lasttime = 0;
 
 	while (!XNextEvent(dpy, &ev)) {
 		if (XFilterEvent(&ev, win))
 			continue;
 		switch(ev.type) {
+		case MotionNotify:
+			if ((ev.xmotion.time - lasttime) <= (1000 / 60))
+				continue;
+			lasttime = ev.xmotion.time;
+			setselection(&ev);
+			break;
 		case ButtonPress:
 			buttonpress(&ev);
 			break;
@@ -926,7 +996,6 @@ setup(void)
 			y = info[i].y_org + ((info[i].height - mh) / 2);
 		} else if (followcursor){
 			mw = MIN(MAX(max_textw() + promptw, min_width), wa.width);
-			fprintf(stderr, "hey %d \n", drw->w);
 			getrootptr(&x, &y);
 			if (x > info[i].x_org + (drw->w - info[i].x_org) / 2) {
 				x = x - mw;
@@ -973,7 +1042,7 @@ setup(void)
 	swa.override_redirect = True;
 	swa.background_pixel = scheme[SchemeNorm][ColBg].pixel;
 	swa.event_mask = ExposureMask | KeyPressMask | VisibilityChangeMask |
-	                 ButtonPressMask;;
+	                 ButtonPressMask | PointerMotionMask;;
 	win = XCreateWindow(dpy, root, x, y, mw, mh, border_width,
 	                    DefaultDepth(dpy, screen), CopyFromParent,
 	                    DefaultVisual(dpy, screen),
