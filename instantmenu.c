@@ -998,11 +998,27 @@ setup(void)
 			mw = MIN(MAX(max_textw() + promptw, min_width), wa.width);
 			getrootptr(&x, &y);
 			if (x > info[i].x_org + (drw->w - info[i].x_org) / 2) {
-				x = x - mw;
+				x = x - mw + 20;
+			} else {
+				x = x - 20;
 			}
 			if (y > info[i].y_org + (drw->h - info[i].y_org) / 2) {
-				y = y - mh;
+				y = y - mh + 20;
+			} else {
+				y = y - 20;
 			}
+
+			if (x < 0)
+				x = 0;
+			if (y < 0)
+				y = 0;
+			if (x < info[i].x_org)
+				x = info[i].x_org;
+			if (x + mw > drw-w)
+				x = drw->w - mw;
+			if (y + mh > drw->h)
+				y = drw->h - mh;
+
 		} else {
 			x = info[i].x_org + dmx;
 			y = info[i].y_org + (topbar ? dmy : info[i].height - mh - dmy);
