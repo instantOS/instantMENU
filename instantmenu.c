@@ -995,7 +995,10 @@ setup(void)
 			x = info[i].x_org + ((info[i].width  - mw) / 2);
 			y = info[i].y_org + ((info[i].height - mh) / 2);
 		} else if (followcursor){
-			mw = MIN(MAX(max_textw() + promptw, min_width), wa.width);
+			if (dmw)
+				mw = dmw;
+			else
+				mw = MIN(MAX(max_textw() + promptw, min_width), wa.width);
 			getrootptr(&x, &y);
 			if (x > info[i].x_org + (drw->w - info[i].x_org) / 2) {
 				x = x - mw + 20;
