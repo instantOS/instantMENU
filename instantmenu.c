@@ -995,7 +995,11 @@ setup(void)
 				if (INTERSECT(x, y, 1, 1, info[i]))
 					break;
 		if (centered) {
-			mw = MIN(MAX(max_textw() + promptw, min_width), info[i].width);
+			if (dmw)
+				mw = dmw;
+			else
+				mw = MIN(MAX(max_textw() + promptw, min_width), info[i].width);
+				
 			x = info[i].x_org + ((info[i].width  - mw) / 2);
 			y = info[i].y_org + ((info[i].height - mh) / 2);
 		} else if (followcursor){
@@ -1164,7 +1168,7 @@ main(int argc, char *argv[])
 			colors[SchemeSel][ColBg] = argv[++i];
 		else if (!strcmp(argv[i], "-sf"))  /* selected foreground color */
 			colors[SchemeSel][ColFg] = argv[++i];
-		else if (!strcmp(argv[i], "-w"))   /* embedding window id */
+		else if (!strcmp(argv[i], "-W"))   /* embedding window id */
 			embed = argv[++i];
 		else if (!strcmp(argv[i], "-bw"))
 			border_width = atoi(argv[++i]); /* border width */
