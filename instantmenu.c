@@ -192,7 +192,11 @@ drawmenu(void)
 
 	if (prompt && *prompt) {
 		drw_setscheme(drw, scheme[SchemeSel]);
-		x = drw_text(drw, x, 0, promptw, bh * (lines + 1), lrpad / 2, prompt, 0, 1);
+		if (lines < 8) {
+			x = drw_text(drw, x, 0, promptw, bh * (lines + 1), lrpad / 2, prompt, 0, 1);
+		} else {
+			x = drw_text(drw, x, 0, promptw, bh, lrpad / 2, prompt, 0, 1);
+		}
 	}
 
 	/* draw input field */
@@ -209,6 +213,7 @@ drawmenu(void)
 	curpos = TEXTW(text) - TEXTW(&text[cursor]);
 	if ((curpos += lrpad / 2 - 1) < w) {
 		drw_setscheme(drw, scheme[SchemeNorm]);
+		// disable cursor on password prompt
 		if (!passwd)
 			drw_rect(drw, x + curpos, 2 + (bh-fh)/2, 2, fh - 4, 1, 0, 0);
 
