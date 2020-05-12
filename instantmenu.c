@@ -46,7 +46,7 @@ static char *embed;
 static int bh, mw, mh;
 static int dmx = 0, dmy = 0; /* put instantmenu at these x and y offsets */
 static unsigned int dmw = 0; /* make instantmenu this wide */
-static int inputw = 0, promptw, passwd = 0;
+static int inputw = 0, promptw, passwd = 0, nograb = 0;
 static int lrpad; /* sum of left and right padding */
 static size_t cursor;
 static struct item *items = NULL;
@@ -209,7 +209,8 @@ drawmenu(void)
 	curpos = TEXTW(text) - TEXTW(&text[cursor]);
 	if ((curpos += lrpad / 2 - 1) < w) {
 		drw_setscheme(drw, scheme[SchemeNorm]);
-		drw_rect(drw, x + curpos, 2 + (bh-fh)/2, 2, fh - 4, 1, 0, 1);
+		if (!passwd)
+			drw_rect(drw, x + curpos, 2 + (bh-fh)/2, 2, fh - 4, 1, 0, 0);
 
 	}
 
@@ -266,6 +267,9 @@ grabkeyboard(void)
 {
 	struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000  };
 	int i;
+
+	if (nograb)
+		return;
 
 	if (embed)
 		return;
@@ -1138,7 +1142,9 @@ main(int argc, char *argv[])
 		} else if (!strcmp(argv[i], "-n")) { /* instant select only match */
 			instant = 1;
 		} else if (!strcmp(argv[i], "-P"))   /* is the input a password */
-                       passwd = 1;
+			passwd = 1;
+		else if (!strcmp(argv[i], "-G"))   /* don't grab the keyboard */
+			nograb = 1;
 		else if (i + 1 == argc)
 			usage();
 		/* these options take one argument */
