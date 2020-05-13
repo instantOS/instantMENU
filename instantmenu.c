@@ -1008,9 +1008,19 @@ setup(void)
 				mw = dmw;
 			else
 				mw = info[i].width - 100;
-
+			
+			while ((lines + 1) * bh > info[i].height)
+			{
+				lines--;
+			}
+			
+			mh = (lines + 1) * bh;
 			x = info[i].x_org + ((info[i].width  - mw) / 2);
 			y = info[i].y_org + ((info[i].height - mh) / 2);
+
+			if (y < 0)
+				y = 0;
+
 		} else if (followcursor){
 			if (dmw)
 				mw = dmw;
