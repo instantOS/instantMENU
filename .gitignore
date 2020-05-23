@@ -7,3 +7,5 @@ stest.o
 util.o
 instantmenu
 instantmenu.o
+itest
+itest.o

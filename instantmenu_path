@@ -6,8 +6,8 @@ cache="$cachedir/instantmenu_run"
 [ ! -e "$cachedir" ] && mkdir -p "$cachedir"
 
 IFS=:
-if stest -dqr -n "$cache" $PATH; then
-	stest -flx $PATH | sort -u | tee "$cache"
+if itest -dqr -n "$cache" $PATH; then
+	itest -flx $PATH | sort -u | tee "$cache"
 else
 	cat "$cache"
 fi
