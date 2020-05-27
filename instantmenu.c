@@ -41,6 +41,7 @@ struct item {
 };
 
 static char numbers[NUMBERSBUFSIZE] = "";
+static int tempnumer;
 static char text[BUFSIZ] = "";
 static char *embed;
 static int bh, mw, mh;
@@ -175,6 +176,14 @@ recalculatenumbers()
 	}
 	for (item = items; item && item->text; item++)
 		denom++;
+	if (lines > 1) {
+		if (numer > lines)
+			tempnumer = 1;
+		else
+			tempnumer = 0;
+	} else {
+		tempnumer = 1;
+	}
 	snprintf(numbers, NUMBERSBUFSIZE, "%d/%d", numer, denom);
 }
 
@@ -240,13 +249,15 @@ drawmenu(void)
 		if (next) {
 			w = TEXTW(">");
 			drw_setscheme(drw, scheme[SchemeNorm]);
-			drw_text(drw, mw - w - TEXTW(numbers), 0, w, bh, lrpad / 2, ">", 0, 0);
+			if (tempnumer)
+				drw_text(drw, mw - w - TEXTW(numbers), 0, w, bh, lrpad / 2, ">", 0, 0);
 
 		}
 	}
 
 	drw_setscheme(drw, scheme[SchemeNorm]);
-	drw_text(drw, mw - TEXTW(numbers), 0, TEXTW(numbers), bh, lrpad / 2, numbers, 0, 0);
+	if (tempnumer)
+		drw_text(drw, mw - TEXTW(numbers), 0, TEXTW(numbers), bh, lrpad / 2, numbers, 0, 0);
 	drw_map(drw, win, 0, 0, mw, mh);
 }
 
