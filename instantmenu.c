@@ -176,13 +176,17 @@ recalculatenumbers()
 	}
 	for (item = items; item && item->text; item++)
 		denom++;
-	if (lines > 1) {
-		if (numer > lines)
+	if (numer > 1) {
+		if (lines > 1) {
+			if (numer > lines)
+				tempnumer = 1;
+			else
+				tempnumer = 0;
+		} else {
 			tempnumer = 1;
-		else
-			tempnumer = 0;
+		}
 	} else {
-		tempnumer = 1;
+		tempnumer = 0;
 	}
 	snprintf(numbers, NUMBERSBUFSIZE, "%d/%d", numer, denom);
 }
