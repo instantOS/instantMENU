@@ -146,7 +146,9 @@ cistrstr(const char *s, const char *sub)
 static int
 drawitem(struct item *item, int x, int y, int w)
 {
+	int iscomment = 0;
 	if (item->text[0] == '>') {
+		iscomment = 1;
 		drw_setscheme(drw, scheme[SchemeNorm]);
 	} else {
 		if (item == sel)
@@ -156,10 +158,11 @@ drawitem(struct item *item, int x, int y, int w)
 		else
 			drw_setscheme(drw, scheme[SchemeNorm]);
 	}
+
 	if (item == sel)
-		return drw_text(drw, x, y, w, bh, lrpad / 2, item->text, 0, 1);
+		return drw_text(drw, x, y, w, bh, lrpad / 2, item->text + iscomment, 0, 1);
 	else
-		return drw_text(drw, x, y, w, bh, lrpad / 2, item->text, 0, 0);
+		return drw_text(drw, x, y, w, bh, lrpad / 2, item->text + iscomment, 0, 0);
 
 }
 
