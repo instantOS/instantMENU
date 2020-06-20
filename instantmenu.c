@@ -47,7 +47,7 @@ static char *embed;
 static int bh, mw, mh;
 static int dmx = 0, dmy = 0; /* put instantmenu at these x and y offsets */
 static unsigned int dmw = 0; /* make instantmenu this wide */
-static int inputw = 0, promptw, passwd = 0, nograb = 0;
+static int inputw = 0, promptw, passwd = 0, nograb = 0, alttab = 0, tabbed = 0;
 static int lrpad; /* sum of left and right padding */
 static size_t cursor;
 static struct item *items = NULL;
@@ -499,6 +499,32 @@ movewordedge(int dir)
 	}
 }
 
+static void keyrelease(XKeyEvent *ev) {
+	char buf[32];
+	int len;
+	KeySym ksym;
+	Status status;
+	if (!alttab)
+		return;
+	if (tabbed) {
+		tabbed = 0;
+		return;
+	}
+
+	if (ev->state & Mod1Mask) {
+		if (ev->state & ShiftMask)
+			return;
+		puts((sel && !(ev->state & ShiftMask)) ? sel->text : text);
+		if (!(ev->state & ControlMask)) {
+			cleanup();
+			exit(0);
+		}
+		if (sel)
+			sel->out = 1;
+	}
+
+}
+
 static void
 keypress(XKeyEvent *ev)
 {
@@ -569,6 +595,13 @@ keypress(XKeyEvent *ev)
 		default:
 			return;
 		}
+	} else if (ev->state & ShiftMask) {
+		if (alttab) {
+			if (sel && sel->left && (sel = sel->left)->right == curr) {
+				curr = prev;
+				calcoffsets();
+			}
+		}
 	} else if (ev->state & Mod1Mask) {
 		switch(ksym) {
 		case XK_b:
@@ -583,6 +616,22 @@ keypress(XKeyEvent *ev)
 		case XK_j: ksym = XK_Next;  break;
 		case XK_k: ksym = XK_Prior; break;
 		case XK_l: ksym = XK_Down;  break;
+		case XK_space:
+		
+		if (alttab) {
+			tabbed = 0;
+			alttab = 0;
+		}
+		break;
+		case XK_Tab:
+		tabbed = 1;
+
+		if (sel && sel->right && (sel = sel->right) == next) {
+			curr = next;
+			calcoffsets();
+		}
+
+		break;
 		default:
 			return;
 		}
@@ -682,13 +731,18 @@ insert:
 		}
 		break;
 	case XK_Tab:
-		if (!sel)
-			return;
-		strncpy(text, sel->text, sizeof text - 1);
-		text[sizeof text - 1] = '\0';
-		cursor = strlen(text);
-		match();
+		if (!alttab) {
+			if (!sel)
+				return;
+			strncpy(text, sel->text, sizeof text - 1);
+			text[sizeof text - 1] = '\0';
+			cursor = strlen(text);
+			match();
+		} else {
+			tabbed = 1;
+		}
 		break;
+
 	}
 
 draw:
@@ -954,6 +1008,9 @@ run(void)
 		case KeyPress:
 			keypress(&ev.xkey);
 			break;
+		case KeyRelease:
+			keyrelease(&ev.xkey);
+			break;
 		case SelectionNotify:
 			if (ev.xselection.property == utf8)
 				paste();
@@ -1105,7 +1162,7 @@ setup(void)
 	/* create menu window */
 	swa.override_redirect = True;
 	swa.background_pixel = scheme[SchemeNorm][ColBg].pixel;
-	swa.event_mask = ExposureMask | KeyPressMask | VisibilityChangeMask |
+	swa.event_mask = ExposureMask | KeyPressMask | KeyReleaseMask | VisibilityChangeMask |
 	                 ButtonPressMask | PointerMotionMask;;
 	win = XCreateWindow(dpy, root, x, y, mw, mh, border_width,
 	                    DefaultDepth(dpy, screen), CopyFromParent,
@@ -1178,6 +1235,8 @@ main(int argc, char *argv[])
 			passwd = 1;
 		else if (!strcmp(argv[i], "-G"))   /* don't grab the keyboard */
 			nograb = 1;
+		else if (!strcmp(argv[i], "-A"))   /* don't grab the keyboard */
+			alttab = 1;
 		else if (i + 1 == argc)
 			usage();
 		/* these options take one argument */
