@@ -1289,6 +1289,9 @@ main(int argc, char *argv[])
 		die("no fonts could be loaded.");
 	lrpad = drw->fonts->h;
 
+	if (prompt && dmw && TEXTW(prompt) + 100 > dmw && dmw < mw - 300)
+		dmw += TEXTW(prompt);
+
 #ifdef __OpenBSD__
 	if (pledge("stdio rpath", NULL) == -1)
 		die("pledge");
