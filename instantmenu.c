@@ -514,6 +514,8 @@ static void keyrelease(XKeyEvent *ev) {
 	if (ev->state & Mod1Mask) {
 		if (ev->state & ShiftMask)
 			return;
+		if (sel && sel->text[0] == '>')
+			return;
 		puts((sel && !(ev->state & ShiftMask)) ? sel->text : text);
 		if (!(ev->state & ControlMask)) {
 			cleanup();
@@ -708,6 +710,8 @@ insert:
 		break;
 	case XK_Return:
 	case XK_KP_Enter:
+		if (sel && sel->text[0] == '>')
+			break;
 		puts((sel && !(ev->state & ShiftMask)) ? sel->text : text);
 		if (!(ev->state & ControlMask)) {
 			cleanup();
@@ -874,6 +878,8 @@ buttonpress(XEvent *e)
 		for (item = curr; item != next; item = item->right) {
 			y += h;
 			if (ev->y >= y && ev->y <= (y + h)) {
+				if (sel && item->text[0] == '>')
+					break;
 				puts(item->text);
 				if (!(ev->state & ControlMask))
 					exit(0);
@@ -902,6 +908,8 @@ buttonpress(XEvent *e)
 			x += w;
 			w = MIN(TEXTW(item->text), mw - x - TEXTW(">"));
 			if (ev->x >= x && ev->x <= x + w) {
+				if (sel && item->text[0] == '>')
+					break;
 				puts(item->text);
 				if (!(ev->state & ControlMask))
 					exit(0);
@@ -1235,7 +1243,7 @@ main(int argc, char *argv[])
 			passwd = 1;
 		else if (!strcmp(argv[i], "-G"))   /* don't grab the keyboard */
 			nograb = 1;
-		else if (!strcmp(argv[i], "-A"))   /* don't grab the keyboard */
+		else if (!strcmp(argv[i], "-A"))   /* alt-tab behaviour */
 			alttab = 1;
 		else if (i + 1 == argc)
 			usage();
@@ -1248,7 +1256,7 @@ main(int argc, char *argv[])
 			dmy = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-w"))   /* make instantmenu this wide */
 			dmw = atoi(argv[++i]);
-		else if (!strcmp(argv[i], "-m"))
+		else if (!strcmp(argv[i], "-m")) // select monitor
 			mon = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-p"))   /* adds prompt to left of input field */
 			prompt = argv[++i];
