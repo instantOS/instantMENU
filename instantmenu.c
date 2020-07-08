@@ -514,7 +514,7 @@ static void keyrelease(XKeyEvent *ev) {
 	if (ev->state & Mod1Mask) {
 		if (ev->state & ShiftMask)
 			return;
-		if (sel && sel->text[0] == '>')
+		if (sel->text && sel->text[0] == '>')
 			return;
 		puts((sel && !(ev->state & ShiftMask)) ? sel->text : text);
 		if (!(ev->state & ControlMask)) {
