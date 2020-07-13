@@ -31,7 +31,7 @@
  
 
 /* enums */
-enum { SchemeNorm, SchemeSel, SchemeOut, SchemeLast }; /* color schemes */
+enum { SchemeNorm, SchemeSel, SchemeOut, SchemeGreen, SchemeYellow, SchemeRed, SchemeLast }; /* color schemes */
 
 struct item {
 	char *text;
@@ -150,6 +150,28 @@ drawitem(struct item *item, int x, int y, int w)
 	if (item->text[0] == '>') {
 		iscomment = 1;
 		drw_setscheme(drw, scheme[SchemeNorm]);
+	} else if (item->text[0] == ':') {
+		iscomment = 2;
+		if (item == sel) {
+			switch (item->text[1])
+			{
+			case 'r':
+				drw_setscheme(drw, scheme[SchemeRed]);
+				break;
+			case 'g':
+				drw_setscheme(drw, scheme[SchemeGreen]);
+				break;
+			case 'y':
+				drw_setscheme(drw, scheme[SchemeYellow]);
+				break;
+			default:
+				drw_setscheme(drw, scheme[SchemeSel]);
+				iscomment = 0;
+				break;
+			}
+		} else {
+			drw_setscheme(drw, scheme[SchemeNorm]);
+		}
 	} else {
 		if (item == sel)
 			drw_setscheme(drw, scheme[SchemeSel]);
