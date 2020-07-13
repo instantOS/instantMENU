@@ -1147,18 +1147,18 @@ setup(void)
 				x = 0;
 			if (y < 0)
 				y = 0;
-			if (x < info[i].x_org)
-				x = info[i].x_org;
-			if (x + mw > drw-w)
-				x = drw->w - mw;
-			if (y + mh > drw->h)
-				y = drw->h - mh;
 
 		} else {
 			x = info[i].x_org + dmx;
 			y = info[i].y_org + (topbar ? dmy : info[i].height - mh - dmy);
 			mw = (dmw>0 ? dmw : info[i].width);
 		}
+		if (x < info[i].x_org)
+			x = info[i].x_org;
+		if (x + mw > drw->w)
+			x = drw->w - mw;
+		if (y + mh > drw->h)
+			y = drw->h - mh;
 		XFree(info);
 	} else
 #endif
