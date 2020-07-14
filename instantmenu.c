@@ -164,6 +164,9 @@ drawitem(struct item *item, int x, int y, int w)
 			case 'y':
 				drw_setscheme(drw, scheme[SchemeYellow]);
 				break;
+			case 'b':
+				drw_setscheme(drw, scheme[SchemeSel]);
+				break;
 			default:
 				drw_setscheme(drw, scheme[SchemeSel]);
 				iscomment = 0;
@@ -180,11 +183,21 @@ drawitem(struct item *item, int x, int y, int w)
 		else
 			drw_setscheme(drw, scheme[SchemeNorm]);
 	}
+	if (iscomment == 2) {
+		if (item->text[2] == ' ') {
+			char dest[1000];
+			strcpy(dest, item->text);
+			dest[6] = '\0';
+			drw_text(drw, x, y, 50, bh, (50 - TEXTW(dest  + 3))/2 + 10, dest  + 3, 0, item == sel);
+			iscomment = 4;
+			drw_setscheme(drw, scheme[SchemeNorm]);
+		}
+	}
 
 	if (item == sel)
-		return drw_text(drw, x, y, w, bh, lrpad / 2, item->text + iscomment, 0, 1);
+		return drw_text(drw, x + ((iscomment == 4) ? 50 : 0), y, w - ((iscomment == 4) ? 50 : 0), bh, lrpad / 2, item->text + iscomment, 0, 1);
 	else
-		return drw_text(drw, x, y, w, bh, lrpad / 2, item->text + iscomment, 0, 0);
+		return drw_text(drw, x + ((iscomment == 4) ? 50 : 0), y, w - ((iscomment == 4) ? 50 : 0), bh, lrpad / 2, item->text + iscomment, 0, 0);
 
 }
 
@@ -1153,10 +1166,14 @@ setup(void)
 			y = info[i].y_org + (topbar ? dmy : info[i].height - mh - dmy);
 			mw = (dmw>0 ? dmw : info[i].width);
 		}
+		if (mh > drw->h - 10) {
+			mh = drw->h - border_width * 2;
+			lines = (drw->h / bh) - 1; 
+		}
 		if (x < info[i].x_org)
 			x = info[i].x_org;
 		if (x + mw > drw->w)
-			x = drw->w - mw;
+			x = drw->w - mw - border_width*2;
 		if (y + mh > drw->h)
 			y = drw->h - mh;
 		XFree(info);
