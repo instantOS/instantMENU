@@ -8,6 +8,7 @@ static int min_width = 500;                    /* minimum width when centered */
 
 static int instant = 0;
 static int fuzzy = 1;
+static int fullheight = 0;
 static unsigned int lineheight = 0;         /* -h option; minimum height of a menu line     */
 
 /* -fn option overrides fonts[0]; default X11 font or font set */

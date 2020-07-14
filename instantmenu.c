@@ -1210,8 +1210,13 @@ setup(void)
 			x = info[i].x_org;
 		if (x + mw > drw->w)
 			x = drw->w - mw - border_width*2;
-		if (y + mh > drw->h)
-			y = drw->h - mh;
+		if (fullheight) {
+			y = 0;
+			mh = drw->h - border_width * 2;
+		} else {
+			if (y + mh > drw->h)
+				y = drw->h - mh;
+		}
 		XFree(info);
 	} else
 #endif
@@ -1309,6 +1314,8 @@ main(int argc, char *argv[])
 			followcursor = 1;
 		else if (!strcmp(argv[i], "-F"))   /* disables fuzzy matching */
 			fuzzy = 0;
+		else if (!strcmp(argv[i], "-H"))   /* disables fuzzy matching */
+			fullheight = 1;
 		else if (!strcmp(argv[i], "-i")) { /* case-insensitive item matching */
 			fstrncmp = strncasecmp;
 			fstrstr = cistrstr;
