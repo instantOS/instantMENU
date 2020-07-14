@@ -16,7 +16,9 @@ static const char *fonts[] = {
 	"Fira Code Nerd Font:size=14", 
 	"JoyPixels:pixelsize=20:antialias=true:autohint=true",
 };
+
 static const char *prompt      = NULL;      /* -p  option; prompt to the left of input field */
+static const char *searchtext      = NULL;      /* -p  option; prompt to the left of input field */
 static const char *colors[SchemeLast][8] = {
 	/*     fg         bg       */
 	[SchemeNorm] = { "#ffffff", "#292f3a", "#3E485B" },

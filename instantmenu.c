@@ -291,9 +291,9 @@ drawmenu(void)
 	} else {
 		if (text[0] != '\0') {
 			drw_text(drw, x, 0, w, bh, lrpad / 2, text, 0, 0);
-		} else {
+		} else  if (searchtext){
 			drw_setscheme(drw, scheme[SchemeFade]);
-			drw_text(drw, x, 0, w, bh, lrpad / 2, "search", 0, 0);
+			drw_text(drw, x, 0, w, bh, lrpad / 2, searchtext, 0, 0);
 			drw_setscheme(drw, scheme[SchemeNorm]);
 		}
 	}
@@ -1335,6 +1335,8 @@ main(int argc, char *argv[])
 			mon = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-p"))   /* adds prompt to left of input field */
 			prompt = argv[++i];
+		else if (!strcmp(argv[i], "-q"))   /* adds prompt to left of input field */
+			searchtext = argv[++i];
 		else if (!strcmp(argv[i], "-fn"))  /* font or font set */
 			fonts[0] = argv[++i];
 		else if(!strcmp(argv[i], "-h")) { /* minimum height of one menu line */
