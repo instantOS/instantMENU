@@ -31,7 +31,7 @@
  
 
 /* enums */
-enum { SchemeNorm, SchemeSel, SchemeOut, SchemeGreen, SchemeYellow, SchemeRed, SchemeLast }; /* color schemes */
+enum { SchemeNorm, SchemeFade, SchemeHighlight, SchemeSel, SchemeOut, SchemeGreen, SchemeYellow, SchemeRed, SchemeLast }; /* color schemes */
 
 struct item {
 	char *text;
@@ -148,8 +148,36 @@ drawitem(struct item *item, int x, int y, int w)
 {
 	int iscomment = 0;
 	if (item->text[0] == '>') {
-		iscomment = 1;
-		drw_setscheme(drw, scheme[SchemeNorm]);
+		if (item->text[1] == '>') {
+			iscomment = 3;
+			switch (item->text[2])
+			{
+				case 'r':
+					drw_setscheme(drw, scheme[SchemeRed]);
+					break;
+				case 'g':
+					drw_setscheme(drw, scheme[SchemeGreen]);
+					break;
+				case 'y':
+					drw_setscheme(drw, scheme[SchemeYellow]);
+					break;
+				case 'h':
+					drw_setscheme(drw, scheme[SchemeHighlight]);
+					break;
+
+				case 'b':
+					drw_setscheme(drw, scheme[SchemeSel]);
+					break;
+				default:
+					iscomment = 1;
+					drw_setscheme(drw, scheme[SchemeNorm]);
+					break;
+			}
+		} else {
+			drw_setscheme(drw, scheme[SchemeNorm]);
+			iscomment = 1;
+		}
+
 	} else if (item->text[0] == ':') {
 		iscomment = 2;
 		if (item == sel) {
@@ -183,6 +211,7 @@ drawitem(struct item *item, int x, int y, int w)
 		else
 			drw_setscheme(drw, scheme[SchemeNorm]);
 	}
+
 	if (iscomment == 2) {
 		if (item->text[2] == ' ') {
 			char dest[1000];
@@ -259,8 +288,15 @@ drawmenu(void)
 			memset(censort, '.', strlen(text));
 			drw_text(drw, x, 0, w, bh, lrpad / 2, censort, 0, 0);
 			free(censort);
-	} else drw_text(drw, x, 0, w, bh, lrpad / 2, text, 0, 0);
-
+	} else {
+		if (text[0] != '\0') {
+			drw_text(drw, x, 0, w, bh, lrpad / 2, text, 0, 0);
+		} else {
+			drw_setscheme(drw, scheme[SchemeFade]);
+			drw_text(drw, x, 0, w, bh, lrpad / 2, "search", 0, 0);
+			drw_setscheme(drw, scheme[SchemeNorm]);
+		}
+	}
 	curpos = TEXTW(text) - TEXTW(&text[cursor]);
 	if ((curpos += lrpad / 2 - 1) < w) {
 		drw_setscheme(drw, scheme[SchemeNorm]);
