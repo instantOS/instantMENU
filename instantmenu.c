@@ -608,15 +608,15 @@ double easeOutQuint( double t ) {
 }
 
 void animatesel() {
-	if (!animated)
+	if (!animated || !framecount)
 		return;
 	int time;
 	time  = 0;
 	drw_setscheme(drw, scheme[SchemeSel]);
-	while (time < 10)
+	while (time < framecount)
 	{
-		drw_rect(drw, 0, sely + (lineheight - 4), mw, (easeOutQuint(((double)time/10.0)) * (mh - (lineheight - 4) - sely)), 1, 1, 0);
-		drw_rect(drw, 0, sely + 4 - (easeOutQuint(((double)time/10.0)) * (sely + 4)), mw, (easeOutQuint(((double)time/10.0)) * sely), 1, 1, 0);
+		drw_rect(drw, 0, sely + (lineheight - 4), mw, (easeOutQuint(((double)time/framecount)) * (mh - (lineheight - 4) - sely)), 1, 1, 0);
+		drw_rect(drw, 0, sely + 4 - (easeOutQuint(((double)time/framecount)) * (sely + 4)), mw, (easeOutQuint(((double)time/framecount)) * sely), 1, 1, 0);
 		drw_map(drw, win, 0, 0, mw, mh);
 		time++;
 		usleep(19000);
@@ -1383,7 +1383,8 @@ main(int argc, char *argv[])
 				lineheight = atoi(argv[++i]);
 				lineheight = MAX(lineheight,8); /* reasonable default in case of value too small/negative */
 			}
-		}
+		} else if(!strcmp(argv[i], "-a")) /* animation duration */
+			framecount = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-nb"))  /* normal background color */
 			colors[SchemeNorm][ColBg] = argv[++i];
 		else if (!strcmp(argv[i], "-nf"))  /* normal foreground color */
@@ -1415,7 +1416,7 @@ main(int argc, char *argv[])
 		die("no fonts could be loaded.");
 	lrpad = drw->fonts->h;
 
-	if (fullheight)
+	if (fullheight || lineheight == -1)
 		lineheight = drw->fonts->h*2.7;
 
 	if (prompt && dmw && TEXTW(prompt) + 100 > dmw && dmw < mw - 300)
@@ -1433,6 +1434,8 @@ main(int argc, char *argv[])
 		readstdin();
 		grabkeyboard();
 	}
+	if (dmw == -1)
+		dmw = max_textw() * 1.3;
 	setup();
 	run();
 
