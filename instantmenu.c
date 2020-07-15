@@ -1230,7 +1230,7 @@ setup(void)
 		}
 		if (mh > drw->h - 10) {
 			mh = drw->h - border_width * 2;
-			lines = (drw->h / bh) - 1; 
+			lines = (drw->h / lineheight) - 1; 
 		}
 		if (x < info[i].x_org)
 			x = info[i].x_org;
@@ -1239,6 +1239,7 @@ setup(void)
 		if (fullheight) {
 			y = 32;
 			mh = drw->h - border_width * 2 - 32;
+			lines = (drw->h / lineheight) - 2; 
 		} else {
 			if (y + mh > drw->h)
 				y = drw->h - mh;
