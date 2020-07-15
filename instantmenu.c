@@ -1237,8 +1237,8 @@ setup(void)
 		if (x + mw > drw->w)
 			x = drw->w - mw - border_width*2;
 		if (fullheight) {
-			y = 0;
-			mh = drw->h - border_width * 2;
+			y = 32;
+			mh = drw->h - border_width * 2 - 32;
 		} else {
 			if (y + mh > drw->h)
 				y = drw->h - mh;
