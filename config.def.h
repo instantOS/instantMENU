@@ -8,6 +8,8 @@ static int min_width = 500;                    /* minimum width when centered */
 
 static int instant = 0;
 static int fuzzy = 1;
+static int sely = 0;
+static int animated = 0;
 static int fullheight = 0;
 static unsigned int lineheight = 0;         /* -h option; minimum height of a menu line     */
 

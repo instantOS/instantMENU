@@ -214,6 +214,7 @@ drawitem(struct item *item, int x, int y, int w)
 
 	if (iscomment == 2) {
 		if (item->text[2] == ' ') {
+			animated = 1;
 			char dest[1000];
 			strcpy(dest, item->text);
 			dest[6] = '\0';
@@ -223,11 +224,12 @@ drawitem(struct item *item, int x, int y, int w)
 		}
 	}
 
-	if (item == sel)
+	if (item == sel) {
+		sely = y;
 		return drw_text(drw, x + ((iscomment == 6) ? 50 : 0), y, w - ((iscomment == 6) ? 50 : 0), bh, lrpad / 2, item->text + iscomment, 0, 1);
-	else
+	} else {
 		return drw_text(drw, x + ((iscomment == 6) ? 50 : 0), y, w - ((iscomment == 6) ? 50 : 0), bh, lrpad / 2, item->text + iscomment, 0, 0);
-
+	}
 }
 
 
@@ -598,6 +600,26 @@ static void keyrelease(XKeyEvent *ev) {
 
 }
 
+double easeOutQuint( double t ) {
+    return 1 + (--t) * t * t;
+}
+
+void animatesel() {
+	if (!animated)
+		return;
+	int time;
+	time  = 0;
+	drw_setscheme(drw, scheme[SchemeSel]);
+	while (time < 10)
+	{
+		drw_rect(drw, 0, sely + (lineheight - 4), mw, (easeOutQuint(((double)time/10.0)) * (mh - (lineheight - 4) - sely)), 1, 1, 0);
+		drw_rect(drw, 0, sely + 4 - (easeOutQuint(((double)time/10.0)) * (sely + 4)), mw, (easeOutQuint(((double)time/10.0)) * sely), 1, 1, 0);
+		drw_map(drw, win, 0, 0, mw, mh);
+		time++;
+		usleep(19000);
+	}
+}
+
 static void
 keypress(XKeyEvent *ev)
 {
@@ -783,6 +805,8 @@ insert:
 	case XK_KP_Enter:
 		if (sel && sel->text[0] == '>')
 			break;
+		animatesel();
+
 		puts((sel && !(ev->state & ShiftMask)) ? sel->text : text);
 		if (!(ev->state & ControlMask)) {
 			cleanup();
@@ -951,6 +975,7 @@ buttonpress(XEvent *e)
 			if (ev->y >= y && ev->y <= (y + h)) {
 				if (sel && item->text[0] == '>')
 					break;
+				animatesel();
 				puts(item->text);
 				if (!(ev->state & ControlMask))
 					exit(0);
@@ -981,6 +1006,7 @@ buttonpress(XEvent *e)
 			if (ev->x >= x && ev->x <= x + w) {
 				if (sel && item->text[0] == '>')
 					break;
+				animatesel();
 				puts(item->text);
 				if (!(ev->state & ControlMask))
 					exit(0);
