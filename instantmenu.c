@@ -16,6 +16,7 @@
 #include <X11/extensions/Xinerama.h>
 #endif
 #include <X11/Xft/Xft.h>
+#include <X11/cursorfont.h>
 
 #include "drw.h"
 #include "util.h"
@@ -28,10 +29,12 @@
 
 #define NUMBERSMAXDIGITS      100
 #define NUMBERSBUFSIZE        (NUMBERSMAXDIGITS * 2) + 1
- 
+#define BUTTONMASK              (ButtonPressMask|ButtonReleaseMask)
+#define MOUSEMASK               (BUTTONMASK|PointerMotionMask)
+
 
 /* enums */
-enum { SchemeNorm, SchemeFade, SchemeHighlight, SchemeSel, SchemeOut, SchemeGreen, SchemeYellow, SchemeRed, SchemeLast }; /* color schemes */
+enum { SchemeNorm, SchemeFade, SchemeHighlight, SchemeHover, SchemeSel, SchemeOut, SchemeGreen, SchemeYellow, SchemeRed, SchemeLast }; /* color schemes */
 
 struct item {
 	char *text;
@@ -223,16 +226,13 @@ drawitem(struct item *item, int x, int y, int w)
 			dest[6] = '\0';
 			drw_text(drw, x, y, temppadding, lineheight, temppadding/2.6, dest  + 3, 0, item == sel);
 			iscomment = 6;
-			drw_setscheme(drw, scheme[SchemeNorm]);
+			drw_setscheme(drw, sel == item ? scheme[SchemeHover] : scheme[SchemeNorm]);
 		}
 	}
 
-	if (item == sel) {
+	if (item == sel)
 		sely = y;
-		return drw_text(drw, x + ((iscomment == 6) ? temppadding : 0), y, w - ((iscomment == 6) ? temppadding : 0), bh, lrpad / 2, item->text + iscomment, 0, 1);
-	} else {
-		return drw_text(drw, x + ((iscomment == 6) ? temppadding : 0), y, w - ((iscomment == 6) ? temppadding : 0), bh, lrpad / 2, item->text + iscomment, 0, 0);
-	}
+	return drw_text(drw, x + ((iscomment == 6) ? temppadding : 0), y, w - ((iscomment == 6) ? temppadding : 0), bh, lrpad / 2, item->text + iscomment, 0, (iscomment == 3 || item == sel));
 }
 
 
@@ -380,6 +380,13 @@ grabkeyboard(void)
 		nanosleep(&ts, NULL);
 	}
 	die("cannot grab keyboard");
+}
+
+static void
+grabpointer(void)
+{
+	XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
+		None, XCreateFontCursor(dpy, XC_fleur), CurrentTime);
 }
 
 int
@@ -615,7 +622,10 @@ void animatesel() {
 	drw_setscheme(drw, scheme[SchemeSel]);
 	while (time < framecount)
 	{
-		drw_rect(drw, 0, sely + (lineheight - 4), mw, (easeOutQuint(((double)time/framecount)) * (mh - (lineheight - 4) - sely)), 1, 1, 0);
+		// bottom animation
+		if (sely + lineheight < mh - 10)
+			drw_rect(drw, 0, sely + (lineheight - 4), mw, (easeOutQuint(((double)time/framecount)) * (mh - (lineheight - 4) - sely)), 1, 1, 0);
+		// top animation
 		drw_rect(drw, 0, sely + 4 - (easeOutQuint(((double)time/framecount)) * (sely + 4)), mw, (easeOutQuint(((double)time/framecount)) * sely), 1, 1, 0);
 		drw_map(drw, win, 0, 0, mw, mh);
 		time++;
