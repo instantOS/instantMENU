@@ -218,15 +218,15 @@ drawitem(struct item *item, int x, int y, int w)
 			strcpy(dest, item->text);
 			dest[6] = '\0';
 			drw_text(drw, x, y, 50, bh, (50 - TEXTW(dest  + 3))/2 + 10, dest  + 3, 0, item == sel);
-			iscomment = 4;
+			iscomment = 6;
 			drw_setscheme(drw, scheme[SchemeNorm]);
 		}
 	}
 
 	if (item == sel)
-		return drw_text(drw, x + ((iscomment == 4) ? 50 : 0), y, w - ((iscomment == 4) ? 50 : 0), bh, lrpad / 2, item->text + iscomment, 0, 1);
+		return drw_text(drw, x + ((iscomment == 6) ? 50 : 0), y, w - ((iscomment == 6) ? 50 : 0), bh, lrpad / 2, item->text + iscomment, 0, 1);
 	else
-		return drw_text(drw, x + ((iscomment == 4) ? 50 : 0), y, w - ((iscomment == 4) ? 50 : 0), bh, lrpad / 2, item->text + iscomment, 0, 0);
+		return drw_text(drw, x + ((iscomment == 6) ? 50 : 0), y, w - ((iscomment == 6) ? 50 : 0), bh, lrpad / 2, item->text + iscomment, 0, 0);
 
 }
 
