@@ -212,13 +212,16 @@ drawitem(struct item *item, int x, int y, int w)
 			drw_setscheme(drw, scheme[SchemeNorm]);
 	}
 
+	int temppadding;
+	temppadding = 0;
 	if (iscomment == 2) {
 		if (item->text[2] == ' ') {
+			temppadding = drw->fonts->h * 3;
 			animated = 1;
 			char dest[1000];
 			strcpy(dest, item->text);
 			dest[6] = '\0';
-			drw_text(drw, x, y, 50, bh, (50 - TEXTW(dest  + 3))/2 + 10, dest  + 3, 0, item == sel);
+			drw_text(drw, x, y, temppadding, lineheight, temppadding/2.6, dest  + 3, 0, item == sel);
 			iscomment = 6;
 			drw_setscheme(drw, scheme[SchemeNorm]);
 		}
@@ -226,9 +229,9 @@ drawitem(struct item *item, int x, int y, int w)
 
 	if (item == sel) {
 		sely = y;
-		return drw_text(drw, x + ((iscomment == 6) ? 50 : 0), y, w - ((iscomment == 6) ? 50 : 0), bh, lrpad / 2, item->text + iscomment, 0, 1);
+		return drw_text(drw, x + ((iscomment == 6) ? temppadding : 0), y, w - ((iscomment == 6) ? temppadding : 0), bh, lrpad / 2, item->text + iscomment, 0, 1);
 	} else {
-		return drw_text(drw, x + ((iscomment == 6) ? 50 : 0), y, w - ((iscomment == 6) ? 50 : 0), bh, lrpad / 2, item->text + iscomment, 0, 0);
+		return drw_text(drw, x + ((iscomment == 6) ? temppadding : 0), y, w - ((iscomment == 6) ? temppadding : 0), bh, lrpad / 2, item->text + iscomment, 0, 0);
 	}
 }
 
@@ -1340,9 +1343,11 @@ main(int argc, char *argv[])
 		else if (!strcmp(argv[i], "-C"))   /* go to mouse position */
 			followcursor = 1;
 		else if (!strcmp(argv[i], "-F"))   /* disables fuzzy matching */
+			/* disables fuzzy matching */
 			fuzzy = 0;
-		else if (!strcmp(argv[i], "-H"))   /* disables fuzzy matching */
+		else if (!strcmp(argv[i], "-H")) {
 			fullheight = 1;
+		}
 		else if (!strcmp(argv[i], "-i")) { /* case-insensitive item matching */
 			fstrncmp = strncasecmp;
 			fstrstr = cistrstr;
@@ -1374,8 +1379,10 @@ main(int argc, char *argv[])
 		else if (!strcmp(argv[i], "-fn"))  /* font or font set */
 			fonts[0] = argv[++i];
 		else if(!strcmp(argv[i], "-h")) { /* minimum height of one menu line */
-			lineheight = atoi(argv[++i]);
-			lineheight = MAX(lineheight,8); /* reasonable default in case of value too small/negative */
+			if (!fullheight) {
+				lineheight = atoi(argv[++i]);
+				lineheight = MAX(lineheight,8); /* reasonable default in case of value too small/negative */
+			}
 		}
 		else if (!strcmp(argv[i], "-nb"))  /* normal background color */
 			colors[SchemeNorm][ColBg] = argv[++i];
@@ -1407,6 +1414,9 @@ main(int argc, char *argv[])
 	if (!drw_fontset_create(drw, fonts, LENGTH(fonts)))
 		die("no fonts could be loaded.");
 	lrpad = drw->fonts->h;
+
+	if (fullheight)
+		lineheight = drw->fonts->h*2.7;
 
 	if (prompt && dmw && TEXTW(prompt) + 100 > dmw && dmw < mw - 300)
 		dmw += TEXTW(prompt);
