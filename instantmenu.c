@@ -1107,6 +1107,11 @@ run(void)
 			lasttime = ev.xmotion.time;
 			setselection(&ev);
 			break;
+		case DestroyNotify:
+			if (ev.xdestroywindow.window != win)
+				break;
+			cleanup();
+			exit(1);
 		case ButtonPress:
 			buttonpress(&ev);
 			break;
