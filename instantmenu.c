@@ -1427,7 +1427,7 @@ main(int argc, char *argv[])
 	lrpad = drw->fonts->h;
 
 	if (fullheight || lineheight == -1)
-		lineheight = drw->fonts->h*2.7;
+		lineheight = drw->fonts->h*2.5;
 
 	if (prompt && dmw && TEXTW(prompt) + 100 > dmw && dmw < mw - 300)
 		dmw += TEXTW(prompt);
