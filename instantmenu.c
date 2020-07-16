@@ -983,23 +983,19 @@ buttonpress(XEvent *e)
 	if (lines > 0) {
 		/* vertical list: (ctrl)left-click on item */
 		w = mw - x;
-		for (item = curr; item != next; item = item->right) {
-			y += h;
-			if (ev->y >= y && ev->y <= (y + h)) {
-				if (sel && item->text[0] == '>')
-					break;
-				animatesel();
-				puts(item->text);
-				if (!(ev->state & ControlMask))
-					exit(0);
-				sel = item;
-				if (sel) {
-					sel->out = 1;
-					drawmenu();
-				}
-				return;
-			}
+		item = sel;
+		if (sel && sel->text[0] == '>')
+			return;
+		animatesel();
+		puts(item->text);
+		if (!(ev->state & ControlMask))
+			exit(0);
+		sel = item;
+		if (sel) {
+			sel->out = 1;
+			drawmenu();
 		}
+		return;
 	} else if (matches) {
 		/* left-click on left arrow */
 		x += inputw;
