@@ -1096,8 +1096,20 @@ run(void)
 {
 	XEvent ev;
 	Time lasttime = 0;
+	int i;
 
 	while (!XNextEvent(dpy, &ev)) {
+		if (preselected) {
+			for (i = 0; i < preselected; i++) {
+				if (sel && sel->right && (sel = sel->right) == next) {
+					curr = next;
+					calcoffsets();
+				}
+			}
+			drawmenu();
+			preselected = 0;
+		}
+
 		if (XFilterEvent(&ev, win))
 			continue;
 		switch(ev.type) {
@@ -1408,6 +1420,8 @@ main(int argc, char *argv[])
 			embed = argv[++i];
 		else if (!strcmp(argv[i], "-bw"))
 			border_width = atoi(argv[++i]); /* border width */
+		else if (!strcmp(argv[i], "-ps"))   /* preselected item */
+			preselected = atoi(argv[++i]);
 		else
 			usage();
 
@@ -1446,7 +1460,7 @@ main(int argc, char *argv[])
 		grabkeyboard();
 	}
 	if (dmw == -1)
-		dmw = max_textw() * 1.3;
+		dmw = max_textw() * 1.3 + (prompt ? TEXTW(prompt) : 0);
 	setup();
 	run();
 

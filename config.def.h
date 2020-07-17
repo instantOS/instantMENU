@@ -44,5 +44,9 @@ static unsigned int lines      = 0;
  * for example: " /?\"&[]"
  */
 static const char worddelimiters[] = " ";
+
+/* -ps option; preselected item starting from 0 */
+static unsigned int preselected = 0;
+
 /* Size of the window border */
 static unsigned int border_width = 0;
