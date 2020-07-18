@@ -4,6 +4,7 @@
 # define $1 to run in terminal
 if [ -z "$1" ]; then
     LIST="$HOME/.cache/instantmenuhist"
+    ARGS="terminal"
 else
     LIST="$HOME/.cache/instanttermmenuhist"
 fi
@@ -13,7 +14,8 @@ read -r SELECTION < <({
     tac "$LIST"
     instantmenu_path | sort -u
 } | perl -nE '$seen{$_}++ or print' |
-    instantmenu -lc "instantmenu_smartrun terminal " -p "${1}" -i -f -q "search apps" -l 10 -c -w -1 -h -1 -bw 4)
+    instantmenu -rc "instantmenu_smartrun $ARGS &" -lc "instantmenu_smartrun $ARGS &" \
+        -p "${1}" -i -f -q "search apps" -l 10 -c -w -1 -h -1 -bw 4)
 
 # check if the application doesn't exist (indicated by exit code 1 and short runtime)
 
