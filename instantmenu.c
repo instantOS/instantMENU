@@ -1267,6 +1267,11 @@ setup(void)
 			mh = drw->h - border_width * 2;
 			lines = (drw->h / lineheight) - 1; 
 		}
+
+		if (mw > drw->w - 10) {
+			mw = drw->w - border_width * 2;
+		}
+
 		if (x < info[i].x_org)
 			x = info[i].x_org;
 		if (x + mw > drw->w)
