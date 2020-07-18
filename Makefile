@@ -34,7 +34,7 @@ clean:
 dist: clean
 	mkdir -p instantmenu-$(VERSION)
 	cp LICENSE Makefile README arg.h config.def.h config.mk instantmenu.1\
-		drw.h util.h instantmenu_path instantmenu_run itest.1 $(SRC)\
+		drw.h util.h instantmenu_path instantmenu_run instantmenu_smartrun itest.1 $(SRC)\
 		instantmenu-$(VERSION)
 	tar -cf instantmenu-$(VERSION).tar instantmenu-$(VERSION)
 	gzip instantmenu-$(VERSION).tar
@@ -42,10 +42,11 @@ dist: clean
 
 install: all
 	mkdir -p $(DESTDIR)$(PREFIX)/bin
-	cp -f instantmenu instantmenu_path instantmenu_run itest $(DESTDIR)$(PREFIX)/bin
+	cp -f instantmenu instantmenu_path instantmenu_run instantmenu_smartrun itest $(DESTDIR)$(PREFIX)/bin
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/instantmenu
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/instantmenu_path
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/instantmenu_run
+	chmod 755 $(DESTDIR)$(PREFIX)/bin/instantmenu_smartrun
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/itest
 	mkdir -p $(DESTDIR)$(MANPREFIX)/man1
 	sed "s/VERSION/$(VERSION)/g" < instantmenu.1 > $(DESTDIR)$(MANPREFIX)/man1/instantmenu.1
@@ -57,6 +58,7 @@ uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/instantmenu\
 		$(DESTDIR)$(PREFIX)/bin/instantmenu_path\
 		$(DESTDIR)$(PREFIX)/bin/instantmenu_run\
+		$(DESTDIR)$(PREFIX)/bin/instantmenu_smartrun\
 		$(DESTDIR)$(PREFIX)/bin/itest\
 		$(DESTDIR)$(MANPREFIX)/man1/instantmenu.1\
 		$(DESTDIR)$(MANPREFIX)/man1/itest.1

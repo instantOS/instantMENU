@@ -1,0 +1,6 @@
+#!/bin/bash
+
+{
+    tac "$HOME/.hist"
+    compgen -ac | sort -u
+} | perl -nE '$seen{$_}++ or print' | instantmenu -i -f "$@" -q "search apps" -l 10 -c -w -1 -h -1 -bw 4 | tee -a "$HOME/.hist" | ${SHELL:-"/bin/sh"} -s
