@@ -8,11 +8,14 @@ else
     LIST="$HOME/.cache/instanttermmenuhist"
 fi
 
+# read history and path
 read -r SELECTION < <({
     tac "$LIST"
     instantmenu_path | sort -u
 } | perl -nE '$seen{$_}++ or print' |
     instantmenu -lc "instantmenu_smartrun terminal " -p "${1}" -i -f -q "search apps" -l 10 -c -w -1 -h -1 -bw 4)
+
+# check if the application doesn't exist (indicated by exit code 1 and short runtime)
 
 [ -z "$SELECTION" ] && exit
 a="$(TZ=UTC0 printf '%(%s)T\n' '-1')" ### `-1`  is the current time
@@ -30,11 +33,13 @@ elapsedseconds=$(($(TZ=UTC0 printf '%(%s)T\n' '-1') - a))
 
 if [ "$elapsedseconds" -gt 5 ] || [ "$EXITSTATUS" = 0 ]; then
     [ -e "$HOME/.cache" ] || mkdir "$HOME/.cache"
-    if [ -z "$1" ]; then
-        echo "$SELECTION" | tee -a "$HOME/.cache/instantmenuhist"
-    else
-        echo "$SELECTION" | tee -a "$HOME/.cache/instanttermmenuhist"
-    fi
+    echo "$SELECTION" | tee -a "$LIST"
 else
-    echo "skipping error program"
+    echo "error in running $SELECTION: skipping history"
+fi
+
+# max history size
+if [ "$(wc -l $LIST | grep -o '^[^ ]*')" -gt 1300 ]; then
+    head -1000 <"$LIST" | tee "${LIST}2"
+    cat "${LIST}2" >"$LIST"
 fi
