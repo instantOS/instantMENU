@@ -23,6 +23,8 @@ static const char *fonts[] = {
 
 static const char *prompt      = NULL;      /* -p  option; prompt to the left of input field */
 static const char *searchtext      = NULL;      /* -p  option; prompt to the left of input field */
+static const char *leftcmd      = NULL;      /* -p  option; prompt to the left of input field */
+static const char *rightcmd      = NULL;      /* -p  option; prompt to the left of input field */
 static const char *colors[SchemeLast][9] = {
 	/*     fg         bg       */
 	[SchemeNorm] = { "#ffffff", "#292f3a", "#3E485B" },

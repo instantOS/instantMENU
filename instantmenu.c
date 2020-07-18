@@ -643,6 +643,31 @@ void animatesel() {
 	}
 }
 
+void spawn(char *cmd) {
+	char command[1000];
+	strcpy(command, cmd);
+	strcat(command, " &> /dev/null");
+	system(command);
+	exit(0);
+}
+
+void animaterect(int x1, int y1, int w1, int h1, int x2, int y2, int w2, int h2) {
+	if (!animated || !framecount)
+		return;
+	int time;
+	time  = 0;
+	double timefactor = 0;
+	drw_setscheme(drw, scheme[SchemeSel]);
+	while (time < framecount)
+	{
+		timefactor = easeOutQuint((double)time/framecount);
+		drw_rect(drw, x1 + (x2 - x1) * timefactor, y1 + (y2 - y1) * timefactor, w1 + (w2 - w1) * timefactor, h1 + (h2 - h1) * timefactor, 1, 1, 0);
+		drw_map(drw, win, 0, 0, mw, mh);
+		time++;
+		usleep(19000);
+	}
+}
+
 static void
 keypress(XKeyEvent *ev)
 {
@@ -799,6 +824,15 @@ insert:
 		calcoffsets();
 		break;
 	case XK_Left:
+
+		if ((ev->state & ShiftMask) && leftcmd) {
+			animated = 1;
+			animaterect(mw, 0, 0, mh, 0, 0, mw, mh);
+			cleanup();
+			spawn(leftcmd);
+			break;
+		}
+
 		if (cursor > 0 && (!sel || !sel->left || lines > 0)) {
 			cursor = nextrune(-1);
 			break;
@@ -839,6 +873,13 @@ insert:
 			sel->out = 1;
 		break;
 	case XK_Right:
+		if ((ev->state & ShiftMask) && rightcmd) {
+			animated = 1;
+			animaterect(0, 0, 0, mh, 0, 0, mw, mh);
+			cleanup();
+			spawn(rightcmd);
+			break;
+		}
 		if (text[cursor] != '\0') {
 			cursor = nextrune(+1);
 			break;
@@ -1400,6 +1441,10 @@ main(int argc, char *argv[])
 			managed = 1;
 		else if (i + 1 == argc)
 			usage();
+		else if (!strcmp(argv[i], "-rc"))   /* adds prompt to left of input field */
+			rightcmd = argv[++i];
+		else if (!strcmp(argv[i], "-lc"))   /* adds prompt to left of input field */
+			leftcmd = argv[++i];
 		/* these options take one argument */
 		else if (!strcmp(argv[i], "-l"))   /* number of lines in vertical list */
 			lines = atoi(argv[++i]);
