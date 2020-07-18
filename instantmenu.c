@@ -825,7 +825,7 @@ insert:
 		break;
 	case XK_Left:
 
-		if ((ev->state & ShiftMask) && leftcmd) {
+		if ((ev->state & ShiftMask || ev->state & Mod4Mask) && leftcmd) {
 			animated = 1;
 			animaterect(mw, 0, 0, mh, 0, 0, mw, mh);
 			cleanup();
@@ -873,7 +873,7 @@ insert:
 			sel->out = 1;
 		break;
 	case XK_Right:
-		if ((ev->state & ShiftMask) && rightcmd) {
+		if ((ev->state & ShiftMask || ev->state & Mod4Mask) && rightcmd) {
 			animated = 1;
 			animaterect(0, 0, 0, mh, 0, 0, mw, mh);
 			cleanup();
