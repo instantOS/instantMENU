@@ -57,6 +57,7 @@ static struct item *items = NULL;
 static struct item *matches, *matchend;
 static struct item *prev, *curr, *next, *sel;
 static int mon = -1, screen;
+static int managed = 0;
 
 static Atom clip, utf8;
 static Display *dpy;
@@ -355,7 +356,16 @@ grabfocus(void)
 		XGetInputFocus(dpy, &focuswin, &revertwin);
 		if (focuswin == win)
 			return;
-		XSetInputFocus(dpy, win, RevertToParent, CurrentTime);
+		if (managed) {
+			XTextProperty prop;
+			char *windowtitle = prompt != NULL ? prompt : "dmenu";
+			Xutf8TextListToTextProperty(dpy, &windowtitle, 1, XUTF8StringStyle, &prop);
+			XSetWMName(dpy, win, &prop);
+			XSetTextProperty(dpy, win, &prop, XInternAtom(dpy, "_NET_WM_NAME", False));
+			XFree(prop.value);
+		} else {
+			XSetInputFocus(dpy, win, RevertToParent, CurrentTime);
+		}
 		nanosleep(&ts, NULL);
 	}
 	die("cannot grab focus");
@@ -370,7 +380,7 @@ grabkeyboard(void)
 	if (nograb)
 		return;
 
-	if (embed)
+	if (embed || managed)
 		return;
 	/* try to grab keyboard, we may have to wait for another process to ungrab */
 	for (i = 0; i < 1000; i++) {
@@ -1300,7 +1310,7 @@ setup(void)
 	match();
 
 	/* create menu window */
-	swa.override_redirect = True;
+	swa.override_redirect = managed ? False : True;
 	swa.background_pixel = scheme[SchemeNorm][ColBg].pixel;
 	swa.event_mask = ExposureMask | KeyPressMask | KeyReleaseMask | VisibilityChangeMask |
 	                 ButtonPressMask | PointerMotionMask;;
@@ -1381,6 +1391,8 @@ main(int argc, char *argv[])
 			nograb = 1;
 		else if (!strcmp(argv[i], "-A"))   /* alt-tab behaviour */
 			alttab = 1;
+		else if (!strcmp(argv[i], "-wm"))/* display as managed wm window */
+			managed = 1;
 		else if (i + 1 == argc)
 			usage();
 		/* these options take one argument */
