@@ -1,6 +1,40 @@
 #!/bin/bash
 
-{
-    tac "$HOME/.hist"
+# smart application launcher that remembers often used apps
+# define $1 to run in terminal
+if [ -z "$1" ]; then
+    LIST="$HOME/.cache/instantmenuhist"
+else
+    LIST="$HOME/.cache/instanttermmenuhist"
+fi
+
+read -r SELECTION < <({
+    tac "$LIST"
     instantmenu_path | sort -u
-} | perl -nE '$seen{$_}++ or print' | instantmenu -i -f "$@" -q "search apps" -l 10 -c -w -1 -h -1 -bw 4 | tee -a "$HOME/.hist" | ${SHELL:-"/bin/sh"} -s
+} | perl -nE '$seen{$_}++ or print' |
+    instantmenu -lc "instantmenu_smartrun terminal " -p "${1}" -i -f -q "search apps" -l 10 -c -w -1 -h -1 -bw 4)
+
+[ -z "$SELECTION" ] && exit
+a="$(TZ=UTC0 printf '%(%s)T\n' '-1')" ### `-1`  is the current time
+if [ -z "$1" ]; then
+    EXITSTATUS=$({
+        echo "$SELECTION" | ${SHELL:-"/bin/sh"} -s &>/dev/null && echo "$?"
+    })
+else
+    EXITSTATUS=$({
+        st -e "${SHELL:-/bin/sh}" -c "$SELECTION" &>/dev/null && echo "$?"
+    })
+fi
+
+elapsedseconds=$(($(TZ=UTC0 printf '%(%s)T\n' '-1') - a))
+
+if [ "$elapsedseconds" -gt 5 ] || [ "$EXITSTATUS" = 0 ]; then
+    [ -e "$HOME/.cache" ] || mkdir "$HOME/.cache"
+    if [ -z "$1" ]; then
+        echo "$SELECTION" | tee -a "$HOME/.cache/instantmenuhist"
+    else
+        echo "$SELECTION" | tee -a "$HOME/.cache/instanttermmenuhist"
+    fi
+else
+    echo "skipping error program"
+fi
