@@ -58,6 +58,7 @@ static struct item *matches, *matchend;
 static struct item *prev, *curr, *next, *sel;
 static int mon = -1, screen;
 static int managed = 0;
+static int commented = 0;
 
 static Atom clip, utf8;
 static Display *dpy;
@@ -105,12 +106,26 @@ calcoffsets(void)
 	else
 		n = mw - (promptw + inputw + TEXTW("<") + TEXTW(">"));
 	/* calculate which items will begin the next page and previous page */
-	for (i = 0, next = curr; next; next = next->right)
-		if ((i += (lines > 0) ? bh : MIN(TEXTW(next->text), n)) > n)
-			break;
-	for (i = 0, prev = curr; prev && prev->left; prev = prev->left)
-		if ((i += (lines > 0) ? bh : MIN(TEXTW(prev->left->text), n)) > n)
-			break;
+	for (i = 0, next = curr; next; next = next->right) {
+		if (!commented) {
+			if ((i += (lines > 0) ? bh : MIN(TEXTW(next->text), n)) > n)
+				break;
+		} else {
+			if ((i += (lines > 0) ? bh : MIN(itemwidth(next), n)) > n)
+				break;
+		}
+	}
+
+	for (i = 0, prev = curr; prev && prev->left; prev = prev->left) {
+		if (!commented) {
+			if ((i += (lines > 0) ? bh : MIN(TEXTW(prev->left->text), n)) > n)
+				break;
+		} else {
+			if ((i += (lines > 0) ? bh : MIN(itemwidth(prev->left), n)) > n)
+				break;
+
+		}
+	}
 }
 
 static int
@@ -146,6 +161,27 @@ cistrstr(const char *s, const char *sub)
 			return (char *)s;
 	return NULL;
 }
+
+int
+itemwidth(struct item *item) {
+	char output[1000];
+	int i;
+	int w;
+	strcpy(output, item->text);
+
+	if (item != sel) {
+		for (i = 0; i < strlen(output); i++){
+			if (output[i] == '-') {
+				output[i] = '\0';
+				break;
+			}
+		}
+	}
+	w = TEXTW(output);
+	return w;
+
+}
+
 
 static int
 drawitem(struct item *item, int x, int y, int w)
@@ -231,9 +267,26 @@ drawitem(struct item *item, int x, int y, int w)
 		}
 	}
 
+
+	char output[1000];
+	strcpy(output, item->text);
+
+	if (commented) {
+		if (item != sel) {
+			int i;
+			for (i = 0; i < strlen(output); i++){
+				if (output[i] == '-') {
+					output[i] = '\0';
+					w = TEXTW(output);
+					break;
+				}
+			}
+		}
+	}
+
 	if (item == sel)
 		sely = y;
-	return drw_text(drw, x + ((iscomment == 6) ? temppadding : 0), y, w - ((iscomment == 6) ? temppadding : 0), bh, lrpad / 2, item->text + iscomment, 0, (iscomment == 3 || item == sel));
+	return drw_text(drw, x + ((iscomment == 6) ? temppadding : 0), y, w - ((iscomment == 6) ? temppadding : 0), bh, lrpad / 2, output + iscomment, 0, (iscomment == 3 || item == sel));
 }
 
 
@@ -327,8 +380,13 @@ drawmenu(void)
 			drw_text(drw, x, 0, w, bh, lrpad / 2, "<", 0, 0);
 		}
 		x += w;
-		for (item = curr; item != next; item = item->right)
-			x = drawitem(item, x, 0, MIN(TEXTW(item->text), mw - x - TEXTW(">") - TEXTW(numbers)));
+		for (item = curr; item != next; item = item->right) {
+			if (!commented) {
+				x = drawitem(item, x, 0, MIN(TEXTW(item->text), mw - x - TEXTW(">") - TEXTW(numbers)));
+			} else {
+				x = drawitem(item, x, 0, MIN(itemwidth(item), mw - x - TEXTW(">") - TEXTW(numbers)));
+			}
+		}
 
 		if (next) {
 			w = TEXTW(">");
@@ -968,7 +1026,11 @@ setselection(XEvent *e)
 		/* horizontal list: (ctrl)left-click on item */
 		for (item = curr; item != next; item = item->right) {
 			x += w;
-			w = MIN(TEXTW(item->text), mw - x - TEXTW(">"));
+			if (!commented) {
+				w = MIN(TEXTW(item->text), mw - x - TEXTW(">"));
+			} else {
+				w = MIN(itemwidth(item), mw - x - TEXTW(">"));
+			}
 			if (ev->x >= x && ev->x <= x + w) {
 				if (sel == item)
 					return;				
@@ -1427,6 +1489,8 @@ main(int argc, char *argv[])
 			topbar = 0;
 		else if (!strcmp(argv[i], "-f"))   /* grabs keyboard before reading stdin */
 			fast = 1;
+		else if (!strcmp(argv[i], "-ct"))   /* centers dmenu on screen */
+			commented = 1;
 		else if (!strcmp(argv[i], "-c"))   /* centers dmenu on screen */
 			centered = 1;
 		else if (!strcmp(argv[i], "-C"))   /* go to mouse position */
