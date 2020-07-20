@@ -824,12 +824,17 @@ insert:
 		calcoffsets();
 		break;
 	case XK_Left:
+		if ((ev->state & ShiftMask || ev->state & Mod4Mask) && (leftcmd || rightcmd)) {
+			char *tmpcmd;
+			if (leftcmd)
+				tmpcmd = leftcmd;
+			else
+				tmpcmd = rightcmd;
 
-		if ((ev->state & ShiftMask || ev->state & Mod4Mask) && leftcmd) {
 			animated = 1;
 			animaterect(mw, 0, 0, mh, 0, 0, mw, mh);
 			cleanup();
-			spawn(leftcmd);
+			spawn(tmpcmd);
 			break;
 		}
 
@@ -873,11 +878,17 @@ insert:
 			sel->out = 1;
 		break;
 	case XK_Right:
-		if ((ev->state & ShiftMask || ev->state & Mod4Mask) && rightcmd) {
+		if ((ev->state & ShiftMask || ev->state & Mod4Mask) && (rightcmd || leftcmd)) {
+			char *tmpcmd;
+			if (rightcmd)
+				tmpcmd = rightcmd;
+			else
+				tmpcmd = leftcmd;
+
 			animated = 1;
 			animaterect(0, 0, 0, mh, 0, 0, mw, mh);
 			cleanup();
-			spawn(rightcmd);
+			spawn(tmpcmd);
 			break;
 		}
 		if (text[cursor] != '\0') {
