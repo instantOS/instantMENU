@@ -286,7 +286,7 @@ drawmenu(void)
 	drw_setscheme(drw, scheme[SchemeNorm]);
 	drw_rect(drw, 0, 0, mw, mh, 1, 1, 0);
 	if (commented && matches)
-		prompt = sel->text;
+		prompt = sel->text + 1;
 
 	if (prompt && *prompt) {
 		drw_setscheme(drw, scheme[SchemeSel]);
@@ -1443,7 +1443,7 @@ main(int argc, char *argv[])
 		else if (!strcmp(argv[i], "-ct")) {   /* centers dmenu on screen */
 			commented = 1;
 			static char commentprompt[20];
-			prompt = commentprompt;
+			prompt = commentprompt + 1;
 			strcpy(prompt, "prompts");
 		} else if (!strcmp(argv[i], "-c"))   /* centers dmenu on screen */
 			centered = 1;
