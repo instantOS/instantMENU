@@ -244,7 +244,8 @@ drawitem(struct item *item, int x, int y, int w)
 
 	if (item == sel)
 		sely = y;
-	return drw_text(drw, x + ((iscomment == 6) ? temppadding : 0), y, commented ? bh : (w - ((iscomment == 6) ? temppadding : 0)), bh, lrpad / 2, output + iscomment, 0, (iscomment == 3 || item == sel));
+	return drw_text(drw, x + ((iscomment == 6) ? temppadding : 0), y, commented ? bh : (w - ((iscomment == 6) ? temppadding : 0)), bh,
+		commented ? (bh - drw_fontset_getwidth(drw, (output))) / 2: lrpad / 2, output + iscomment, 0, (iscomment == 3 || item == sel));
 }
 
 static void
