@@ -503,6 +503,18 @@ fuzzymatch(void)
 static void
 match(void)
 {
+
+	if (commented) {
+		struct item *it;
+		for (it = items; it && it->text; it++) {
+			if (text && it->text[0] == text[0]) {
+				puts(it->text);
+				cleanup();
+				exit(0);
+			}		
+		}
+	}
+
 	if (fuzzy) {
 		fuzzymatch();
 		return;
