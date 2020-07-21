@@ -50,7 +50,7 @@ static char *embed;
 static int bh, mw, mh;
 static int dmx = 0, dmy = 0; /* put instantmenu at these x and y offsets */
 static unsigned int dmw = 0; /* make instantmenu this wide */
-static int inputw = 0, promptw, passwd = 0, nograb = 0, alttab = 0, tabbed = 0;
+static int inputw = 0, promptw, inputonly = 0, passwd = 0, nograb = 0, alttab = 0, tabbed = 0;
 static int lrpad; /* sum of left and right padding */
 static size_t cursor;
 static struct item *items = NULL;
@@ -1151,7 +1151,7 @@ readstdin(void)
 	size_t i, imax = 0, size = 0;
 	unsigned int tmpmax = 0;
 
- 	if(passwd){
+ 	if(passwd || inputonly){
  	  inputw = lines = 0;
  	  return;
  	}
@@ -1455,13 +1455,15 @@ main(int argc, char *argv[])
 			fast = 1;
 		else if (!strcmp(argv[i], "-ct")) {   /* centers dmenu on screen */
 			commented = 1;
-			static char commentprompt[20];
+			static char commentprompt[200];
 			prompt = commentprompt + 1;
 			strcpy(prompt, "prompts");
 		} else if (!strcmp(argv[i], "-c"))   /* centers dmenu on screen */
 			centered = 1;
 		else if (!strcmp(argv[i], "-C"))   /* go to mouse position */
 			followcursor = 1;
+		else if (!strcmp(argv[i], "-I"))   /* input only */
+			inputonly = 1;
 		else if (!strcmp(argv[i], "-F"))   /* disables fuzzy matching */
 			/* disables fuzzy matching */
 			fuzzy = 0;
