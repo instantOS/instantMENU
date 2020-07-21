@@ -8,17 +8,16 @@ instantMENU is a simple menu for instantOS
 it is used for instantASSIST and in some other places
 
 ## Features
-- rounded corners
-- different color scheme
-- auto select single option
-- fuzzy search
+- alt-tab functionality
 - mouse support
-- border
-- size and position options
+- animations and hover over indicators
+- icon prefixes
+- comments
+
 
 ## is this dmenu?
 
-instantMENU is a fork of dmenu and can be used as a drop in replacement. 
+instantMENU is a fork of dmenu and can be used as a drop in replacement, maintaining all dmenu behavior and making all extra features optional
 
 --------
 ### instantOS is still in early beta, contributions always welcome
