@@ -25,7 +25,7 @@
 #define INTERSECT(x,y,w,h,r)  (MAX(0, MIN((x)+(w),(r).x_org+(r).width)  - MAX((x),(r).x_org)) \
                              * MAX(0, MIN((y)+(h),(r).y_org+(r).height) - MAX((y),(r).y_org)))
 #define LENGTH(X)             (sizeof X / sizeof X[0])
-#define TEXTW(X)              (drw_fontset_getwidth(drw, (X)) + lrpad)
+#define TEXTW(X)              (commented ? bh : drw_fontset_getwidth(drw, (X)) + lrpad)
 
 #define NUMBERSMAXDIGITS      100
 #define NUMBERSBUFSIZE        (NUMBERSMAXDIGITS * 2) + 1
@@ -58,6 +58,7 @@ static struct item *matches, *matchend;
 static struct item *prev, *curr, *next, *sel;
 static int mon = -1, screen;
 static int managed = 0;
+static int commented = 0;
 
 static Atom clip, utf8;
 static Display *dpy;
@@ -231,11 +232,20 @@ drawitem(struct item *item, int x, int y, int w)
 		}
 	}
 
+	char *output;
+	if (commented) {
+		static char onestr[2];
+		onestr[0] = item->text[0];
+		onestr[1] = '\0';
+		output = onestr;
+	} else {
+		output = item->text;
+	}
+
 	if (item == sel)
 		sely = y;
-	return drw_text(drw, x + ((iscomment == 6) ? temppadding : 0), y, w - ((iscomment == 6) ? temppadding : 0), bh, lrpad / 2, item->text + iscomment, 0, (iscomment == 3 || item == sel));
+	return drw_text(drw, x + ((iscomment == 6) ? temppadding : 0), y, commented ? bh : (w - ((iscomment == 6) ? temppadding : 0)), bh, lrpad / 2, output + iscomment, 0, (iscomment == 3 || item == sel));
 }
-
 
 static void
 recalculatenumbers()
@@ -275,6 +285,8 @@ drawmenu(void)
 	char *censort;
 	drw_setscheme(drw, scheme[SchemeNorm]);
 	drw_rect(drw, 0, 0, mw, mh, 1, 1, 0);
+	if (commented && matches)
+		prompt = sel->text;
 
 	if (prompt && *prompt) {
 		drw_setscheme(drw, scheme[SchemeSel]);
@@ -338,6 +350,7 @@ drawmenu(void)
 
 		}
 	}
+
 
 	drw_setscheme(drw, scheme[SchemeNorm]);
 	if (tempnumer)
@@ -1243,7 +1256,7 @@ setup(void)
 
 	lines = MAX(lines, 0);
 	mh = (lines + 1) * bh;
-	promptw = (prompt && *prompt) ? TEXTW(prompt) - lrpad / 4 : 0;
+	promptw = commented ? bh * 15 : (prompt && *prompt) ? TEXTW(prompt) - lrpad / 4 : 0;
 
 #ifdef XINERAMA
 	i = 0;
@@ -1427,7 +1440,12 @@ main(int argc, char *argv[])
 			topbar = 0;
 		else if (!strcmp(argv[i], "-f"))   /* grabs keyboard before reading stdin */
 			fast = 1;
-		else if (!strcmp(argv[i], "-c"))   /* centers dmenu on screen */
+		else if (!strcmp(argv[i], "-ct")) {   /* centers dmenu on screen */
+			commented = 1;
+			static char commentprompt[20];
+			prompt = commentprompt;
+			strcpy(prompt, "prompts");
+		} else if (!strcmp(argv[i], "-c"))   /* centers dmenu on screen */
 			centered = 1;
 		else if (!strcmp(argv[i], "-C"))   /* go to mouse position */
 			followcursor = 1;
