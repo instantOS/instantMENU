@@ -50,7 +50,7 @@ static char *embed;
 static int bh, mw, mh;
 static int dmx = 0, dmy = 0; /* put instantmenu at these x and y offsets */
 static unsigned int dmw = 0; /* make instantmenu this wide */
-static int inputw = 0, promptw, inputonly = 0, passwd = 0, nograb = 0, alttab = 0, tabbed = 0;
+static int inputw = 0, promptw, toast = 0, inputonly = 0, passwd = 0, nograb = 0, alttab = 0, tabbed = 0;
 static int lrpad; /* sum of left and right padding */
 static size_t cursor;
 static struct item *items = NULL;
@@ -258,6 +258,12 @@ recalculatenumbers()
 		for (item = matchend; item && item->left; item = item->left)
 			numer++;
 	}
+
+	if (toast) {
+		tempnumer = 0;
+		return;
+	}
+
 	for (item = items; item && item->text; item++)
 		denom++;
 	if (numer > 1) {
@@ -362,6 +368,9 @@ drawmenu(void)
 static void
 grabfocus(void)
 {
+	if (toast)
+		return;
+
 	struct timespec ts = { .tv_sec = 0, .tv_nsec = 10000000  };
 	Window focuswin;
 	int i, revertwin;
@@ -388,6 +397,8 @@ grabfocus(void)
 static void
 grabkeyboard(void)
 {
+	if (toast)
+		return;
 	struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000  };
 	int i;
 
@@ -1185,6 +1196,12 @@ run(void)
 	Time lasttime = 0;
 	int i;
 
+	if (toast) {
+		drawmenu();
+		usleep(toast * 100000);
+		exit(0);
+	}
+
 	while (!XNextEvent(dpy, &ev)) {
 		if (preselected) {
 			for (i = 0; i < preselected; i++) {
@@ -1453,6 +1470,8 @@ main(int argc, char *argv[])
 			topbar = 0;
 		else if (!strcmp(argv[i], "-f"))   /* grabs keyboard before reading stdin */
 			fast = 1;
+		else if (!strcmp(argv[i], "-T"))   /* grabs keyboard before reading stdin */
+			toast = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-ct")) {   /* centers dmenu on screen */
 			commented = 1;
 			static char commentprompt[200];
