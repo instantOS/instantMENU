@@ -1267,7 +1267,16 @@ setup(void)
 	XIM xim;
 	Window w, dw, *dws;
 	XWindowAttributes wa;
-	XClassHint ch = {"dmenu", "dmenu"};
+
+	char wmclass[20];
+
+	if (!managed)
+		strcpy(wmclass, "dmenu");
+	else
+		strcpy(wmclass, "floatmenu");
+
+	XClassHint ch = {wmclass, wmclass};
+
 #ifdef XINERAMA
 	XineramaScreenInfo *info;
 	Window pw;
