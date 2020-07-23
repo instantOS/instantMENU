@@ -523,7 +523,12 @@ match(void)
 				puts(it->text);
 				cleanup();
 				exit(0);
-			}		
+			}	
+		}
+		// exit if no match is found
+		if (text[0] != '\0') {
+			cleanup();
+			exit(0);
 		}
 	}
 
