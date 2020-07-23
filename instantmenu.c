@@ -1436,6 +1436,8 @@ setup(void)
 
 	XSetClassHint(dpy, win, &ch);
 
+	if (managed)
+		XStoreName(dpy, win, searchtext ? searchtext : "menu");
 
 	/* input methods */
 	if ((xim = XOpenIM(dpy, NULL, NULL, NULL)) == NULL)
