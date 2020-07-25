@@ -1372,9 +1372,11 @@ setup(void)
 			y = info[i].y_org + (topbar ? dmy : info[i].height - mh - dmy);
 			mw = (dmw>0 ? dmw : info[i].width);
 		}
+
 		if (mh > drw->h - 10) {
-			mh = drw->h - border_width * 2;
-			lines = (drw->h / lineheight) - 1; 
+			mh = drw->h - border_width * 2 - 10;
+			fprintf(stderr, "lineheight %d", lineheight);
+			lines = (drw->h / (lineheight ? lineheight : bh)) - 1; 
 		}
 
 		if (mw > drw->w - 10) {
