@@ -27,11 +27,11 @@ fi
 a="$(TZ=UTC0 printf '%(%s)T\n' '-1')" ### `-1`  is the current time
 if [ -z "$1" ]; then
     EXITSTATUS=$({
-        echo "$SELECTION" | ${SHELL:-"/bin/sh"} -s &>/dev/null && echo "$?"
+        /bin/sh -c "$SELECTION" &>/dev/null && echo "$?"
     })
 else
     EXITSTATUS=$({
-        st -e "${SHELL:-/bin/sh}" -c "$SELECTION" &>/dev/null && echo "$?"
+        st -e "/bin/sh" -c "$SELECTION" &>/dev/null && echo "$?"
     })
 fi
 
@@ -45,7 +45,7 @@ else
 fi
 
 # max history size
-if [ "$(wc -l $LIST | grep -o '^[^ ]*')" -gt 1300 ]; then
+if [ "$(wc -l "$LIST" | grep -o '^[^ ]*')" -gt 1300 ]; then
     head -1000 <"$LIST" | tee "${LIST}2"
     cat "${LIST}2" >"$LIST"
 fi
