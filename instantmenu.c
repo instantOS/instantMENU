@@ -1368,6 +1368,8 @@ setup(void)
 				y = 0;
 
 		} else {
+			if (dmy <= -1)
+				dmy = drw->fonts->h * 1.55;
 			x = info[i].x_org + dmx;
 			y = info[i].y_org + (topbar ? dmy : info[i].height - mh - dmy);
 			mw = (dmw>0 ? dmw : info[i].width);
@@ -1601,8 +1603,16 @@ main(int argc, char *argv[])
 		readstdin();
 		grabkeyboard();
 	}
-	if (dmw == -1)
-		dmw = max_textw() * 1.3 + (prompt ? TEXTW(prompt) : 0);
+
+	if (dmw <= -1) {
+		int maxw = max_textw() * 1.3 + (prompt ? TEXTW(prompt) : 0);
+		if (dmw * (-1) > maxw) {
+			dmw = dmw * (-1);
+		} else {
+			dmw = maxw;
+		}
+
+	}
 	setup();
 	run();
 
