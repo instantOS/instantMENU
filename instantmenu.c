@@ -49,7 +49,7 @@ static char text[BUFSIZ] = "";
 static char *embed;
 static int bh, mw, mh;
 static int dmx = 0, dmy = 0; /* put instantmenu at these x and y offsets */
-static unsigned int dmw = 0; /* make instantmenu this wide */
+static int dmw = 0; /* make instantmenu this wide */
 static int inputw = 0, promptw, toast = 0, inputonly = 0, passwd = 0, nograb = 0, alttab = 0, tabbed = 0;
 static int lrpad; /* sum of left and right padding */
 static size_t cursor;
