@@ -666,12 +666,30 @@ double easeOutQuint( double t ) {
     return 1 + (--t) * t * t;
 }
 
-void animatesel() {
+void animatesel(struct item *item ) {
 	if (!animated || !framecount)
 		return;
 	int time;
 	time  = 0;
-	drw_setscheme(drw, scheme[SchemeSel]);
+	switch (item->text[1])
+	{
+	case 'r':
+		drw_setscheme(drw, scheme[SchemeRed]);
+		break;
+	case 'g':
+		drw_setscheme(drw, scheme[SchemeGreen]);
+		break;
+	case 'y':
+		drw_setscheme(drw, scheme[SchemeYellow]);
+		break;
+	case 'b':
+		drw_setscheme(drw, scheme[SchemeSel]);
+		break;
+	default:
+		drw_setscheme(drw, scheme[SchemeSel]);
+		break;
+	}
+//	drw_setscheme(drw, scheme[SchemeSel]);
 	while (time < framecount)
 	{
 		// bottom animation
@@ -909,7 +927,7 @@ insert:
 	case XK_KP_Enter:
 		if (sel && sel->text[0] == '>')
 			break;
-		animatesel();
+		animatesel(sel);
 
 		puts((sel && !(ev->state & ShiftMask)) ? sel->text : text);
 		if (!(ev->state & ControlMask)) {
@@ -1065,7 +1083,7 @@ buttonpress(XEvent *e)
 				item = sel;
 				if (sel && sel->text[0] == '>')
 					return;
-				animatesel();
+				animatesel(sel);
 				puts(item->text);
 				if (!(ev->state & ControlMask))
 					exit(0);
@@ -1094,7 +1112,7 @@ buttonpress(XEvent *e)
 					if (ev->x >= x && ev->x <= x + w) {
 						if (sel && item->text[0] == '>')
 							break;
-						animatesel();
+						animatesel(sel);
 						puts(item->text);
 						if (!(ev->state & ControlMask))
 							exit(0);
