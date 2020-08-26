@@ -31,7 +31,7 @@ if [ -z "$1" ]; then
     })
 else
     EXITSTATUS=$({
-        st -e "/bin/sh" -c "$SELECTION" &>/dev/null && echo "$?"
+        ~/.config/instantos/default/terminal -e "/bin/sh" -c "$SELECTION" &>/dev/null && echo "$?"
     })
 fi
 
