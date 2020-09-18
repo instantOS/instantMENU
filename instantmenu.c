@@ -1387,8 +1387,8 @@ setup(void)
 
 		if (x < info[i].x_org)
 			x = info[i].x_org;
-		if (x + mw > drw->w)
-			x = drw->w - mw - border_width*2;
+		if (x + mw > info[i].x_org + info[i].width)
+			x = info[i].x_org + info[i].width - mw - border_width*2;
 		if (fullheight) {
 			y = 32;
 			mh = drw->h - border_width * 2 - 32;
