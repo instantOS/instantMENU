@@ -789,6 +789,10 @@ keypress(XKeyEvent *ev)
 		}
 	} else if (ev->state & Mod1Mask) {
 		switch(ksym) {
+        case XK_F4:
+            cleanup();
+            exit(1);
+        break;
 		case XK_b:
 			movewordedge(-1);
 			goto draw;
@@ -820,7 +824,12 @@ keypress(XKeyEvent *ev)
 		default:
 			return;
 		}
-	}
+    } else if (ev->state & Mod4Mask) {
+        if (ksym == XK_q) {
+            cleanup();
+            exit(1);
+        }
+    }
 
 	switch(ksym) {
 	default:
