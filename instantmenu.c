@@ -1575,7 +1575,10 @@ main(int argc, char *argv[])
 			border_width = atoi(argv[++i]); /* border width */
 		else if (!strcmp(argv[i], "-ps"))   /* preselected item */
 			preselected = atoi(argv[++i]);
-		else
+		else if (!strcmp(argv[i], "-it")) {   /* embedding window id */
+			const char * text = argv[++i];
+			insert(text, strlen(text));
+		} else
 			usage();
 
 	if (!setlocale(LC_CTYPE, "") || !XSupportsLocale())
