@@ -2,20 +2,34 @@
 
 # smart application launcher that remembers often used apps
 # define $1 to run in terminal
-if [ -z "$1" ]; then
+if [ -n "$2" ]; then
+    LIST="$HOME/.cache/instantmenuhist"
+    ARGS="terminal"
+elif [ -z "$1" ]; then
     LIST="$HOME/.cache/instantmenuhist"
     ARGS="terminal"
 else
     LIST="$HOME/.cache/instanttermmenuhist"
 fi
 
-# read history and path
-read -r SELECTION < <({
-    tac "$LIST"
-    instantmenu_path | sort -u
-} | perl -nE '$seen{$_}++ or print' |
-    instantmenu -rc "instantmenu_smartrun $ARGS" -lc "instantmenu_smartrun $ARGS" \
-        -p "${1}" -i -f -q "search apps" -l 10 -c -w -1 -h -1 -bw 4)
+if [ -n "$2" ]; then
+    # read history and path
+    read -r SELECTION < <({
+        tac "$LIST"
+        instantmenu_path | sort -u
+    } | perl -nE '$seen{$_}++ or print' |
+        instantmenu -rc "instantmenu_smartrun $ARGS" -lc "instantmenu_smartrun $ARGS" \
+            -p "${1}" -i -f -q "search apps" -l 10 -c -w -1 -h -1 -bw 4 -it "$2")
+else
+
+    # read history and path
+    read -r SELECTION < <({
+        tac "$LIST"
+        instantmenu_path | sort -u
+    } | perl -nE '$seen{$_}++ or print' |
+        instantmenu -rc "instantmenu_smartrun $ARGS" -lc "instantmenu_smartrun $ARGS" \
+            -p "${1}" -i -f -q "search apps" -l 10 -c -w -1 -h -1 -bw 4)
+fi
 
 # check if the application doesn't exist (indicated by exit code 1 and short runtime)
 
