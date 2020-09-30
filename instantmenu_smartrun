@@ -9,11 +9,18 @@ elif [ -z "$1" ]; then
     LIST="$HOME/.cache/instantmenuhist"
     ARGS="terminal"
 else
+    if [ "$1" = "golaunch" ]; then
+        shift 1
+        # clear stdin
+        golaunch | instantmenu -p "desktop" -lc "instantmenu_smartrun terminal" -rc "instantmenu_smartrun" -f -q "search apps" -l 10 -c -w -1 -h -1 -bw 4 | golaunch
+        exit
+    fi
     LIST="$HOME/.cache/instanttermmenuhist"
 fi
 
 if [ -n "$2" ]; then
     # read history and path
+    # put in initial text
     read -r SELECTION < <({
         tac "$LIST"
         instantmenu_path | sort -u
