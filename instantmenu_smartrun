@@ -2,20 +2,20 @@
 
 # smart application launcher that remembers often used apps
 # define $1 to run in terminal
-if [ -n "$2" ]; then
+if [ -n "$2" ] || [ -z "$1" ]; then
     LIST="$HOME/.cache/instantmenuhist"
-    ARGS="terminal"
-elif [ -z "$1" ]; then
-    LIST="$HOME/.cache/instantmenuhist"
-    ARGS="terminal"
+    RARGS="terminal"
+    LARGS="golaunch"
 else
     if [ "$1" = "golaunch" ]; then
         shift 1
         # clear stdin
-        golaunch | instantmenu -p "desktop" -lc "instantmenu_smartrun terminal" -rc "instantmenu_smartrun" -f -q "search apps" -l 10 -c -w -1 -h -1 -bw 4 | golaunch
+        godesktop | instantmenu -p "desktop" -lc "instantmenu_smartrun terminal" -rc "instantmenu_smartrun" -f -q "search apps" -l 10 -c -i -w -1 -h -1 -bw 4 | golaunch
         exit
     fi
     LIST="$HOME/.cache/instanttermmenuhist"
+    RARGS="golaunch"
+    LARGS=""
 fi
 
 if [ -n "$2" ]; then
@@ -25,7 +25,7 @@ if [ -n "$2" ]; then
         tac "$LIST"
         instantmenu_path | sort -u
     } | perl -nE '$seen{$_}++ or print' |
-        instantmenu -rc "instantmenu_smartrun $ARGS" -lc "instantmenu_smartrun $ARGS" \
+        instantmenu -rc "instantmenu_smartrun $RARGS" -lc "instantmenu_smartrun $LARGS" \
             -p "${1}" -i -f -q "search apps" -l 10 -c -w -1 -h -1 -bw 4 -it "$2")
 else
 
@@ -34,7 +34,7 @@ else
         tac "$LIST"
         instantmenu_path | sort -u
     } | perl -nE '$seen{$_}++ or print' |
-        instantmenu -rc "instantmenu_smartrun $ARGS" -lc "instantmenu_smartrun $ARGS" \
+        instantmenu -rc "instantmenu_smartrun $RARGS" -lc "instantmenu_smartrun $LARGS" \
             -p "${1}" -i -f -q "search apps" -l 10 -c -w -1 -h -1 -bw 4)
 fi
 
