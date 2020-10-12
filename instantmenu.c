@@ -69,6 +69,7 @@ static Drw *drw;
 static Clr *scheme[SchemeLast];
 
 #include "config.h"
+
 static char * cistrstr(const char *s, const char *sub);
 static int (*fstrncmp)(const char *, const char *, size_t) = strncasecmp;
 static char *(*fstrstr)(const char *, const char *) = cistrstr;
