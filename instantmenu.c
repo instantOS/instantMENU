@@ -69,9 +69,9 @@ static Drw *drw;
 static Clr *scheme[SchemeLast];
 
 #include "config.h"
-
-static int (*fstrncmp)(const char *, const char *, size_t) = strncmp;
-static char *(*fstrstr)(const char *, const char *) = strstr;
+static char * cistrstr(const char *s, const char *sub);
+static int (*fstrncmp)(const char *, const char *, size_t) = strncasecmp;
+static char *(*fstrstr)(const char *, const char *) = cistrstr;
 
 int
 getrootptr(int *x, int *y)
@@ -307,7 +307,7 @@ drawmenu(void)
 	/* draw input field */
 	w = (lines > 0 || !matches) ? mw - x : inputw;
 	drw_setscheme(drw, scheme[SchemeNorm]);
-	
+
 	if (passwd) {
 			censort = ecalloc(1, sizeof(text));
 			memset(censort, '.', strlen(text));
@@ -502,7 +502,7 @@ fuzzymatch(void)
 		free(fuzzymatches);
 	}
 	curr = sel = matches;
-	
+
 	if(instant && matches && matches==matchend) {
 		puts(matches->text);
 		cleanup();
@@ -523,7 +523,7 @@ match(void)
 				puts(it->text);
 				cleanup();
 				exit(0);
-			}	
+			}
 		}
 		// exit if no match is found
 		if (text[0] != '\0') {
@@ -806,7 +806,7 @@ keypress(XKeyEvent *ev)
 		case XK_k: ksym = XK_Prior; break;
 		case XK_l: ksym = XK_Down;  break;
 		case XK_space:
-		
+
 		if (alttab) {
 			tabbed = 0;
 			alttab = 0;
@@ -1022,7 +1022,7 @@ setselection(XEvent *e)
 			w = MIN(TEXTW(item->text), mw - x - TEXTW(">"));
 			if (ev->x >= x && ev->x <= x + w) {
 				if (sel == item)
-					return;				
+					return;
 				sel = item;
 				if (sel) {
 					//sel->out = 1;
@@ -1341,12 +1341,12 @@ setup(void)
 				mw = dmw;
 			else
 				mw = info[i].width - 100;
-			
+
 			while ((lines + 1) * bh > info[i].height)
 			{
 				lines--;
 			}
-			
+
 			mh = (lines + 1) * bh;
 			x = info[i].x_org + ((info[i].width  - mw) / 2);
 			y = info[i].y_org + ((info[i].height - mh) / 2);
@@ -1387,7 +1387,7 @@ setup(void)
 		if (mh > drw->h - 10) {
 			mh = drw->h - border_width * 2 - 10;
 			fprintf(stderr, "lineheight %d", lineheight);
-			lines = (drw->h / (lineheight ? lineheight : bh)) - 1; 
+			lines = (drw->h / (lineheight ? lineheight : bh)) - 1;
 		}
 
 		if (mw > drw->w - 10) {
@@ -1518,9 +1518,9 @@ main(int argc, char *argv[])
 		else if (!strcmp(argv[i], "-H")) {
 			fullheight = 1;
 		}
-		else if (!strcmp(argv[i], "-i")) { /* case-insensitive item matching */
-			fstrncmp = strncasecmp;
-			fstrstr = cistrstr;
+		else if (!strcmp(argv[i], "-s")) { /* case-sensitive item matching */
+			fstrncmp = strncmp;
+			fstrstr = strstr;
 		} else if (!strcmp(argv[i], "-n")) { /* instant select only match */
 			instant = 1;
 		} else if (!strcmp(argv[i], "-P"))   /* is the input a password */
