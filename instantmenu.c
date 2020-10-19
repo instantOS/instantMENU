@@ -782,10 +782,20 @@ keypress(XKeyEvent *ev)
 		}
 	} else if (ev->state & ShiftMask) {
 		if (alttab) {
-			if (sel && sel->left && (sel = sel->left)->right == curr) {
-				curr = prev;
-				calcoffsets();
-			}
+            if (sel) {
+                if (sel == items) {
+                    struct item *lastitem;
+                    for (lastitem = items; lastitem && lastitem->right; lastitem = lastitem->right);
+                    sel = lastitem;
+                    //curr = lastitem;
+                    calcoffsets();
+                } else {
+                    if (sel->left && (sel = sel->left)->right == curr) {
+                        curr = prev;
+                        calcoffsets();
+                    }
+                }
+            }
 		}
 	} else if (ev->state & Mod1Mask) {
 		switch(ksym) {
@@ -815,10 +825,22 @@ keypress(XKeyEvent *ev)
 		case XK_Tab:
 		tabbed = 1;
 
-		if (sel && sel->right && (sel = sel->right) == next) {
-			curr = next;
-			calcoffsets();
-		}
+        if (sel) {
+
+            struct item *lastitem;
+            for (lastitem = items; lastitem && lastitem->right; lastitem = lastitem->right);
+
+            if (sel == lastitem) {
+                sel = items;
+                curr = items;
+			    calcoffsets();
+            } else {
+                if (sel->right && (sel = sel->right) == next) {
+                    curr = next;
+                    calcoffsets();
+                }
+            }
+        }
 
 		break;
 		default:
