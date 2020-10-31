@@ -1595,8 +1595,14 @@ main(int argc, char *argv[])
 			embed = argv[++i];
 		else if (!strcmp(argv[i], "-bw"))
 			border_width = atoi(argv[++i]); /* border width */
-		else if (!strcmp(argv[i], "-ps"))   /* preselected item */
-			preselected = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "-ps")) {
+            /* preselected item */
+            if (*argv[i] == '-') {
+			    preselected = atoi(argv[++i] + 1);
+            } else {
+			    preselected = atoi(argv[++i]);
+            }
+        }
 		else if (!strcmp(argv[i], "-it")) {   /* embedding window id */
 			const char * text = argv[++i];
 			insert(text, strlen(text));
