@@ -7,6 +7,7 @@ static int followcursor = 0;                    /* -c option; centers dmenu on s
 static int min_width = 500;                    /* minimum width when centered */
 
 static int instant = 0;
+static int spaceconfirm = 0;
 static int fuzzy = 1;
 static int sely = 0;
 static int animated = 0;

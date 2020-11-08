@@ -1532,6 +1532,8 @@ main(int argc, char *argv[])
 			centered = 1;
 		else if (!strcmp(argv[i], "-C"))   /* go to mouse position */
 			followcursor = 1;
+		else if (!strcmp(argv[i], "-S"))   /* confirm using the space key */
+			spaceconfirm = 1;
 		else if (!strcmp(argv[i], "-I"))   /* input only */
 			inputonly = 1;
 		else if (!strcmp(argv[i], "-F"))   /* disables fuzzy matching */
