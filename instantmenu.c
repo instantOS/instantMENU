@@ -1599,7 +1599,7 @@ main(int argc, char *argv[])
 			border_width = atoi(argv[++i]); /* border width */
         else if (!strcmp(argv[i], "-ps")) {
             /* preselected item */
-            if (*argv[i] == '-') {
+            if (*argv[i + 1] == '-') {
 			    preselected = atoi(argv[++i] + 1);
             } else {
 			    preselected = atoi(argv[++i]);
