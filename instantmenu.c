@@ -601,8 +601,19 @@ insert(const char *str, ssize_t n)
 		return;
 	/* move existing text out of the way, insert new text, and update cursor */
 	memmove(&text[cursor + n], &text[cursor], sizeof text - cursor - MAX(n, 0));
-	if (n > 0)
+    if (n > 0) {
 		memcpy(&text[cursor], str, n);
+        int i;
+        if (smartcase) {
+            for (i = 0; i < strlen(text); i++) {
+                if (text[i] >= 65 && text[i] <= 90) {
+                    smartcase = 0;
+                    fstrncmp = strncmp;
+                    fstrstr = strstr;
+                }
+            }
+        }
+    }
 	cursor += n;
 	match();
 }
@@ -1536,6 +1547,12 @@ main(int argc, char *argv[])
 			spaceconfirm = 1;
 		else if (!strcmp(argv[i], "-I"))   /* input only */
 			inputonly = 1;
+        else if (!strcmp(argv[i], "-s")) {
+            /* enable smart case */
+            smartcase = 1;
+			fstrncmp = strncasecmp;
+			fstrstr = cistrstr;
+        }
 		else if (!strcmp(argv[i], "-F"))   /* disables fuzzy matching */
 			/* disables fuzzy matching */
 			fuzzy = 0;
