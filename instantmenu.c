@@ -1370,7 +1370,7 @@ setup(void)
 				if (INTERSECT(x, y, 1, 1, info[i]))
 					break;
 		if (centered) {
-			if (dmw)
+			if (dmw && info[i].width)
 				mw = dmw;
 			else
 				mw = info[i].width - 100;
