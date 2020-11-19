@@ -564,7 +564,7 @@ match(void)
 			appenditem(item, &matches, &matchend);
 		else if (!fstrncmp(tokv[0], item->text, len))
 			appenditem(item, &lprefix, &prefixend);
-		else
+		else if (!exact)
 			appenditem(item, &lsubstr, &substrend);
 	}
 	if (lprefix) {
@@ -1539,7 +1539,11 @@ main(int argc, char *argv[])
 		else if (!strcmp(argv[i], "-F"))   /* disables fuzzy matching */
 			/* disables fuzzy matching */
 			fuzzy = 0;
-		else if (!strcmp(argv[i], "-H")) {
+        else if (!strcmp(argv[i], "-E")) {
+			/* enabled exact matching */
+			exact = 1;
+            fuzzy = 0;
+        } else if (!strcmp(argv[i], "-H")) {
 			fullheight = 1;
 		}
 		else if (!strcmp(argv[i], "-i")) { /* case-insensitive item matching */
