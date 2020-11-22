@@ -758,6 +758,13 @@ keypress(XKeyEvent *ev)
 		case XK_n: ksym = XK_Down;      break;
 		case XK_p: ksym = XK_Up;        break;
 
+		case XK_v: /* paste clipboard */
+            XConvertSelection(dpy, (ev->state & ShiftMask) ? clip : XA_PRIMARY,
+                              utf8, utf8, win, CurrentTime);
+            drawmenu();
+            return;
+			break;
+
 		case XK_k: /* delete right */
 			text[cursor] = '\0';
 			match();
