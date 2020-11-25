@@ -1377,7 +1377,7 @@ setup(void)
 				if (INTERSECT(x, y, 1, 1, info[i]))
 					break;
 		if (centered) {
-			if (dmw && info[i].width)
+			if (dmw && dmw < info[i].width && info[i].width)
 				mw = dmw;
 			else
 				mw = info[i].width - 100;
@@ -1421,7 +1421,7 @@ setup(void)
 				dmy = drw->fonts->h * 1.55;
 			x = info[i].x_org + dmx;
 			y = info[i].y_org + (topbar ? dmy : info[i].height - mh - dmy);
-			mw = (dmw>0 ? dmw : info[i].width);
+			mw = ((dmw>0 && dmw < info[i].width) ? dmw : info[i].width);
 		}
 
 		if (mh > drw->h - 10) {
@@ -1469,7 +1469,7 @@ setup(void)
 		} else {
 			x = dmx;
 			y = topbar ? dmy : wa.height - mh - dmy;
-			mw = (dmw>0 ? dmw : wa.width);
+			mw = ((dmw>0 && dmw < wa.width) ? dmw : wa.width);
 		}
 	}
 
