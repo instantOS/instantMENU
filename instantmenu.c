@@ -1518,7 +1518,7 @@ static void
 usage(void)
 {
 	fputs("usage: instantmenu [-bfinPv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
-	      "             [-x xoffset] [-y yoffset] [-w width]\n"
+	      "             [-x xoffset] [-xr right x offset] [-y yoffset] [-w width]\n"
 	      "             [-h height]\n"
 
 	      "             [-nb color] [-nf color] [-sb color] [-sf color] [-w windowid]\n", stderr);
