@@ -326,7 +326,7 @@ drawmenu(void)
 	if ((curpos += lrpad / 2 - 1) < w) {
 		drw_setscheme(drw, scheme[SchemeNorm]);
 		// disable cursor on password prompt
-		if (!passwd)
+		if (!passwd && !toast)
 			drw_rect(drw, x + curpos, 2 + (bh-fh)/2, 2, fh - 4, 1, 0, 0);
 
 	}
@@ -1417,8 +1417,14 @@ setup(void)
 				y = 0;
 
 		} else {
-			if (dmy <= -1)
-				dmy = drw->fonts->h * 1.55;
+            if (dmy <= -1) {
+                if (dmy == -1)
+                    dmy = (wa.height - mh) / 2;
+                else
+                    dmy = drw->fonts->h * 1.55;
+            }
+            if (dmx == -1)
+                dmx = (wa.width  - mw) / 2;
 			x = info[i].x_org + dmx;
 			y = info[i].y_org + (topbar ? dmy : info[i].height - mh - dmy);
 			mw = ((dmw>0 && dmw < info[i].width) ? dmw : info[i].width);
@@ -1539,7 +1545,7 @@ main(int argc, char *argv[])
 			topbar = 0;
 		else if (!strcmp(argv[i], "-f"))   /* grabs keyboard before reading stdin */
 			fast = 1;
-		else if (!strcmp(argv[i], "-T"))   /* grabs keyboard before reading stdin */
+		else if (!strcmp(argv[i], "-T"))   /* launch instantmenu in a toast mode that times out after a while */
 			toast = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-ct")) {   /* centers dmenu on screen */
 			commented = 1;
