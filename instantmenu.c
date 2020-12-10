@@ -1419,15 +1419,15 @@ setup(void)
 		} else {
             if (dmy <= -1) {
                 if (dmy == -1)
-                    dmy = (wa.height - mh) / 2;
+                    dmy = (info[i].height - mh) / 2;
                 else
                     dmy = drw->fonts->h * 1.55;
             }
+			mw = ((dmw>0 && dmw < info[i].width) ? dmw : info[i].width);
             if (dmx == -1)
-                dmx = (wa.width  - mw) / 2;
+                dmx = (info[i].width  - mw) / 2;
 			x = info[i].x_org + dmx;
 			y = info[i].y_org + (topbar ? dmy : info[i].height - mh - dmy);
-			mw = ((dmw>0 && dmw < info[i].width) ? dmw : info[i].width);
 		}
 
 		if (mh > drw->h - 10) {
