@@ -30,10 +30,12 @@ is a dynamic menu for X, which reads a list of newline\-separated items from
 stdin.  When the user selects an item and presses Return, their choice is printed
 to stdout and instantmenu terminates.  Entering text will narrow the items to those
 matching the tokens in the input.
+It is an extension of dmenu, meaning it can be used as a drop-in replacement but has a lot of extra features as well.
+instantmenu is used for most of the interfaces present in instantOS. 
 .P
 .B instantmenu_run
 is a script used by
-.IR dwm (1)
+.IR instantwm (1)
 which lists programs in the user's $PATH and runs the result in their $SHELL.
 .SH OPTIONS
 .TP
@@ -41,7 +43,7 @@ which lists programs in the user's $PATH and runs the result in their $SHELL.
 instantmenu appears at the bottom of the screen.
 .TP
 .B \-c
-dmenu appears centered on the screen.
+instanmenu appears centered on the screen.
 .TP
 .B \-f
 instantmenu grabs the keyboard before reading stdin if not reading from a tty. This
@@ -50,11 +52,20 @@ is faster, but will lock up X until stdin reaches end\-of\-file.
 .B \-i
 instantmenu matches menu items case insensitively.
 .TP
+.B \-it " initialtext"
+instantmenu starts with an initial text in the input field
+.TP
+.B \-ps " index"
+instantmenu starts with the item at index n preselected. it starts counting at 0
+.TP
 .BI \-l " lines"
 instantmenu lists items vertically, with the given number of lines.
 .TP
 .BI \-h " height"
 instantmenu uses a menu line of at least 'height' pixels tall, but no less than 8.
+.TP
+.BI \-h " borderwidth"
+add a border around instantmenu with width n
 .TP
 .B \-n
 instantmenu instantly selects if only one match.
@@ -63,6 +74,9 @@ instantmenu instantly selects if only one match.
 instantmenu is placed at this offset measured from the left side of the monitor.
 Can be negative.
 If option
+.B \-C
+instantmenu will appear at the position of the mouse cursor
+.TP
 .B \-m
 is present, the measurement will use the given monitor.
 .TP
@@ -76,6 +90,9 @@ is present, the measurement will use the given monitor.
 .TP
 .BI \-w " width"
 sets the width of the instantmenu window.
+.TP
+.B \-W
+The width will be automatically adjusted depending of the width of the longest line of text present in instdin
 .TP
 .BI \-m " monitor"
 instantmenu is displayed on the monitor number supplied. Monitor numbers are starting
@@ -217,5 +234,5 @@ Page up
 .B M\-l
 Down
 .SH SEE ALSO
-.IR dwm (1),
+.IR instantwm (1),
 .IR itest (1)
