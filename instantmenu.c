@@ -50,6 +50,7 @@ static char *embed;
 static int bh, mw, mh;
 static int dmx = 0, dmy = 0; /* put instantmenu at these x and y offsets */
 static int dmw = 0; /* make instantmenu this wide */
+static int rightxoffset = 0; /* make instantmenu x offset come from the right */
 static int inputw = 0, promptw, toast = 0, inputonly = 0, passwd = 0, nograb = 0, alttab = 0, tabbed = 0;
 static int lrpad; /* sum of left and right padding */
 static size_t cursor;
@@ -1426,7 +1427,7 @@ setup(void)
 			mw = ((dmw>0 && dmw < info[i].width) ? dmw : info[i].width);
             if (dmx == -1)
                 dmx = (info[i].width  - mw) / 2;
-			x = info[i].x_org + dmx;
+            x = rightxoffset ? info[i].x_org + info[i].width - dmx - mw - 2 * border_width : info[i].x_org + dmx;
 			y = info[i].y_org + (topbar ? dmy : info[i].height - mh - dmy);
 		}
 
@@ -1523,7 +1524,7 @@ static void
 usage(void)
 {
 	fputs("usage: instantmenu [-bfinPv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
-	      "             [-x xoffset] [-y yoffset] [-w width]\n"
+	      "             [-x xoffset] [-xr right xoffset] [-y yoffset] [-w width]\n"
 	      "             [-h height]\n"
 
 	      "             [-nb color] [-nf color] [-sb color] [-sf color] [-w windowid]\n", stderr);
@@ -1600,7 +1601,10 @@ main(int argc, char *argv[])
 			lines = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-x"))   /* window x offset */
 			dmx = atoi(argv[++i]);
-		else if (!strcmp(argv[i], "-y"))   /* window y offset (from bottom up if -b) */
+        else if (!strcmp(argv[i], "-xr")) {
+            rightxoffset = 1;
+            dmx = atoi(argv[++i]);
+        } else if (!strcmp(argv[i], "-y"))   /* window y offset (from bottom up if -b) */
 			dmy = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-w"))   /* make instantmenu this wide */
 			dmw = atoi(argv[++i]);
