@@ -103,7 +103,7 @@ calcoffsets(void)
 	int i, n;
 
 	if (lines > 0)
-		n = lines * bh;
+		n = lines * columns * bh;
 	else
 		n = mw - (promptw + inputw + TEXTW("<") + TEXTW(">"));
 	/* calculate which items will begin the next page and previous page */
@@ -335,9 +335,15 @@ drawmenu(void)
 	recalculatenumbers();
 
 	if (lines > 0) {
-		/* draw vertical list */
-		for (item = curr; item != next; item = item->right)
-			drawitem(item, x, y += bh, mw - x);
+		/* draw grid */
+		int i = 0;
+		for (item = curr; item != next; item = item->right, i++)
+			drawitem(
+				item,
+				x + ((i / lines) *  ((mw - x) / columns)),
+				y + (((i % lines) + 1) * bh),
+				(mw - x) / columns
+			);
 	} else if (matches) {
 		/* draw horizontal list */
 		x += inputw;
@@ -729,6 +735,9 @@ keypress(XKeyEvent *ev)
 	int len;
 	KeySym ksym;
 	Status status;
+	int i;
+	struct item *tmpsel;
+	int offscreen = 0;
 
 	len = XmbLookupString(xic, ev, buf, sizeof buf, &ksym, &status);
 	switch (status) {
@@ -916,6 +925,25 @@ insert:
 		calcoffsets();
 		break;
 	case XK_Left:
+		if (columns > 1) {
+			if (!sel)
+				return;
+			tmpsel = sel;
+			for (i = 0; i < lines; i++) {
+				if (!tmpsel->left ||  tmpsel->left->right != tmpsel)
+					return;
+				if (tmpsel == curr)
+					offscreen = 1;
+				tmpsel = tmpsel->left;
+			}
+			sel = tmpsel;
+			if (offscreen) {
+				curr = prev;
+				calcoffsets();
+			}
+			break;
+		}
+
 		if ((ev->state & ShiftMask || ev->state & Mod4Mask) && (leftcmd || rightcmd)) {
 			char *tmpcmd;
 			if (leftcmd)
@@ -970,6 +998,25 @@ insert:
 			sel->out = 1;
 		break;
 	case XK_Right:
+		if (columns > 1) {
+			if (!sel)
+				return;
+			tmpsel = sel;
+			for (i = 0; i < lines; i++) {
+				if (!tmpsel->right ||  tmpsel->right->left != tmpsel)
+					return;
+				tmpsel = tmpsel->right;
+				if (tmpsel == next)
+					offscreen = 1;
+			}
+			sel = tmpsel;
+			if (offscreen) {
+				curr = next;
+				calcoffsets();
+			}
+			break;
+		}
+
 		if ((ev->state & ShiftMask || ev->state & Mod4Mask) && (rightcmd || leftcmd)) {
 			char *tmpcmd;
 			if (rightcmd)
@@ -1523,9 +1570,9 @@ setup(void)
 static void
 usage(void)
 {
-	fputs("usage: instantmenu [-bfinPv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
+	fputs("usage: instantmenu [-bfinPv] [-l lines] [-g columns] [-p prompt] [-m monitor]\n"
 	      "             [-x xoffset] [-xr right xoffset] [-y yoffset] [-w width]\n"
-	      "             [-h height]\n"
+	      "             [-h height] [-fn font]\n"
 
 	      "             [-nb color] [-nf color] [-sb color] [-sf color] [-w windowid]\n", stderr);
 	exit(1);
@@ -1597,9 +1644,13 @@ main(int argc, char *argv[])
 		else if (!strcmp(argv[i], "-lc"))   /* adds prompt to left of input field */
 			leftcmd = argv[++i];
 		/* these options take one argument */
-		else if (!strcmp(argv[i], "-l"))   /* number of lines in vertical list */
+		else if (!strcmp(argv[i], "-g")) {   /* number of columns in grid */
+			columns = atoi(argv[++i]);
+			if (lines == 0) lines = 1;
+		} else if (!strcmp(argv[i], "-l")) { /* number of lines in vertical list */
 			lines = atoi(argv[++i]);
-		else if (!strcmp(argv[i], "-x"))   /* window x offset */
+			if (columns == 0) columns = 1;
+		} else if (!strcmp(argv[i], "-x"))   /* window x offset */
 			dmx = atoi(argv[++i]);
         else if (!strcmp(argv[i], "-xr")) {
             rightxoffset = 1;
