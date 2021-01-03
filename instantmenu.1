@@ -6,6 +6,8 @@ instantMENU \- menu for instantOS
 .RB [ \-bfivP ]
 .RB [ \-l
 .IR lines ]
+.RB [ \-g
+.IR columns ]
 .RB [ \-m
 .IR monitor ]
 .RB [ \-p
@@ -60,6 +62,9 @@ instantmenu starts with the item at index n preselected. it starts counting at 0
 .TP
 .BI \-l " lines"
 instantmenu lists items vertically, with the given number of lines.
+.TP
+.BI \-g " columns"
+instantmenu lists items in a grid with the given number of columns if the -l option is used.
 .TP
 .BI \-h " height"
 instantmenu uses a menu line of at least 'height' pixels tall, but no less than 8.
