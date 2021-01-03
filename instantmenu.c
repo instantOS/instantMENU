@@ -1570,9 +1570,9 @@ setup(void)
 static void
 usage(void)
 {
-	fputs("usage: instantmenu [-bfinPv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
+	fputs("usage: instantmenu [-bfinPv] [-l lines] [-g columns] [-p prompt] [-m monitor]\n"
 	      "             [-x xoffset] [-xr right xoffset] [-y yoffset] [-w width]\n"
-	      "             [-h height]\n"
+	      "             [-h height] [-fn font]\n"
 
 	      "             [-nb color] [-nf color] [-sb color] [-sf color] [-w windowid]\n", stderr);
 	exit(1);
