@@ -1085,8 +1085,38 @@ setselection(XEvent *e)
 	 *       add that to the input width */
 
 	if (lines > 0) {
-		/* vertical list: (ctrl)left-click on item */
 		w = mw - x;
+        // check mouse hover for columns
+        if (columns > 0) {
+            int i = 0;
+            int checky = y;
+            int checkx = x;
+            int colwidth = mw / columns;
+            for (item = curr; item != next; ) {
+                if (i >= lines) {
+                    i = 0;
+                    checkx += colwidth;
+                    checky = y + h;
+                } else {
+                    item = item->right;
+                    i++;
+                    checky += h;
+                }
+                // event in y range
+                if (ev->y >= checky && ev->y <= (checky + h) && ev->x >= checkx && ev->x <= (checkx + colwidth)) {
+                    if (sel == item)
+                        return;
+                    sel = item;
+                    if (sel) {
+                        //sel->out = 1;
+                        drawmenu();
+                    }
+                    return;
+                }
+            }
+
+        } else {
+		/* vertical list: (ctrl)left-click on item */
 		for (item = curr; item != next; item = item->right) {
 			y += h;
 			if (ev->y >= y && ev->y <= (y + h)) {
@@ -1100,6 +1130,7 @@ setselection(XEvent *e)
 				return;
 			}
 		}
+        }
 	} else if (matches) {
 		/* left-click on left arrow */
 		x += inputw;
