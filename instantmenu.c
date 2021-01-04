@@ -1089,6 +1089,7 @@ setselection(XEvent *e)
         // check mouse hover for columns
         if (columns > 0) {
             int i = 0;
+            int init = 0;
             int checky = y;
             int checkx = x;
             int colwidth = mw / columns;
@@ -1096,9 +1097,12 @@ setselection(XEvent *e)
                 if (i >= lines) {
                     i = 0;
                     checkx += colwidth;
-                    checky = y + h;
+                    checky = y;
                 } else {
-                    item = item->right;
+                    if (!init)
+                        init = 1;
+                    else
+                        item = item->right;
                     i++;
                     checky += h;
                 }
