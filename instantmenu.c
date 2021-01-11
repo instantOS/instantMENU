@@ -61,6 +61,7 @@ static struct item *prev, *curr, *next, *sel;
 static int mon = -1, screen;
 static int managed = 0;
 static int commented = 0;
+static int rejectnomatch = 0;
 
 static Atom clip, utf8;
 static Display *dpy;
@@ -627,6 +628,13 @@ insert(const char *str, ssize_t n)
 {
 	if (strlen(text) + n > sizeof text - 1)
 		return;
+
+	static char last[BUFSIZ] = "";
+	if(rejectnomatch) {
+		/* store last text value in case we need to revert it */
+		memcpy(last, text, BUFSIZ);
+	}
+
 	/* move existing text out of the way, insert new text, and update cursor */
 	memmove(&text[cursor + n], &text[cursor], sizeof text - cursor - MAX(n, 0));
     if (n > 0) {
@@ -644,6 +652,13 @@ insert(const char *str, ssize_t n)
     }
 	cursor += n;
 	match();
+
+	if(!matches && rejectnomatch) {
+		/* revert to last text value if theres no match */
+		memcpy(text, last, BUFSIZ);
+		cursor -= n;
+		match();
+	}
 }
 
 static size_t
@@ -1013,7 +1028,7 @@ insert:
 			break;
 		animatesel();
 
-		puts((sel && !(ev->state & ShiftMask)) ? sel->text : text);
+		puts((sel && !(ev->state & ShiftMask & !rejectnomatch)) ? sel->text : text);
 		if (!(ev->state & ControlMask)) {
 			cleanup();
 			exit(0);
@@ -1653,7 +1668,7 @@ setup(void)
 static void
 usage(void)
 {
-	fputs("usage: instantmenu [-bfinPv] [-l lines] [-g columns] [-p prompt] [-m monitor]\n"
+	fputs("usage: instantmenu [-bfirnPv] [-l lines] [-g columns] [-p prompt] [-m monitor]\n"
 	      "             [-x xoffset] [-xr right xoffset] [-y yoffset] [-w width]\n"
 	      "             [-h height] [-fn font]\n"
 
@@ -1707,6 +1722,8 @@ main(int argc, char *argv[])
 			exit(0);
 		} else if (!strcmp(argv[i], "-b")) /* appears at the bottom of the screen */
 			topbar = 0;
+		else if (!strcmp(argv[i], "-r"))   /* adds prompt to left of input field */
+			rejectnomatch = 1;
 		else if (!strcmp(argv[i], "-f"))   /* grabs keyboard before reading stdin */
 			fast = 1;
 		else if (!strcmp(argv[i], "-T"))   /* launch instantmenu in a toast mode that times out after a while */
