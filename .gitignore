@@ -10,3 +10,4 @@ instantmenu.o
 itest
 itest.o
 tags
+.nvimlog
