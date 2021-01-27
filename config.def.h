@@ -9,6 +9,7 @@ static int min_width = 500;                    /* minimum width when centered */
 static int instant = 0;
 static int spaceconfirm = 0;
 static int fuzzy = 1;
+static int prematch = 0;
 static int smartcase = 0;
 static int exact = 0;
 static int sely = 0;

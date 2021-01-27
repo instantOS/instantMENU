@@ -361,7 +361,6 @@ drawmenu(void)
 			drw_setscheme(drw, scheme[SchemeNorm]);
 			if (tempnumer)
 				drw_text(drw, mw - w - TEXTW(numbers), 0, w, bh, lrpad / 2, ">", 0, 0);
-
 		}
 	}
 
@@ -1567,6 +1566,20 @@ setup(void)
 
 	inputw = MIN(inputw, mw/3);
 	match();
+    if (prematch && matches) {
+        struct item *tmpmatch;
+        struct item *item;
+        tmpmatch = matches;
+		insert(NULL, 0 - cursor);
+        sel = tmpmatch;
+		for (item = next; item->right; item = item->right) {
+            if (item == sel) {
+                curr = sel;
+                break;
+            }
+        }
+        calcoffsets();
+    }
 
 	/* create menu window */
 	swa.override_redirect = managed ? False : True;
@@ -1655,6 +1668,8 @@ main(int argc, char *argv[])
 		else if (!strcmp(argv[i], "-F"))   /* disables fuzzy matching */
 			/* disables fuzzy matching */
 			fuzzy = 0;
+		else if (!strcmp(argv[i], "-pm"))   /* enables pre matching */
+			prematch = 1;
         else if (!strcmp(argv[i], "-E")) {
 			/* enabled exact matching */
 			exact = 1;
