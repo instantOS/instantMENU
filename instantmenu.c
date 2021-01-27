@@ -1517,7 +1517,6 @@ setup(void)
 
 		if (mh > drw->h - 10) {
 			mh = drw->h - border_width * 2 - 10;
-			fprintf(stderr, "lineheight %d", lineheight);
 			lines = (drw->h / (lineheight ? lineheight : bh)) - 1; 
 		}
 
@@ -1566,19 +1565,23 @@ setup(void)
 
 	inputw = MIN(inputw, mw/3);
 	match();
-    if (prematch && matches) {
+    if (prematch && matches && strlen(text) > 0) {
         struct item *tmpmatch;
         struct item *item;
         tmpmatch = matches;
 		insert(NULL, 0 - cursor);
         sel = tmpmatch;
-		for (item = next; item->right; item = item->right) {
-            if (item == sel) {
-                curr = sel;
-                break;
+        if (next) {
+            for (item = next; item->right; item = item->right) {
+                if (item == sel) {
+                    curr = sel;
+                    break;
+                }
+
             }
         }
         calcoffsets();
+        prematch = 0;
     }
 
 	/* create menu window */
