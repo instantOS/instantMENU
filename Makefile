@@ -13,9 +13,10 @@ options:
 	@echo "CFLAGS   = $(CFLAGS)"
 	@echo "LDFLAGS  = $(LDFLAGS)"
 	@echo "CC       = $(CC)"
+	@echo "DEBUG    = $(DEBUG)"
 
 .c.o:
-	$(CC) -c $(CFLAGS) $<
+	$(CC) -c $(CFLAGS) $(DEBUG) $<
 
 config.h:
 	cp config.def.h $@
