@@ -1428,7 +1428,7 @@ setup(void)
 #endif
 	/* init appearance */
  	for (j = 0; j < SchemeLast; j++) {
-		scheme[j] = drw_scm_create(drw, (const char**)colors[j], 2);
+		scheme[j] = drw_scm_create(drw, (const char**)colors[j], 3);
 	}
 	for (j = 0; j < SchemeOut; ++j) {
 		if (colortemp[j]) {
