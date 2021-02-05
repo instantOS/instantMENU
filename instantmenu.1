@@ -44,8 +44,14 @@ which lists programs in the user's $PATH and runs the result in their $SHELL.
 .B \-b
 instantmenu appears at the bottom of the screen.
 .TP
+.B \-S
+confirm using space
+.TP
 .B \-c
 instanmenu appears centered on the screen.
+.TP
+.B \-wm
+let instantmenu be managed by the WM
 .TP
 .B \-f
 instantmenu grabs the keyboard before reading stdin if not reading from a tty. This
@@ -53,6 +59,15 @@ is faster, but will lock up X until stdin reaches end\-of\-file.
 .TP
 .B \-i
 instantmenu matches menu items case insensitively.
+.TP
+.B \-P
+replace input indicator with dots
+.TP
+.B \-F
+Disable fuzzy matching
+.TP
+.B \-A
+Enable alt-tab behaviour
 .TP
 .B \-it " initialtext"
 instantmenu starts with an initial text in the input field
@@ -69,11 +84,20 @@ instantmenu lists items in a grid with the given number of columns if the -l opt
 .BI \-h " height"
 instantmenu uses a menu line of at least 'height' pixels tall, but no less than 8.
 .TP
-.BI \-h " borderwidth"
+.BI \-bw " borderwidth"
 add a border around instantmenu with width n
 .TP
+.BI \-rc " command"
+run command on shift + right
+.TP
+.BI \-lc " command"
+run command on shift + left
+.TP
+.BI \-a " duration"
+set animation duration in frames
+.TP
 .B \-n
-instantmenu instantly selects if only one match.
+instantmenu instantly selects if there is only one match.
 .TP
 .BI \-x " xoffset"
 instantmenu is placed at this offset measured from the left side of the monitor.
@@ -81,6 +105,9 @@ Can be negative.
 If option
 .B \-C
 instantmenu will appear at the position of the mouse cursor
+.TP
+.B \-H
+Max out height to fit monitor
 .TP
 .B \-m
 is present, the measurement will use the given monitor.
@@ -112,6 +139,9 @@ from 0.
 .TP
 .BI \-p " prompt"
 defines the prompt to be displayed to the left of the input field.
+.TP
+.BI \-G
+disables grabbing the keyboard
 .TP
 .BI \-fn " font"
 defines the font or font set used.

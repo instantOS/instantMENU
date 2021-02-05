@@ -1695,7 +1695,7 @@ main(int argc, char *argv[])
 			managed = 1;
 		else if (i + 1 == argc)
 			usage();
-		else if (!strcmp(argv[i], "-rc"))   /* adds prompt to left of input field */
+		else if (!strcmp(argv[i], "-rc"))   /* executes command on shift + right arrow */
 			rightcmd = argv[++i];
 		else if (!strcmp(argv[i], "-lc"))   /* adds prompt to left of input field */
 			leftcmd = argv[++i];
@@ -1719,7 +1719,7 @@ main(int argc, char *argv[])
 			mon = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-p"))   /* adds prompt to left of input field */
 			prompt = argv[++i];
-		else if (!strcmp(argv[i], "-q"))   /* adds prompt to left of input field */
+		else if (!strcmp(argv[i], "-q"))   /* adds prompt inside of the input field */
 			searchtext = argv[++i];
 		else if (!strcmp(argv[i], "-fn"))  /* font or font set */
 			fonts[0] = argv[++i];
