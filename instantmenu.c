@@ -17,6 +17,7 @@
 #endif
 #include <X11/Xft/Xft.h>
 #include <X11/cursorfont.h>
+#include <X11/Xresource.h>
 
 #include "drw.h"
 #include "util.h"
@@ -68,6 +69,27 @@ static XIC xic;
 
 static Drw *drw;
 static Clr *scheme[SchemeLast];
+
+/* Temporary arrays to allow overriding xresources values */
+static char *colortemp[SchemeLast][ColLast];
+static char *tempfont;
+static const char *xresname = "instantmenu";
+static const char *xresscheme[SchemeLast] = {
+        [SchemeNorm] = "norm",
+        [SchemeFade] = "fade",
+        [SchemeHighlight] = "highlight",
+        [SchemeHover] = "hover",
+        [SchemeSel] = "sel",
+        [SchemeOut] = "out",
+        [SchemeGreen] = "green",
+        [SchemeRed] = "red",
+        [SchemeYellow] = "yellow",
+};
+static const char *xrescolortype[ColLast] = {
+        "fg",
+        "bg",
+        "detail",
+};
 
 #include "config.h"
 
@@ -1422,8 +1444,15 @@ setup(void)
 	int a, di, n, area = 0;
 #endif
 	/* init appearance */
-	for (j = 0; j < SchemeLast; j++)
-		scheme[j] = drw_scm_create(drw, colors[j], 3);
+	for (j = 0; j < SchemeLast; j++) {
+		scheme[j] = drw_scm_create(drw, (const char**)colors[j], 3);
+	}
+	for (j = 0; j < SchemeOut; ++j) {
+        for (i = 0; i < ColLast; ++i) {
+            if (colortemp[j][i])
+                free(colors[j][i]); // only free if overwritten with new colortemp
+        }
+	}
 
 	clip = XInternAtom(dpy, "CLIPBOARD",   False);
 	utf8 = XInternAtom(dpy, "UTF8_STRING", False);
@@ -1632,6 +1661,39 @@ usage(void)
 	exit(1);
 }
 
+void
+readxresources(void) {
+	XrmInitialize();
+
+	char* xrm;
+	if ((xrm = XResourceManagerString(drw->dpy))) {
+		char *type;
+		XrmDatabase xdb = XrmGetStringDatabase(xrm);
+		XrmValue xval;
+
+		char xresfont[20] = "";
+		snprintf(xresfont, sizeof(xresfont), "%s.font", xresname);
+		if (XrmGetResource(xdb, xresfont, "*", &type, &xval))
+			fonts[0] = strdup(xval.addr); // overwrite fonts[0]
+
+		for (int i = 0; i < SchemeLast; ++i)
+		{
+			for (int j = 0; j < ColLast; ++j)
+			{
+				char xresprop[100] = "";
+				snprintf(xresprop, sizeof(xresprop), "%s.%s.%s", xresname, xresscheme[i], xrescolortype[j]);
+
+				if (XrmGetResource(xdb, xresprop, "*", &type, &xval))
+					colors[i][j] = strdup(xval.addr);
+				else
+					colors[i][j] = strdup(colors[i][j]);
+			}
+		}
+
+		XrmDestroyDatabase(xdb);
+	}
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -1722,7 +1784,7 @@ main(int argc, char *argv[])
 		else if (!strcmp(argv[i], "-q"))   /* adds prompt inside of the input field */
 			searchtext = argv[++i];
 		else if (!strcmp(argv[i], "-fn"))  /* font or font set */
-			fonts[0] = argv[++i];
+			tempfont = argv[++i];
 		else if(!strcmp(argv[i], "-h")) { /* minimum height of one menu line */
 			if (!fullheight) {
 				lineheight = atoi(argv[++i]);
@@ -1731,13 +1793,13 @@ main(int argc, char *argv[])
 		} else if(!strcmp(argv[i], "-a")) /* animation duration */
 			framecount = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-nb"))  /* normal background color */
-			colors[SchemeNorm][ColBg] = argv[++i];
+			colortemp[SchemeNorm][ColBg] = argv[++i];
 		else if (!strcmp(argv[i], "-nf"))  /* normal foreground color */
-			colors[SchemeNorm][ColFg] = argv[++i];
+			colortemp[SchemeNorm][ColFg] = argv[++i];
 		else if (!strcmp(argv[i], "-sb"))  /* selected background color */
-			colors[SchemeSel][ColBg] = argv[++i];
+			colortemp[SchemeSel][ColBg] = argv[++i];
 		else if (!strcmp(argv[i], "-sf"))  /* selected foreground color */
-			colors[SchemeSel][ColFg] = argv[++i];
+			colortemp[SchemeSel][ColFg] = argv[++i];
 		else if (!strcmp(argv[i], "-W"))   /* embedding window id */
 			embed = argv[++i];
 		else if (!strcmp(argv[i], "-bw"))
@@ -1768,8 +1830,25 @@ main(int argc, char *argv[])
 		die("could not get embedding window attributes: 0x%lx",
 		    parentwin);
 	drw = drw_create(dpy, screen, root, wa.width, wa.height);
+	readxresources();
+	/* Now we check whether to override xresources with commandline parameters */
+	if (tempfont)
+		fonts[0] = strdup(tempfont);
+	for (int scheme = 0; scheme < SchemeLast; ++scheme)
+	{
+		for (int col = 0; col < ColLast; ++col)
+		{
+			if (colortemp[scheme][col])
+				colors[scheme][col] = strdup(colortemp[scheme][col]);
+		}
+	}
+
 	if (!drw_fontset_create(drw, fonts, LENGTH(fonts)))
 		die("no fonts could be loaded.");
+
+	if (tempfont)
+		free(fonts[0]);
+
 	lrpad = drw->fonts->h;
 
 	if (fullheight || lineheight == -1)
