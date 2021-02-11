@@ -1028,7 +1028,7 @@ insert:
 			break;
 		animatesel();
 
-		puts((sel && !(ev->state & ShiftMask & !(rejectnomatch))) ? sel->text : text);
+		puts((sel && !(ev->state & ShiftMask & (!rejectnomatch))) ? sel->text : text);
 		if (!(ev->state & ControlMask)) {
 			cleanup();
 			exit(0);
