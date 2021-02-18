@@ -1830,8 +1830,11 @@ main(int argc, char *argv[])
             }
         }
 		else if (!strcmp(argv[i], "-it")) {   /* initial input text */
+            int tmpnopatch = rejectnomatch;
+            rejectnomatch = 0;
 			const char * text = argv[++i];
 			insert(text, strlen(text));
+            rejectnomatch = tmpnopatch;
 		} else
 			usage();
 
