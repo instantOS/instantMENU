@@ -7,13 +7,21 @@
 instantMENU is a simple menu for instantOS
 it is used for instantASSIST and in some other places
 
+## Installation from source
+
+```sh
+git clone https://github.com/instantOS/instantMENU
+cd instantMENU
+./build.sh
+```
+
 ## Features
+
 - alt-tab functionality
 - mouse support
 - animations and hover over indicators
 - icon prefixes
 - comments
-
 
 ## is this dmenu?
 
