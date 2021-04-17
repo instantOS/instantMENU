@@ -1891,7 +1891,7 @@ main(int argc, char *argv[])
 	}
 
 	if (dmw <= -1) {
-		int maxw = max_textw() * 1.3 + (prompt ? TEXTW(prompt) : 0);
+		int maxw = max_textw() * 1.3 * MAX(columns, 1) + (prompt ? TEXTW(prompt) : 0);
 		if (dmw * (-1) > maxw) {
 			dmw = dmw * (-1);
 		} else {
