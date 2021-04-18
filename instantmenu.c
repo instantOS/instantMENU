@@ -1363,7 +1363,8 @@ readstdin(void)
 		items[i].text = NULL;
 	inputw = items ? TEXTW(items[imax].text) : 0;
 	lines = MIN(lines, i / columns + (i % columns != 0));
-	columns = MIN(lines ? i / lines + (i % lines != 0) : columns, i);
+	if (!(columns == 1))
+		columns = MIN(lines ? i / lines + (i % lines != 0) : columns, i);
 }
 
 static void
