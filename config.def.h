@@ -45,7 +45,7 @@ static const char *colors[SchemeLast][9] = {
 /* -l option; if nonzero, instantmenu uses vertical list with given number of lines */
 /* -g option; controls columns in grid if nonzero and lines is nonzero */
 static unsigned int lines      = 0;
-static unsigned int columns    = 0;
+static unsigned int columns    = 1;
 
 /*
  * Characters not considered part of a word while deleting words
