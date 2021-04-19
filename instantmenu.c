@@ -1363,8 +1363,8 @@ readstdin(void)
 		items[i].text = NULL;
 	inputw = items ? TEXTW(items[imax].text) : 0;
 	lines = MIN(lines, i / columns + (i % columns != 0));
-	if (!(columns == 1))
-		columns = MIN(lines ? i / lines + (i % lines != 0) : columns, i);
+	if (columns != 1)
+		columns = MIN(i / lines + (i % lines != 0), columns);
 }
 
 static void
@@ -1783,6 +1783,8 @@ main(int argc, char *argv[])
 		/* these options take one argument */
 		else if (!strcmp(argv[i], "-g")) {   /* number of columns in grid */
 			columns = atoi(argv[++i]);
+			if (columns == 0)
+				columns = 1;
 			if (lines == 0) lines = 1;
 		} else if (!strcmp(argv[i], "-l"))   /* number of lines in vertical list */
 			lines = atoi(argv[++i]);
