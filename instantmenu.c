@@ -764,6 +764,20 @@ void animaterect(int x1, int y1, int w1, int h1, int x2, int y2, int w2, int h2)
 	}
 }
 
+void selectnumber(int number, XKeyEvent *ev, KeySym *sym) {
+    int i;
+    sel = curr;
+    for (i = 0; i < number; ++i) {
+		if (sel && sel->right && (sel = sel->right) == next) {
+			curr = next;
+			calcoffsets();
+		}
+    }
+    ev->state = ev->state ^ ControlMask;
+    *sym = XK_Return;
+
+}
+
 static void
 keypress(XKeyEvent *ev)
 {
@@ -841,6 +855,34 @@ keypress(XKeyEvent *ev)
 		case XK_Return:
 		case XK_KP_Enter:
 			break;
+        case XK_1:
+            selectnumber(0, ev, &ksym);
+            break;
+        case XK_2:
+            selectnumber(1, ev, &ksym);
+            break;
+        case XK_3:
+            selectnumber(2, ev, &ksym);
+            break;
+        case XK_4:
+            selectnumber(3, ev, &ksym);
+            break;
+        case XK_5:
+            selectnumber(4, ev, &ksym);
+            break;
+        case XK_6:
+            selectnumber(5, ev, &ksym);
+            break;
+        case XK_7:
+            selectnumber(6, ev, &ksym);
+            break;
+        case XK_8:
+            selectnumber(7, ev, &ksym);
+            break;
+        case XK_9:
+            selectnumber(8, ev, &ksym);
+            break;
+
 		case XK_bracketleft:
 			cleanup();
 			exit(1);
@@ -1024,6 +1066,7 @@ insert:
 		break;
 	case XK_Return:
 	case XK_KP_Enter:
+        // non-selectable comment
 		if (sel && sel->text[0] == '>')
 			break;
 		animatesel();
