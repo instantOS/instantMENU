@@ -39,6 +39,7 @@ enum { SchemeNorm, SchemeFade, SchemeHighlight, SchemeHover, SchemeSel, SchemeOu
 
 struct item {
 	char *text;
+	char *stext;
 	struct item *left, *right;
 	int out;
 	double distance;
@@ -259,11 +260,11 @@ drawitem(struct item *item, int x, int y, int w)
 	char *output;
 	if (commented) {
 		static char onestr[2];
-		onestr[0] = item->text[0];
+		onestr[0] = item->stext[0];
 		onestr[1] = '\0';
 		output = onestr;
 	} else {
-		output = item->text;
+		output = item->stext;
 	}
 
 	if (item == sel)
@@ -377,7 +378,7 @@ drawmenu(void)
 		}
 		x += w;
 		for (item = curr; item != next; item = item->right)
-			x = drawitem(item, x, 0, MIN(TEXTW(item->text), mw - x - TEXTW(">") - TEXTW(numbers)));
+			x = drawitem(item, x, 0, MIN(TEXTW(item->stext), mw - x - TEXTW(">") - TEXTW(numbers)));
 
 		if (next) {
 			w = TEXTW(">");
@@ -1395,6 +1396,10 @@ readstdin(void)
 			*p = '\0';
 		if (!(items[i].text = strdup(buf)))
 			die("cannot strdup %u bytes:", strlen(buf) + 1);
+		if ((p = strchr(buf, '\t')))
+			*p = '\0';
+		if (!(items[i].stext = strdup(buf)))
+			die("cannot strdup %u bytes:", strlen(buf) + 1);
 		items[i].out = 0;
 		drw_font_getexts(drw->fonts, buf, strlen(buf), &tmpmax, NULL);
 		if (tmpmax > inputw) {
@@ -1405,7 +1410,9 @@ readstdin(void)
 	if (items)
 		items[i].text = NULL;
 	inputw = items ? TEXTW(items[imax].text) : 0;
-	lines = MIN(lines, i);
+	lines = MIN(lines, i / columns + (i % columns != 0));
+	if (columns != 1)
+		columns = MIN(i / lines + (i % lines != 0), columns);
 }
 
 static void
@@ -1824,11 +1831,12 @@ main(int argc, char *argv[])
 		/* these options take one argument */
 		else if (!strcmp(argv[i], "-g")) {   /* number of columns in grid */
 			columns = atoi(argv[++i]);
+			if (columns == 0)
+				columns = 1;
 			if (lines == 0) lines = 1;
-		} else if (!strcmp(argv[i], "-l")) { /* number of lines in vertical list */
+		} else if (!strcmp(argv[i], "-l"))   /* number of lines in vertical list */
 			lines = atoi(argv[++i]);
-			if (columns == 0) columns = 1;
-		} else if (!strcmp(argv[i], "-x"))   /* window x offset */
+		else if (!strcmp(argv[i], "-x"))   /* window x offset */
 			dmx = atoi(argv[++i]);
         else if (!strcmp(argv[i], "-xr")) {
             rightxoffset = 1;
@@ -1934,7 +1942,7 @@ main(int argc, char *argv[])
 	}
 
 	if (dmw <= -1) {
-		int maxw = max_textw() * 1.3 + (prompt ? TEXTW(prompt) : 0);
+		int maxw = max_textw() * 1.3 * MAX(columns, 1) + (prompt ? TEXTW(prompt) : 0);
 		if (dmw * (-1) > maxw) {
 			dmw = dmw * (-1);
 		} else {
