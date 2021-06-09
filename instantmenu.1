@@ -63,8 +63,17 @@ instantmenu matches menu items case insensitively.
 .B \-P
 replace input indicator with dots
 .TP
+.B \-I
+only display input field
+.TP
+.B \-A
+activate alttab behaviour
+.TP
 .B \-F
-Disable fuzzy matching
+disable fuzzy matching
+.TP
+.BI \-E
+enable exact matching
 .TP
 .B \-A
 Enable alt-tab behaviour
@@ -141,7 +150,10 @@ instantmenu is displayed on the monitor number supplied. Monitor numbers are sta
 from 0.
 .TP
 .BI \-p " prompt"
-defines the prompt to be displayed to the left of the input field.
+defines the prompt to be displayed to the left of the input field
+.TP
+.BI \-q " pretext"
+defines text to be displayed in empty input field
 .TP
 .BI \-G
 disables grabbing the keyboard

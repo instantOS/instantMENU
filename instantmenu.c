@@ -1772,27 +1772,27 @@ main(int argc, char *argv[])
 			exit(0);
 		} else if (!strcmp(argv[i], "-b")) /* appears at the bottom of the screen */
 			topbar = 0;
-		else if (!strcmp(argv[i], "-r"))   /* adds prompt to left of input field */
+		else if (!strcmp(argv[i], "-r"))   /* reject input if it results in no matches */
 			rejectnomatch = 1;
 		else if (!strcmp(argv[i], "-f"))   /* grabs keyboard before reading stdin */
 			fast = 1;
 		else if (!strcmp(argv[i], "-T"))   /* launch instantmenu in a toast mode that times out after a while */
 			toast = atoi(argv[++i]);
-		else if (!strcmp(argv[i], "-ct")) {   /* centers dmenu on screen */
+		else if (!strcmp(argv[i], "-ct")) {   /* centers instantmenu on screen */
 			commented = 1;
 			static char commentprompt[200];
 			prompt = commentprompt + 1;
 			strcpy(prompt, "prompts");
-		} else if (!strcmp(argv[i], "-c"))   /* centers dmenu on screen */
+		} else if (!strcmp(argv[i], "-c")) /* centers instantmenu on screen */
 			centered = 1;
 		else if (!strcmp(argv[i], "-C"))   /* go to mouse position */
 			followcursor = 1;
-		else if (!strcmp(argv[i], "-S"))   /* confirm using the space key */
+		else if (!strcmp(argv[i], "-S"))   /* confirm using the space key TODO actually make that work*/
 			spaceconfirm = 1;
 		else if (!strcmp(argv[i], "-I"))   /* input only */
 			inputonly = 1;
-        else if (!strcmp(argv[i], "-s")) {
-            /* enable smart case */
+        else if (!strcmp(argv[i], "-s")) { /* enable smart case */
+            
             smartcase = 1;
 			fstrncmp = strncasecmp;
 			fstrstr = cistrstr;
@@ -1802,19 +1802,18 @@ main(int argc, char *argv[])
 			fuzzy = 0;
 		else if (!strcmp(argv[i], "-pm"))   /* enables pre matching */
 			prematch = 1;
-        else if (!strcmp(argv[i], "-E")) {
-			/* enabled exact matching */
+        else if (!strcmp(argv[i], "-E")) {  /* enables exact matching */
 			exact = 1;
             fuzzy = 0;
-        } else if (!strcmp(argv[i], "-H")) {
+        } else if (!strcmp(argv[i], "-H")) { /* makes instantmenu take the full screen height */
 			fullheight = 1;
 		}
-		else if (!strcmp(argv[i], "-i")) { /* case-insensitive item matching */
+		else if (!strcmp(argv[i], "-i")) {   /* case-insensitive item matching */
 			fstrncmp = strncasecmp;
 			fstrstr = cistrstr;
 		} else if (!strcmp(argv[i], "-n")) { /* instant select only match */
 			instant = 1;
-		} else if (!strcmp(argv[i], "-P"))   /* is the input a password */
+		} else if (!strcmp(argv[i], "-P"))   /* display input as dots */
 			passwd = 1;
 		else if (!strcmp(argv[i], "-G"))   /* don't grab the keyboard */
 			nograb = 1;
@@ -1838,7 +1837,7 @@ main(int argc, char *argv[])
 			lines = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-x"))   /* window x offset */
 			dmx = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "-xr")) {
+        else if (!strcmp(argv[i], "-xr")) {  /* window x offset from the right side of the screen */
             rightxoffset = 1;
             dmx = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "-y"))   /* window y offset (from bottom up if -b) */
