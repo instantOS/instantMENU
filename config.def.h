@@ -30,16 +30,16 @@ static const char *searchtext      = NULL;      /* -p  option; prompt to the lef
 static const char *leftcmd      = NULL;      /* -p  option; prompt to the left of input field */
 static const char *rightcmd      = NULL;      /* -p  option; prompt to the left of input field */
 static const char *colors[SchemeLast][9] = {
-	/*     fg         bg       */
-	[SchemeNorm] = { "#ffffff", "#292f3a", "#3E485B" },
-	[SchemeFade] = { "#575E70", "#292f3a", "#3E485B" },
-	[SchemeHighlight] = { "#ffffff", "#596377", "#3E485B" },
-	[SchemeHover] = { "#ffffff", "#353D4B", "#3E485B" },
-	[SchemeSel] = { "#ffffff", "#5294E2", "#3579CA" },
+	/*     fg         bg     darker      */
+	[SchemeNorm] = { "#DFDFDF", "#121212", "#3E485B" },
+	[SchemeFade] = { "#575E70", "#121212", "#3E485B" },
+	[SchemeHighlight] = { "#DFDFDF", "#384252", "#272727" },
+	[SchemeHover] = { "#DFDFDF", "#272727", "#2E2E2E" },
+	[SchemeSel] = { "#000000", "#8AB4F8", "#536DFE" },
 	[SchemeOut] = { "#000000", "#3579CA", "#3579CA" },
-	[SchemeGreen] = { "#ffffff", "#52E067", "#35CA4B" },
-	[SchemeRed] = { "#ffffff", "#E0527E", "#CA3563" },
-	[SchemeYellow] = { "#ffffff", "#E09F52", "#CA8635" },
+	[SchemeGreen] = { "#000000", "#81c995", "#1e8e3e" },
+	[SchemeRed] = { "#000000", "#f28b82", "#d93025" },
+	[SchemeYellow] = { "#000000", "#fdd663", "#f9ab00" },
 };
 
 /* -l option; if nonzero, instantmenu uses vertical list with given number of lines */
