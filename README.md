@@ -1,7 +1,7 @@
 <div align="center">
     <h1>instantMENU</h1>
     <p>General purpose menu for instantOS</p>
-    <img width="300" height="300" src="https://raw.githubusercontent.com/instantOS/instantLOGO/master/png/menu.png">
+    <img width="300" height="300" src="https://raw.githubusercontent.com/instantOS/instantLOGO/main/png/menu.png">
 </div>
 
 instantMENU is a simple menu for instantOS
