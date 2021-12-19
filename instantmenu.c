@@ -1815,6 +1815,8 @@ main(int argc, char *argv[])
 			instant = 1;
 		} else if (!strcmp(argv[i], "-P"))   /* display input as dots */
 			passwd = 1;
+		else if (!strcmp(argv[i], "-M"))  /* set Monospace font */
+			tempfont = "Fira Code Nerd Font:pixelsize=15";
 		else if (!strcmp(argv[i], "-G"))   /* don't grab the keyboard */
 			nograb = 1;
 		else if (!strcmp(argv[i], "-A"))   /* alt-tab behaviour */
