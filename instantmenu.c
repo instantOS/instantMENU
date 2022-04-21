@@ -37,6 +37,9 @@
 /* enums */
 enum { SchemeNorm, SchemeFade, SchemeHighlight, SchemeHover, SchemeSel, SchemeOut, SchemeGreen, SchemeYellow, SchemeRed, SchemeLast }; /* color schemes */
 
+//item categories
+enum {ItemNormal, ItemComment, ItemColoredComment, ItemColored, ItemIcon, ItemLast};
+
 struct item {
 	char *text;
 	char *stext;
@@ -61,7 +64,9 @@ static struct item *matches, *matchend;
 static struct item *prev, *curr, *next, *sel;
 static int mon = -1, screen;
 static int managed = 0;
+//instantASSIST: items are a single letter with a description appearing on selection. 
 static int commented = 0;
+
 static int rejectnomatch = 0;
 
 static Atom clip, utf8;
@@ -91,6 +96,14 @@ static const char *xrescolortype[ColLast] = {
         "fg",
         "bg",
         "detail",
+};
+
+static const int outputoffset[ItemLast] = {
+    [ItemNormal] = 0, 
+    [ItemComment] = 1, 
+    [ItemColoredComment] = 4, 
+    [ItemColored] = 2,
+    [ItemIcon] = 6, 
 };
 
 #include "config.h"
@@ -176,10 +189,10 @@ cistrstr(const char *s, const char *sub)
 static int
 drawitem(struct item *item, int x, int y, int w)
 {
-	int iscomment = 0;
+	int itemcategory = ItemNormal;
 	if (item->text[0] == '>') {
 		if (item->text[1] == '>') {
-			iscomment = 3;
+			itemcategory = ItemColoredComment;
 			switch (item->text[2])
 			{
 				case 'r':
@@ -199,17 +212,17 @@ drawitem(struct item *item, int x, int y, int w)
 					drw_setscheme(drw, scheme[SchemeSel]);
 					break;
 				default:
-					iscomment = 1;
+					itemcategory = ItemComment;
 					drw_setscheme(drw, scheme[SchemeNorm]);
 					break;
 			}
 		} else {
 			drw_setscheme(drw, scheme[SchemeNorm]);
-			iscomment = 1;
+			itemcategory = ItemComment;
 		}
 
 	} else if (item->text[0] == ':') {
-		iscomment = 2;
+		itemcategory = ItemColored;
 		if (item == sel) {
 			switch (item->text[1])
 			{
@@ -227,7 +240,7 @@ drawitem(struct item *item, int x, int y, int w)
 				break;
 			default:
 				drw_setscheme(drw, scheme[SchemeSel]);
-				iscomment = 0;
+				itemcategory = ItemNormal;
 				break;
 			}
 		} else {
@@ -244,7 +257,7 @@ drawitem(struct item *item, int x, int y, int w)
 
 	int temppadding;
 	temppadding = 0;
-	if (iscomment == 2) {
+	if (itemcategory == ItemColored) {
 		if (item->text[2] == ' ') {
 			temppadding = drw->fonts->h * 3;
 			animated = 1;
@@ -252,7 +265,7 @@ drawitem(struct item *item, int x, int y, int w)
 			strcpy(dest, item->text);
 			dest[6] = '\0';
 			drw_text(drw, x, y, temppadding, lineheight, temppadding/2.6, dest  + 3, 0, item == sel);
-			iscomment = 6;
+			itemcategory = ItemIcon;
 			drw_setscheme(drw, sel == item ? scheme[SchemeHover] : scheme[SchemeNorm]);
 		}
 	}
@@ -266,11 +279,13 @@ drawitem(struct item *item, int x, int y, int w)
 	} else {
 		output = item->stext;
 	}
+    
+    
 
 	if (item == sel)
 		sely = y;
-	return drw_text(drw, x + ((iscomment == 6) ? temppadding : 0), y, commented ? bh : (w - ((iscomment == 6) ? temppadding : 0)), bh,
-		commented ? (bh - drw_fontset_getwidth(drw, (output))) / 2: lrpad / 2, output + iscomment, 0, (iscomment == 3 || item == sel));
+	return drw_text(drw, x + ((itemcategory == ItemIcon) ? temppadding : 0), y, commented ? bh : (w - ((itemcategory == ItemIcon) ? temppadding : 0)), bh,
+		commented ? (bh - drw_fontset_getwidth(drw, (output))) / 2: lrpad / 2, output + outputoffset[itemcategory], 0, (itemcategory == ItemColoredComment || item == sel));
 }
 
 static void
@@ -1789,7 +1804,7 @@ main(int argc, char *argv[])
 			fast = 1;
 		else if (!strcmp(argv[i], "-T"))   /* launch instantmenu in a toast mode that times out after a while */
 			toast = atoi(argv[++i]);
-		else if (!strcmp(argv[i], "-ct")) {   /* centers instantmenu on screen */
+		else if (!strcmp(argv[i], "-ct")) {   /* activate instantASSIST mode */
 			commented = 1;
 			static char commentprompt[200];
 			prompt = commentprompt + 1;
@@ -1803,7 +1818,6 @@ main(int argc, char *argv[])
 		else if (!strcmp(argv[i], "-I"))   /* input only */
 			inputonly = 1;
         else if (!strcmp(argv[i], "-s")) { /* enable smart case */
-            
             smartcase = 1;
 			fstrncmp = strncasecmp;
 			fstrstr = cistrstr;
