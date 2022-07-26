@@ -121,6 +121,7 @@ getrootptr(int *x, int *y)
 	return XQueryPointer(dpy, root, &dummy, &dummy, x, y, &di, &di, &dui);
 }
 
+
 static void
 appenditem(struct item *item, struct item **list, struct item **last)
 {
@@ -328,6 +329,7 @@ drawmenu(void)
 	unsigned int curpos;
 	struct item *item;
 	int x = 0, y = 0, fh = drw->fonts->h, w;
+    int arrowwidth = TEXTW("");
 
 	char *censort;
 	drw_setscheme(drw, scheme[SchemeNorm]);
@@ -335,7 +337,10 @@ drawmenu(void)
 	if (commented && matches)
 		prompt = sel->text + 1;
 
+
 	if (prompt && *prompt) {
+        if (leftcmd)
+            x += arrowwidth;
 		drw_setscheme(drw, scheme[SchemeSel]);
 		if (lines < 8) {
 			x = drw_text(drw, x, 0, promptw, bh * (lines + 1), lrpad / 2, prompt, 0, 1);
@@ -355,10 +360,10 @@ drawmenu(void)
 			free(censort);
 	} else {
 		if (text[0] != '\0') {
-			drw_text(drw, x, 0, w, bh, lrpad / 2, text, 0, 0);
+			drw_text(drw, x + (leftcmd ? arrowwidth : 0), 0, w, bh, lrpad / 2, text, 0, 0);
 		} else  if (searchtext){
 			drw_setscheme(drw, scheme[SchemeFade]);
-			drw_text(drw, x, 0, w, bh, lrpad / 2, searchtext, 0, 0);
+			drw_text(drw, x + (leftcmd ? arrowwidth : 0), 0, w, bh, lrpad / 2, searchtext, 0, 0);
 			drw_setscheme(drw, scheme[SchemeNorm]);
 		}
 	}
@@ -367,7 +372,7 @@ drawmenu(void)
 		drw_setscheme(drw, scheme[SchemeNorm]);
 		// disable cursor on password prompt
 		if (!passwd && !toast)
-			drw_rect(drw, x + curpos, 2 + (bh-fh)/2, 2, fh - 4, 1, 0, 0);
+			drw_rect(drw, x + (leftcmd ? arrowwidth : 0) + curpos, 2 + (bh-fh)/2, 2, fh - 4, 1, 0, 0);
 
 	}
 
@@ -405,8 +410,19 @@ drawmenu(void)
 
 
 	drw_setscheme(drw, scheme[SchemeNorm]);
-	if (tempnumer)
-		drw_text(drw, mw - TEXTW(numbers), 0, TEXTW(numbers), bh, lrpad / 2, numbers, 0, 0);
+    if (tempnumer) {
+		drw_text(drw, mw - TEXTW(numbers) - (rightcmd ? arrowwidth : 0), 0, TEXTW(numbers), bh, lrpad / 2, numbers, 0, 0);
+    }
+    if (lines > 0) {
+        if (leftcmd) {
+            drw_setscheme(drw, scheme[SchemeHighlight]);
+            drw_text(drw, 0, 0, arrowwidth, bh, lrpad / 2, "", 0, 0);
+        }
+        if (rightcmd) {
+            drw_setscheme(drw, scheme[SchemeHighlight]);
+            drw_text(drw, mw - arrowwidth, 0, arrowwidth, bh, lrpad / 2, "", 0, 0);
+        }
+    }
 	drw_map(drw, win, 0, 0, mw, mh);
 }
 
@@ -780,6 +796,28 @@ void animaterect(int x1, int y1, int w1, int h1, int x2, int y2, int w2, int h2)
 	}
 }
 
+void cmdtrigger(int direction) {
+    char *tmpcmd;
+
+    animated = 1;
+    if (direction) {
+        if (rightcmd)
+            tmpcmd = rightcmd;
+        else
+            tmpcmd = leftcmd;
+        animaterect(mw + border_width, 0, 0, mh, 0, 0, mw, mh);
+    } else {
+        if (leftcmd)
+            tmpcmd = leftcmd;
+        else
+            tmpcmd = rightcmd;
+        animaterect(0, 0, 0, mh, 0, 0, mw, mh);
+    }
+
+    cleanup();
+    spawn(tmpcmd);
+}
+
 void selectnumber(int number, XKeyEvent *ev, KeySym *sym) {
     int i;
     sel = curr;
@@ -1048,16 +1086,7 @@ insert:
 		}
 
 		if ((ev->state & ShiftMask || ev->state & Mod4Mask) && (leftcmd || rightcmd)) {
-			char *tmpcmd;
-			if (leftcmd)
-				tmpcmd = leftcmd;
-			else
-				tmpcmd = rightcmd;
-
-			animated = 1;
-			animaterect(mw, 0, 0, mh, 0, 0, mw, mh);
-			cleanup();
-			spawn(tmpcmd);
+            cmdtrigger(0);
 			break;
 		}
 
@@ -1126,16 +1155,7 @@ insert:
 		}
 
 		if ((ev->state & ShiftMask || ev->state & Mod4Mask) && (rightcmd || leftcmd)) {
-			char *tmpcmd;
-			if (rightcmd)
-				tmpcmd = rightcmd;
-			else
-				tmpcmd = leftcmd;
-
-			animated = 1;
-			animaterect(0, 0, 0, mh, 0, 0, mw, mh);
-			cleanup();
-			spawn(tmpcmd);
+            cmdtrigger(1);
 			break;
 		}
 		if (text[cursor] != '\0') {
@@ -1269,6 +1289,7 @@ setselection(XEvent *e)
 	}
 }
 
+
 static void
 buttonpress(XEvent *e)
 {
@@ -1296,8 +1317,14 @@ buttonpress(XEvent *e)
 		if ((lines <= 0 && ev->x >= 0 && ev->x <= x + w +
 		((!prev || !curr->left) ? TEXTW("<") : 0)) ||
 		(lines > 0 && ev->y >= y && ev->y <= y + h)) {
-			insert(NULL, -cursor);
-			drawmenu();
+            if (leftcmd && ev->x < TEXTW("")) {
+                cmdtrigger(0);
+            }else if (ev->x > mw - TEXTW("")) {
+                cmdtrigger(1);
+            } else {
+                insert(NULL, -cursor);
+                drawmenu();
+            }
 			return;
 		} else {
 			if (lines > 0) {
