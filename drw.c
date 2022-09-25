@@ -261,12 +261,12 @@ drw_rect(Drw *drw, int x, int y, unsigned int w, unsigned int h, int filled, int
 int
 drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lpad, const char *text, int invert, int rounded)
 {
-	char buf[1024];
-	int ty;
-	unsigned int ew;
+    int ty, ellipsis_x = 0;
+	unsigned int tmpw, ew, ellipsis_w = 0, ellipsis_len, ellipsis_width;
+
+
 	XftDraw *d = NULL;
 	Fnt *usedfont, *curfont, *nextfont;
-	size_t i, len;
 	int utf8strlen, utf8charlen, render = x || y || w || h;
 	long utf8codepoint = 0;
 	const char *utf8str;
@@ -274,7 +274,7 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 	FcPattern *fcpattern;
 	FcPattern *match;
 	XftResult result;
-	int charexists = 0;
+	int charexists = 0, overflow = 0;
 
 	if (!drw || (render && !drw->scheme) || !text || !drw->fonts)
 		return 0;
@@ -299,8 +299,9 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 	}
 
 	usedfont = drw->fonts;
+    drw_font_getexts(usedfont, "...", 3, &ellipsis_width, NULL);
 	while (1) {
-		utf8strlen = 0;
+		ew = ellipsis_len = utf8strlen = 0;
 		utf8str = text;
 		nextfont = NULL;
 		while (*text) {
@@ -309,9 +310,21 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 				for (curfont = drw->fonts; curfont; curfont = curfont->next) {
 						charexists = charexists || XftCharExists(drw->dpy, curfont->xfont, utf8codepoint);
 						if (charexists) {
-							if (curfont == usedfont) {
+                            drw_font_getexts(curfont, text, utf8charlen, &tmpw, NULL);
+                            if (ew + ellipsis_width <= w) {
+                                /* keep track where the ellipsis still fits */
+                                ellipsis_x = x + ew;
+                                ellipsis_w = w - ew;
+                                ellipsis_len = utf8strlen;
+                            }
+
+                            if (ew + tmpw > w) {
+                                overflow = 1;
+                                utf8strlen = ellipsis_len;
+                            } else if (curfont == usedfont) {
 								utf8strlen += utf8charlen;
 								text += utf8charlen;
+                                ew += tmpw;
 							} else {
 								nextfont = curfont;
 							}
@@ -322,36 +335,26 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 					utf8charlen = utf8decode("a", &utf8codepoint, UTF_SIZ);
 
 			}
-			if (!charexists || nextfont)
+			if (overflow || !charexists || nextfont)
 				break;
 			else
 				charexists = 0;
 		}
 
 		if (utf8strlen) {
-			drw_font_getexts(usedfont, utf8str, utf8strlen, &ew, NULL);
-			/* shorten text if necessary */
-			for (len = MIN(utf8strlen, sizeof(buf) - 1); len && ew > w; len--)
-				drw_font_getexts(usedfont, utf8str, len, &ew, NULL);
+            if (render) {
+                ty = y + (h - usedfont->h) / 2 + usedfont->xfont->ascent;
+                XftDrawStringUtf8(d, &drw->scheme[invert ? ColBg : ColFg],
+                                  usedfont->xfont, x, ty - (rounded ? 2 : 0), (XftChar8 *)utf8str, utf8strlen);
+            }
+            x += ew;
+            w -= ew;
+        }
 
-			if (len) {
-				memcpy(buf, utf8str, len);
-				buf[len] = '\0';
-				if (len < utf8strlen)
-					for (i = len; i && i > len - 3; buf[--i] = '.')
-						; /* NOP */
+        if (render && overflow)
+            drw_text(drw, ellipsis_x, y, ellipsis_w, h, 0, "...", invert, rounded);
 
-				if (render) {
-					ty = y + (h - usedfont->h) / 2 + usedfont->xfont->ascent;
-					XftDrawStringUtf8(d, &drw->scheme[invert ? ColBg : ColFg],
-					                  usedfont->xfont, x, ty - (rounded ? 2 : 0), (XftChar8 *)buf, len);
-				}
-				x += ew;
-				w -= ew;
-			}
-		}
-
-		if (!*text) {
+		if (!*text || overflow) {
 			break;
 		} else if (nextfont) {
 			charexists = 0;

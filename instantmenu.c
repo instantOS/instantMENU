@@ -38,6 +38,9 @@
 /* enums */
 enum { SchemeNorm, SchemeFade, SchemeHighlight, SchemeHover, SchemeSel, SchemeOut, SchemeGreen, SchemeYellow, SchemeRed, SchemeLast }; /* color schemes */
 
+//item categories
+enum {ItemNormal, ItemComment, ItemColoredComment, ItemColored, ItemIcon, ItemLast};
+
 struct item {
 	char *text;
 	char *stext;
@@ -62,7 +65,9 @@ static struct item *matches, *matchend;
 static struct item *prev, *curr, *next, *sel;
 static int mon = -1, screen;
 static int managed = 0;
+//instantASSIST: items are a single letter with a description appearing on selection. 
 static int commented = 0;
+
 static int rejectnomatch = 0;
 
 static Atom clip, utf8;
@@ -94,6 +99,14 @@ static const char *xrescolortype[ColLast] = {
         "detail",
 };
 
+static const int outputoffset[ItemLast] = {
+    [ItemNormal] = 0, 
+    [ItemComment] = 1, 
+    [ItemColoredComment] = 4, 
+    [ItemColored] = 2,
+    [ItemIcon] = 6, 
+};
+
 #include "config.h"
 
 static int (*fstrncmp)(const char *, const char *, size_t) = strncmp;
@@ -108,6 +121,7 @@ getrootptr(int *x, int *y)
 
 	return XQueryPointer(dpy, root, &dummy, &dummy, x, y, &di, &di, &dui);
 }
+
 
 static void
 appenditem(struct item *item, struct item **list, struct item **last)
@@ -163,24 +177,33 @@ cleanup(void)
 	XCloseDisplay(dpy);
 }
 
-static char *
-cistrstr(const char *s, const char *sub)
-{
-	size_t len;
 
-	for (len = strlen(sub); *s; s++)
-		if (!strncasecmp(s, sub, len))
-			return (char *)s;
+static char *
+cistrstr(const char *h, const char *n)
+{
+	size_t i;
+
+	if (!n[0])
+		return (char *)h;
+
+	for (; *h; ++h) {
+		for (i = 0; n[i] && tolower((unsigned char)n[i]) ==
+		            tolower((unsigned char)h[i]); ++i)
+			;
+		if (n[i] == '\0')
+			return (char *)h;
+	}
 	return NULL;
 }
+
 
 static int
 drawitem(struct item *item, int x, int y, int w)
 {
-	int iscomment = 0;
+	int itemcategory = ItemNormal;
 	if (item->text[0] == '>') {
 		if (item->text[1] == '>') {
-			iscomment = 3;
+			itemcategory = ItemColoredComment;
 			switch (item->text[2])
 			{
 				case 'r':
@@ -200,17 +223,17 @@ drawitem(struct item *item, int x, int y, int w)
 					drw_setscheme(drw, scheme[SchemeSel]);
 					break;
 				default:
-					iscomment = 1;
+					itemcategory = ItemComment;
 					drw_setscheme(drw, scheme[SchemeNorm]);
 					break;
 			}
 		} else {
 			drw_setscheme(drw, scheme[SchemeNorm]);
-			iscomment = 1;
+			itemcategory = ItemComment;
 		}
 
 	} else if (item->text[0] == ':') {
-		iscomment = 2;
+		itemcategory = ItemColored;
 		if (item == sel) {
 			switch (item->text[1])
 			{
@@ -228,7 +251,7 @@ drawitem(struct item *item, int x, int y, int w)
 				break;
 			default:
 				drw_setscheme(drw, scheme[SchemeSel]);
-				iscomment = 0;
+				itemcategory = ItemNormal;
 				break;
 			}
 		} else {
@@ -245,7 +268,7 @@ drawitem(struct item *item, int x, int y, int w)
 
 	int temppadding;
 	temppadding = 0;
-	if (iscomment == 2) {
+	if (itemcategory == ItemColored) {
 		if (item->text[2] == ' ') {
 			temppadding = drw->fonts->h * 3;
 			animated = 1;
@@ -253,7 +276,7 @@ drawitem(struct item *item, int x, int y, int w)
 			strcpy(dest, item->text);
 			dest[6] = '\0';
 			drw_text(drw, x, y, temppadding, lineheight, temppadding/2.6, dest  + 3, 0, item == sel);
-			iscomment = 6;
+			itemcategory = ItemIcon;
 			drw_setscheme(drw, sel == item ? scheme[SchemeHover] : scheme[SchemeNorm]);
 		}
 	}
@@ -267,11 +290,13 @@ drawitem(struct item *item, int x, int y, int w)
 	} else {
 		output = item->stext;
 	}
+    
+    
 
 	if (item == sel)
 		sely = y;
-	return drw_text(drw, x + ((iscomment == 6) ? temppadding : 0), y, commented ? bh : (w - ((iscomment == 6) ? temppadding : 0)), bh,
-		commented ? (bh - drw_fontset_getwidth(drw, (output))) / 2: lrpad / 2, output + iscomment, 0, (iscomment == 3 || item == sel));
+	return drw_text(drw, x + ((itemcategory == ItemIcon) ? temppadding : 0), y, commented ? bh : (w - ((itemcategory == ItemIcon) ? temppadding : 0)), bh,
+		commented ? (bh - drw_fontset_getwidth(drw, (output))) / 2: lrpad / 2, output + outputoffset[itemcategory], 0, (itemcategory == ItemColoredComment || item == sel));
 }
 
 static void
@@ -314,6 +339,7 @@ drawmenu(void)
 	unsigned int curpos;
 	struct item *item;
 	int x = 0, y = 0, fh = drw->fonts->h, w;
+    int arrowwidth = TEXTW("");
 
 	char *censort;
 	drw_setscheme(drw, scheme[SchemeNorm]);
@@ -321,7 +347,10 @@ drawmenu(void)
 	if (commented && matches)
 		prompt = sel->text + 1;
 
+
 	if (prompt && *prompt) {
+        if (leftcmd)
+            x += arrowwidth;
 		drw_setscheme(drw, scheme[SchemeSel]);
 		if (lines < 8) {
 			x = drw_text(drw, x, 0, promptw, bh * (lines + 1), lrpad / 2, prompt, 0, 1);
@@ -341,10 +370,10 @@ drawmenu(void)
 			free(censort);
 	} else {
 		if (text[0] != '\0') {
-			drw_text(drw, x, 0, w, bh, lrpad / 2, text, 0, 0);
+			drw_text(drw, x + (leftcmd ? arrowwidth : 0), 0, w, bh, lrpad / 2, text, 0, 0);
 		} else  if (searchtext){
 			drw_setscheme(drw, scheme[SchemeFade]);
-			drw_text(drw, x, 0, w, bh, lrpad / 2, searchtext, 0, 0);
+			drw_text(drw, x + (leftcmd ? arrowwidth : 0), 0, w, bh, lrpad / 2, searchtext, 0, 0);
 			drw_setscheme(drw, scheme[SchemeNorm]);
 		}
 	}
@@ -353,7 +382,7 @@ drawmenu(void)
 		drw_setscheme(drw, scheme[SchemeNorm]);
 		// disable cursor on password prompt
 		if (!passwd && !toast)
-			drw_rect(drw, x + curpos, 2 + (bh-fh)/2, 2, fh - 4, 1, 0, 0);
+			drw_rect(drw, x + (leftcmd ? arrowwidth : 0) + curpos, 2 + (bh-fh)/2, 2, fh - 4, 1, 0, 0);
 
 	}
 
@@ -391,8 +420,19 @@ drawmenu(void)
 
 
 	drw_setscheme(drw, scheme[SchemeNorm]);
-	if (tempnumer)
-		drw_text(drw, mw - TEXTW(numbers), 0, TEXTW(numbers), bh, lrpad / 2, numbers, 0, 0);
+    if (tempnumer) {
+		drw_text(drw, mw - TEXTW(numbers) - (rightcmd ? arrowwidth : 0), 0, TEXTW(numbers), bh, lrpad / 2, numbers, 0, 0);
+    }
+    if (lines > 0) {
+        if (leftcmd) {
+            drw_setscheme(drw, scheme[SchemeHighlight]);
+            drw_text(drw, 0, 0, arrowwidth, bh, lrpad / 2, "", 0, 0);
+        }
+        if (rightcmd) {
+            drw_setscheme(drw, scheme[SchemeHighlight]);
+            drw_text(drw, mw - arrowwidth, 0, arrowwidth, bh, lrpad / 2, "", 0, 0);
+        }
+    }
 	drw_map(drw, win, 0, 0, mw, mh);
 }
 
@@ -782,6 +822,28 @@ void animaterect(int x1, int y1, int w1, int h1, int x2, int y2, int w2, int h2)
 	}
 }
 
+void cmdtrigger(int direction) {
+    char *tmpcmd;
+
+    animated = 1;
+    if (direction) {
+        if (rightcmd)
+            tmpcmd = rightcmd;
+        else
+            tmpcmd = leftcmd;
+        animaterect(mw + border_width, 0, 0, mh, 0, 0, mw, mh);
+    } else {
+        if (leftcmd)
+            tmpcmd = leftcmd;
+        else
+            tmpcmd = rightcmd;
+        animaterect(0, 0, 0, mh, 0, 0, mw, mh);
+    }
+
+    cleanup();
+    spawn(tmpcmd);
+}
+
 void selectnumber(int number, XKeyEvent *ev, KeySym *sym) {
     int i;
     sel = curr;
@@ -1050,16 +1112,7 @@ insert:
 		}
 
 		if ((ev->state & ShiftMask || ev->state & Mod4Mask) && (leftcmd || rightcmd)) {
-			char *tmpcmd;
-			if (leftcmd)
-				tmpcmd = leftcmd;
-			else
-				tmpcmd = rightcmd;
-
-			animated = 1;
-			animaterect(mw, 0, 0, mh, 0, 0, mw, mh);
-			cleanup();
-			spawn(tmpcmd);
+            cmdtrigger(0);
 			break;
 		}
 
@@ -1128,16 +1181,7 @@ insert:
 		}
 
 		if ((ev->state & ShiftMask || ev->state & Mod4Mask) && (rightcmd || leftcmd)) {
-			char *tmpcmd;
-			if (rightcmd)
-				tmpcmd = rightcmd;
-			else
-				tmpcmd = leftcmd;
-
-			animated = 1;
-			animaterect(0, 0, 0, mh, 0, 0, mw, mh);
-			cleanup();
-			spawn(tmpcmd);
+            cmdtrigger(1);
 			break;
 		}
 		if (text[cursor] != '\0') {
@@ -1271,6 +1315,7 @@ setselection(XEvent *e)
 	}
 }
 
+
 static void
 buttonpress(XEvent *e)
 {
@@ -1298,8 +1343,14 @@ buttonpress(XEvent *e)
 		if ((lines <= 0 && ev->x >= 0 && ev->x <= x + w +
 		((!prev || !curr->left) ? TEXTW("<") : 0)) ||
 		(lines > 0 && ev->y >= y && ev->y <= y + h)) {
-			insert(NULL, -cursor);
-			drawmenu();
+            if (leftcmd && ev->x < TEXTW("")) {
+                cmdtrigger(0);
+            }else if (ev->x > mw - TEXTW("")) {
+                cmdtrigger(1);
+            } else {
+                insert(NULL, -cursor);
+                drawmenu();
+            }
 			return;
 		} else {
 			if (lines > 0) {
@@ -1581,7 +1632,7 @@ setup(void)
 		/* no focused window is on screen, so use pointer location instead */
 		if (mon < 0 && !area && XQueryPointer(dpy, root, &dw, &dw, &x, &y, &di, &di, &du))
 			for (i = 0; i < n; i++)
-				if (INTERSECT(x, y, 1, 1, info[i]))
+				if (INTERSECT(x, y, 1, 1, info[i]) != 0)
 					break;
 		if (centered) {
 			if (dmw && dmw < info[i].width && info[i].width)
@@ -1806,7 +1857,7 @@ main(int argc, char *argv[])
 			fast = 1;
 		else if (!strcmp(argv[i], "-T"))   /* launch instantmenu in a toast mode that times out after a while */
 			toast = atoi(argv[++i]);
-		else if (!strcmp(argv[i], "-ct")) {   /* centers instantmenu on screen */
+		else if (!strcmp(argv[i], "-ct")) {   /* activate instantASSIST mode */
 			commented = 1;
 			static char commentprompt[200];
 			prompt = commentprompt + 1;
@@ -1820,7 +1871,6 @@ main(int argc, char *argv[])
 		else if (!strcmp(argv[i], "-I"))   /* input only */
 			inputonly = 1;
         else if (!strcmp(argv[i], "-s")) { /* enable smart case */
-            
             smartcase = 1;
 			fstrncmp = strncasecmp;
 			fstrstr = cistrstr;
