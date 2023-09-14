@@ -1451,7 +1451,7 @@ static void
 readstdin(void)
 {
 	char *line = NULL;
-	size_t i, junk, itemsiz = 0;
+	size_t i, itemsiz = 0, linesiz = 0;
 	ssize_t len;
 
  	if(passwd || inputonly){
@@ -1460,7 +1460,7 @@ readstdin(void)
  	}
 
 	/* read each line from stdin and add it to the item list */
-	for (i = 0; (len = getline(&line, &junk, stdin)) != -1; i++) {
+	for (i = 0; (len = getline(&line, &linesiz, stdin)) != -1; i++) {
         if (i + 1 >= itemsiz) {
             itemsiz += 256;
             if (!(items = realloc(items, itemsiz * sizeof(*items))))
@@ -1468,10 +1468,9 @@ readstdin(void)
         }
 		if (line[len - 1] == '\n' ||line[len - 1] == '\t' )
 			line[len - 1] = '\0';
-        items[i].stext = line;
-        items[i].text = strdup(line);
+        if (!(items[i].text = strdup(line)) || !(items[i].stext = strdup(line)))
+			die("strdup:");
 		items[i].out = 0;
-        line = NULL; /* next call of getline() allocates a new line */
 	}
     free(line);
 	if (items)
