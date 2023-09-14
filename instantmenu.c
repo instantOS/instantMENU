@@ -1451,7 +1451,7 @@ static void
 readstdin(void)
 {
 	char *line = NULL;
-	size_t i, junk, size = 0;
+	size_t i, junk, itemsiz = 0;
 	ssize_t len;
 
  	if(passwd || inputonly){
@@ -1461,9 +1461,11 @@ readstdin(void)
 
 	/* read each line from stdin and add it to the item list */
 	for (i = 0; (len = getline(&line, &junk, stdin)) != -1; i++) {
-		if (i + 1 >= size / sizeof *items)
-			if (!(items = realloc(items, (size += BUFSIZ))))
-				die("cannot realloc %zu bytes:", size);
+        if (i + 1 >= itemsiz) {
+            itemsiz += 256;
+            if (!(items = realloc(items, itemsiz * sizeof(*items))))
+                die("cannot realloc %zu bytes:", itemsiz * sizeof(*items));
+        }
 		if (line[len - 1] == '\n' ||line[len - 1] == '\t' )
 			line[len - 1] = '\0';
         items[i].stext = line;
