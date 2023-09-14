@@ -152,9 +152,18 @@ calcoffsets(void)
 	else
 		n = mw - (promptw + inputw + TEXTW("<") + TEXTW(">"));
 	/* calculate which items will begin the next page and previous page */
-	for (i = 0, next = curr; next; next = next->right)
-		if ((i += (lines > 0) ? bh : textw_clamp(next->text, n)) > n)
-			break;
+	for (i = 0, next = curr; next; next = next->right) {
+        if (commented) {
+          // this is a hack to fix instantassist after
+          // 9365d8a0bc9c3da2c5d43f14e9001f2057ef7340
+          // TODO: do this properly
+          if ((i += (lines > 0) ? bh : MIN(TEXTW(next->text), n)) > n)
+            break;
+        } else {
+            if ((i += (lines > 0) ? bh : textw_clamp(next->text, n)) > n)
+                break;
+        }
+    }
 	for (i = 0, prev = curr; prev && prev->left; prev = prev->left)
 		if ((i += (lines > 0) ? bh : textw_clamp(prev->left->text, n)) > n)
 			break;
@@ -1722,7 +1731,7 @@ setup(void)
 		}
 	}
 
-    inputw = mw / 3; /* input width: ~33% of monitor width */
+    inputw = mw / (commented ? 10 : 3); /* input width: ~33% of monitor width */
 	match();
     if (prematch && matches && strlen(text) > 0) {
         struct item *tmpmatch;
