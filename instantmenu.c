@@ -1,4 +1,5 @@
 /* See LICENSE file for copyright and license details. */
+#include <X11/X.h>
 #include <ctype.h>
 #include <locale.h>
 #include <math.h>
@@ -853,9 +854,9 @@ void selectnumber(int number, XKeyEvent *ev, KeySym *sym) {
 static void
 keypress(XKeyEvent *ev)
 {
-	char buf[32];
+	char buf[64];
 	int len;
-	KeySym ksym;
+	KeySym ksym = NoSymbol;
 	Status status;
 	int i;
 	struct item *tmpsel;
@@ -865,10 +866,10 @@ keypress(XKeyEvent *ev)
 	switch (status) {
 	default: /* XLookupNone, XBufferOverflow */
 		return;
-	case XLookupChars:
+	case XLookupChars: /* composed string from input method */
 		goto insert;
 	case XLookupKeySym:
-	case XLookupBoth:
+	case XLookupBoth: /* a KeySym and a string are returned: use keysym */
 		break;
 	}
 
@@ -1459,7 +1460,7 @@ readstdin(void)
  	}
 
 	/* read each line from stdin and add it to the item list */
-	for (i = 0; (len = getline(&line, &junk, stdin)) != -1; i++, line = NULL) {
+	for (i = 0; (len = getline(&line, &junk, stdin)) != -1; i++) {
 		if (i + 1 >= size / sizeof *items)
 			if (!(items = realloc(items, (size += BUFSIZ))))
 				die("cannot realloc %zu bytes:", size);
@@ -1468,7 +1469,9 @@ readstdin(void)
         items[i].stext = line;
         items[i].text = strdup(line);
 		items[i].out = 0;
+        line = NULL; /* next call of getline() allocates a new line */
 	}
+    free(line);
 	if (items)
 		items[i].text = NULL;
 	lines = MIN(lines, i / columns + (i % columns != 0));
