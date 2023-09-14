@@ -1194,9 +1194,9 @@ insert:
 		if (!alttab) {
 			if (!sel)
 				return;
-			strncpy(text, sel->text, sizeof text - 1);
-			text[sizeof text - 1] = '\0';
-			cursor = strlen(text);
+            cursor = strnlen(sel->text, sizeof text - 1);
+            memcpy(text, sel->text, cursor);
+			text[cursor] = '\0';
 			match();
 		} else {
 			tabbed = 1;
@@ -1779,12 +1779,11 @@ setup(void)
 static void
 usage(void)
 {
-	fputs("usage: instantmenu [-bfirnPv] [-l lines] [-g columns] [-p prompt] [-m monitor]\n"
+	die("usage: instantmenu [-bfirnPv] [-l lines] [-g columns] [-p prompt] [-m monitor]\n"
 	      "             [-x xoffset] [-xr right xoffset] [-y yoffset] [-w width]\n"
 	      "             [-h height] [-fn font]\n"
 
-	      "             [-nb color] [-nf color] [-sb color] [-sf color] [-w windowid]\n", stderr);
-	exit(1);
+	      "             [-nb color] [-nf color] [-sb color] [-sf color] [-w windowid]\n");
 }
 
 void
