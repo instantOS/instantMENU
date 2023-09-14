@@ -1449,8 +1449,9 @@ paste(void)
 static void
 readstdin(void)
 {
-	char buf[sizeof text], *p;
-    size_t i, size = 0;
+	char *line = NULL;
+	size_t i, junk, size = 0;
+	ssize_t len;
 
  	if(passwd || inputonly){
  	  inputw = lines = 0;
@@ -1458,18 +1459,14 @@ readstdin(void)
  	}
 
 	/* read each line from stdin and add it to the item list */
-	for (i = 0; fgets(buf, sizeof buf, stdin); i++) {
+	for (i = 0; (len = getline(&line, &junk, stdin)) != -1; i++, line = NULL) {
 		if (i + 1 >= size / sizeof *items)
 			if (!(items = realloc(items, (size += BUFSIZ))))
 				die("cannot realloc %zu bytes:", size);
-		if ((p = strchr(buf, '\n')))
-			*p = '\0';
-		if (!(items[i].text = strdup(buf)))
-			die("cannot strdup %zu bytes:", strlen(buf) + 1);
-		if ((p = strchr(buf, '\t')))
-			*p = '\0';
-		if (!(items[i].stext = strdup(buf)))
-			die("cannot strdup %zu bytes:", strlen(buf) + 1);
+		if (line[len - 1] == '\n' ||line[len - 1] == '\t' )
+			line[len - 1] = '\0';
+        items[i].stext = line;
+        items[i].text = strdup(line);
 		items[i].out = 0;
 	}
 	if (items)
