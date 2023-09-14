@@ -1552,7 +1552,7 @@ static void
 setup(void)
 {
 	int x, y, i, j;
-	unsigned int du, tmp;
+	unsigned int du;
 	XSetWindowAttributes swa;
 	XIM xim;
 	Window w, dw, *dws;
@@ -1566,7 +1566,6 @@ setup(void)
 		strcpy(wmclass, "floatmenu");
 
 	XClassHint ch = {wmclass, wmclass};
-    struct item *item;
 
 #ifdef XINERAMA
 	XineramaScreenInfo *info;
@@ -1722,12 +1721,7 @@ setup(void)
 		}
 	}
 
-    for (item = items; item && item->text; item++) {
-        if ((tmp = textw_clamp(item->text, mw/3)) > inputw) {
-            if ((inputw = tmp) == mw/3)
-                break;
-        }
-    }
+    inputw = mw / 3; /* input width: ~33% of monitor width */
 	match();
     if (prematch && matches && strlen(text) > 0) {
         struct item *tmpmatch;
