@@ -1447,8 +1447,7 @@ static void
 readstdin(void)
 {
 	char buf[sizeof text], *p;
-	size_t i, imax = 0, size = 0;
-	unsigned int tmpmax = 0;
+    size_t i, size = 0;
 
  	if(passwd || inputonly){
  	  inputw = lines = 0;
@@ -1469,15 +1468,9 @@ readstdin(void)
 		if (!(items[i].stext = strdup(buf)))
 			die("cannot strdup %u bytes:", strlen(buf) + 1);
 		items[i].out = 0;
-		drw_font_getexts(drw->fonts, buf, strlen(buf), &tmpmax, NULL);
-		if (tmpmax > inputw) {
-			inputw = tmpmax;
-			imax = i;
-		}
 	}
 	if (items)
 		items[i].text = NULL;
-	inputw = items ? TEXTW(items[imax].text) : 0;
 	lines = MIN(lines, i / columns + (i % columns != 0));
 	if (columns != 1)
 		columns = MIN(i / lines + (i % lines != 0), columns);
@@ -1556,7 +1549,7 @@ static void
 setup(void)
 {
 	int x, y, i, j;
-	unsigned int du;
+	unsigned int du, tmp;
 	XSetWindowAttributes swa;
 	XIM xim;
 	Window w, dw, *dws;
@@ -1570,6 +1563,7 @@ setup(void)
 		strcpy(wmclass, "floatmenu");
 
 	XClassHint ch = {wmclass, wmclass};
+    struct item *item;
 
 #ifdef XINERAMA
 	XineramaScreenInfo *info;
@@ -1725,7 +1719,12 @@ setup(void)
 		}
 	}
 
-	inputw = MIN(inputw, mw/3);
+    for (item = items; item && item->text; item++) {
+        if ((tmp = textw_clamp(item->text, mw/3)) > inputw) {
+            if ((inputw = tmp) == mw/3)
+                break;
+        }
+    }
 	match();
     if (prematch && matches && strlen(text) > 0) {
         struct item *tmpmatch;
