@@ -121,6 +121,12 @@ getrootptr(int *x, int *y)
 	return XQueryPointer(dpy, root, &dummy, &dummy, x, y, &di, &di, &dui);
 }
 
+static unsigned int
+textw_clamp(const char *str, unsigned int n)
+{
+    unsigned int w = drw_fontset_getwidth_clamp(drw, str, n) + lrpad;
+    return MIN(w, n);
+}
 
 static void
 appenditem(struct item *item, struct item **list, struct item **last)
@@ -146,10 +152,10 @@ calcoffsets(void)
 		n = mw - (promptw + inputw + TEXTW("<") + TEXTW(">"));
 	/* calculate which items will begin the next page and previous page */
 	for (i = 0, next = curr; next; next = next->right)
-		if ((i += (lines > 0) ? bh : MIN(TEXTW(next->text), n)) > n)
+		if ((i += (lines > 0) ? bh : textw_clamp(next->text, n)) > n)
 			break;
 	for (i = 0, prev = curr; prev && prev->left; prev = prev->left)
-		if ((i += (lines > 0) ? bh : MIN(TEXTW(prev->left->text), n)) > n)
+		if ((i += (lines > 0) ? bh : textw_clamp(prev->left->text, n)) > n)
 			break;
 }
 
@@ -407,7 +413,7 @@ drawmenu(void)
 		}
 		x += w;
 		for (item = curr; item != next; item = item->right)
-			x = drawitem(item, x, 0, MIN(TEXTW(item->stext), mw - x - TEXTW(">") - TEXTW(numbers)));
+			x = drawitem(item, x, 0, textw_clamp(item->stext, mw - x - TEXTW(">") - TEXTW(numbers)));
 
 		if (next) {
 			w = TEXTW(">");
