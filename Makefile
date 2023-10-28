@@ -6,13 +6,7 @@ include config.mk
 SRC = drw.c instantmenu.c itest.c util.c
 OBJ = $(SRC:.c=.o)
 
-all: options instantmenu itest
-
-options:
-	@echo instantmenu build options:
-	@echo "CFLAGS   = $(CFLAGS)"
-	@echo "LDFLAGS  = $(LDFLAGS)"
-	@echo "CC       = $(CC)"
+all: instantmenu itest
 
 .c.o:
 	$(CC) -c $(CFLAGS) $<
@@ -63,4 +57,4 @@ uninstall:
 		$(DESTDIR)$(MANPREFIX)/man1/instantmenu.1\
 		$(DESTDIR)$(MANPREFIX)/man1/itest.1
 
-.PHONY: all options clean dist install uninstall
+.PHONY: all clean dist install uninstall
