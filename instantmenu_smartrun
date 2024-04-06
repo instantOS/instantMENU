@@ -5,16 +5,15 @@
 if [ -n "$2" ] || [ -z "$1" ]; then
     LIST="$HOME/.cache/instantmenuhist"
     RARGS="terminal"
-    LARGS="golaunch"
+    LARGS="desktop"
 else
-    if [ "$1" = "golaunch" ]; then
+    if [ "$1" = "desktop" ]; then
         shift 1
-        # clear stdin
-        godesktop | instantmenu -p "desktop" -lc "instantmenu_smartrun terminal" -rc "instantmenu_smartrun" -f -q "search apps" -l 10 -c -i -w -1 -h -1 -bw 4 | golaunch
+        i3-dmenu-desktop --dmenu='instantmenu -p desktop -lc "instantmenu_smartrun terminal" -rc "instantmenu_smartrun" -q "search apps" -l 10 -c -i -w -1 -h -1 -bw 4'
         exit
     fi
     LIST="$HOME/.cache/instanttermmenuhist"
-    RARGS="golaunch"
+    RARGS="desktop"
     LARGS=""
 fi
 
