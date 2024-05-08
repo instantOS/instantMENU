@@ -16,6 +16,7 @@
 #ifdef XINERAMA
 #include <X11/extensions/Xinerama.h>
 #endif
+#include <X11/extensions/Xrandr.h>
 #include <X11/Xft/Xft.h>
 #include <X11/cursorfont.h>
 #include <X11/Xresource.h>
@@ -786,6 +787,14 @@ void animatesel() {
 	int time;
 	time  = 0;
 	drw_setscheme(drw, scheme[SchemeSel]);
+
+	XRRScreenConfiguration *conf = XRRGetScreenInfo(dpy, RootWindow(dpy, 0));
+	short refresh_rate = XRRConfigCurrentRate(conf);
+        
+	// scale the framerate properly for !=60Hz displays
+	framecount = framecount * (refresh_rate / 60);
+	double usecs = (1 / (double)refresh_rate) * 1000000;
+
 	while (time < framecount)
 	{
 		// bottom animation
@@ -795,7 +804,7 @@ void animatesel() {
 		drw_rect(drw, 0, sely + 4 - (easeOutQuint(((double)time/framecount)) * (sely + 4)), mw, (easeOutQuint(((double)time/framecount)) * sely), 1, 1, 0);
 		drw_map(drw, win, 0, 0, mw, mh);
 		time++;
-		usleep(19000);
+		usleep(usecs);
 	}
 }
 
@@ -814,13 +823,21 @@ void animaterect(int x1, int y1, int w1, int h1, int x2, int y2, int w2, int h2)
 	time  = 0;
 	double timefactor = 0;
 	drw_setscheme(drw, scheme[SchemeSel]);
+
+	XRRScreenConfiguration *conf = XRRGetScreenInfo(dpy, RootWindow(dpy, 0));
+	short refresh_rate = XRRConfigCurrentRate(conf);
+        
+	// scale the framerate properly for !=60Hz displays
+	framecount = framecount * (refresh_rate / 60);
+	double usecs = (1 / (double)refresh_rate) * 1000000;
+
 	while (time < framecount)
 	{
 		timefactor = easeOutQuint((double)time/framecount);
 		drw_rect(drw, x1 + (x2 - x1) * timefactor, y1 + (y2 - y1) * timefactor, w1 + (w2 - w1) * timefactor, h1 + (h2 - h1) * timefactor, 1, 1, 0);
 		drw_map(drw, win, 0, 0, mw, mh);
 		time++;
-		usleep(19000);
+		usleep(usecs);
 	}
 }
 
