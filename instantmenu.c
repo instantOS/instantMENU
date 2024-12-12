@@ -21,6 +21,7 @@
 #include <X11/cursorfont.h>
 
 #include "drw.h"
+#include "enums.h"
 #include "util.h"
 
 /* macros */
@@ -34,30 +35,6 @@
 #define NUMBERSBUFSIZE (NUMBERSMAXDIGITS * 2) + 1
 #define BUTTONMASK (ButtonPressMask | ButtonReleaseMask)
 #define MOUSEMASK (BUTTONMASK | PointerMotionMask)
-
-/* enums */
-enum {
-    SchemeNorm,
-    SchemeFade,
-    SchemeHighlight,
-    SchemeHover,
-    SchemeSel,
-    SchemeOut,
-    SchemeGreen,
-    SchemeYellow,
-    SchemeRed,
-    SchemeLast
-}; /* color schemes */
-
-// item categories
-enum {
-    ItemNormal,
-    ItemComment,
-    ItemColoredComment,
-    ItemColored,
-    ItemIcon,
-    ItemLast
-};
 
 struct item {
     char *text;

@@ -9,7 +9,7 @@ OBJ = $(SRC:.c=.o)
 all: instantmenu itest
 
 .c.o:
-	$(CC) -c $(CFLAGS) $<
+	$(CC) -g -c $(CFLAGS) $<
 
 config.h:
 	cp config.def.h $@
@@ -17,13 +17,13 @@ config.h:
 $(OBJ): arg.h config.h config.mk drw.h
 
 instantmenu: instantmenu.o drw.o util.o
-	$(CC) -o $@ instantmenu.o drw.o util.o $(LDFLAGS)
+	$(CC) -g -o $@ instantmenu.o drw.o util.o $(LDFLAGS)
 
 itest: itest.o
-	$(CC) -o $@ itest.o $(LDFLAGS)
+	$(CC) -g -o $@ itest.o $(LDFLAGS)
 
 clean:
-	rm -f instantmenu itest $(OBJ) instantmenu-$(VERSION).tar.gz config.h instantmenu
+	rm -f instantmenu *.o *.out itest $(OBJ) instantmenu-$(VERSION).tar.gz config.h instantmenu
 
 dist: clean
 	mkdir -p instantmenu-$(VERSION)

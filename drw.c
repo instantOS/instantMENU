@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "config.h"
 #include "drw.h"
 #include "util.h"
 
@@ -305,7 +306,10 @@ int drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h,
                 if (!charexists)
                     utf8charlen = utf8decode("a", &utf8codepoint, &utf8err);
             }
-            if (overflow || !charexists || nextfont || utf8err)
+            // the last part is a horrible hack
+            // TODO: find out why the emoji picker has loads of utf8 errors
+            // and some infinite loop
+            if (overflow || !charexists || nextfont || (lines >= 1 && utf8err))
                 break;
             else
                 charexists = 0;

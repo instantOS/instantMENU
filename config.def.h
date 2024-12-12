@@ -1,5 +1,9 @@
 /* See LICENSE file for copyright and license details. */
 /* Default settings; can be overriden by command line. */
+#include "enums.h"
+
+#ifndef INSTANTMENU_CONFIG_H
+#define INSTANTMENU_CONFIG_H
 
 static int topbar = 1;                      /* -b  option; if 0, instantmenu appears at bottom     */
 static int centered = 0;                    /* -c option; centers dmenu on screen */
@@ -58,3 +62,5 @@ static unsigned int preselected = 0;
 
 /* Size of the window border */
 static unsigned int border_width = 0;
+
+#endif /* INSTANTMENU_CONFIG_H */
