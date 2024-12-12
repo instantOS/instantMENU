@@ -137,7 +137,11 @@ int getrootptr(int *x, int *y) {
     return XQueryPointer(dpy, root, &dummy, &dummy, x, y, &di, &di, &dui);
 }
 
-static unsigned int textw_clamp(const char *str, unsigned int n) {
+static unsigned int textw_clamp(const char *str, unsigned int n,
+                                int commented) {
+    if (commented) {
+        return bh;
+    }
     unsigned int w = drw_fontset_getwidth_clamp(drw, str, n) + lrpad;
     return MIN(w, n);
 }
@@ -163,19 +167,13 @@ static void calcoffsets(void) {
         n = mw - (promptw + inputw + TEXTW("<") + TEXTW(">"));
     /* calculate which items will begin the next page and previous page */
     for (i = 0, next = curr; next; next = next->right) {
-        if (commented) {
-            // this is a hack to fix instantassist after
-            // 9365d8a0bc9c3da2c5d43f14e9001f2057ef7340
-            // TODO: do this properly
-            if ((i += (lines > 0) ? bh : MIN(TEXTW(next->text), n)) > n)
-                break;
-        } else {
-            if ((i += (lines > 0) ? bh : textw_clamp(next->text, n)) > n)
-                break;
-        }
+        if ((i += (lines > 0) ? bh : textw_clamp(next->text, n, commented)) > n)
+            break;
     }
     for (i = 0, prev = curr; prev && prev->left; prev = prev->left)
-        if ((i += (lines > 0) ? bh : textw_clamp(prev->left->text, n)) > n)
+        if ((i += (lines > 0)
+                      ? bh
+                      : textw_clamp(prev->left->text, n, commented)) > n)
             break;
 }
 
