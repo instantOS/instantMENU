@@ -420,9 +420,10 @@ static void drawmenu(void) {
         }
         x += w;
         for (item = curr; item != next; item = item->right)
-            x = drawitem(
-                item, x, 0,
-                textw_clamp(item->stext, mw - x - TEXTW(">") - TEXTW(numbers)));
+            x = drawitem(item, x, 0,
+                         textw_clamp(item->stext,
+                                     mw - x - TEXTW(">") - TEXTW(numbers),
+                                     commented));
 
         if (next) {
             w = TEXTW(">");
