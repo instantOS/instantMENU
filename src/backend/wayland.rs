@@ -96,6 +96,10 @@ pub struct EventState {
     seat: Option<wl_seat::WlSeat>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer: Option<wl_pointer::WlPointer>,
+    /* last pointer position, surface-local (button events don't carry
+     * coordinates on wayland; the position comes from motion/enter) */
+    ptr_x: f64,
+    ptr_y: f64,
     data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
     data_device: Option<wl_data_device::WlDataDevice>,
     primary_manager:
@@ -141,6 +145,8 @@ impl EventState {
             seat: None,
             keyboard: None,
             pointer: None,
+            ptr_x: 0.0,
+            ptr_y: 0.0,
             data_device_manager: None,
             data_device: None,
             primary_manager: None,
@@ -519,7 +525,13 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
     ) {
         let mods = state.xkb.as_ref().map(|x| x.mods).unwrap_or(0);
         match event {
+            wl_pointer::Event::Enter { surface_x, surface_y, .. } => {
+                state.ptr_x = surface_x;
+                state.ptr_y = surface_y;
+            }
             wl_pointer::Event::Motion { time, surface_x, surface_y } => {
+                state.ptr_x = surface_x;
+                state.ptr_y = surface_y;
                 state.events.push_back(BackendEvent::Motion {
                     time,
                     x: surface_x as i32,
@@ -537,8 +549,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
                     state.events.push_back(BackendEvent::ButtonPress {
                         button: xbutton,
                         state: mods,
-                        x: -1,
-                        y: -1,
+                        x: state.ptr_x as i32,
+                        y: state.ptr_y as i32,
                     });
                 }
             }
@@ -704,6 +716,10 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for EventState {
             _ => {}
         }
     }
+
+    wayland_client::event_created_child!(EventState, wl_data_device::WlDataDevice, [
+        wl_data_device::EVT_DATA_OFFER_OPCODE => (wl_data_offer::WlDataOffer, ()),
+    ]);
 }
 
 impl Dispatch<wl_data_offer::WlDataOffer, ()> for EventState {
@@ -746,6 +762,17 @@ impl Dispatch<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1, ()>
             _ => {}
         }
     }
+
+    wayland_client::event_created_child!(
+        EventState,
+        zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1,
+        [
+            zwp_primary_selection_device_v1::EVT_DATA_OFFER_OPCODE => (
+                zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1,
+                ()
+            ),
+        ]
+    );
 }
 
 impl Dispatch<zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1, ()>
@@ -1042,20 +1069,69 @@ impl Backend for WaylandBackend {
             if let Some(ev) = self.pump_selection() {
                 return Some(ev);
             }
-            match self.queue.blocking_dispatch(&mut self.state) {
-                Ok(_) => {}
-                Err(_) => return None,
+
+            /* Wait for the wayland socket or a pending selection pipe. A
+             * blocking_dispatch() here would only wake on wayland events, so
+             * the clipboard/primary transfer pipes would never be pumped. */
+            let guard = self.queue.prepare_read();
+            let mut fds: Vec<libc::pollfd> = Vec::with_capacity(3);
+            if let Some(g) = &guard {
+                fds.push(libc::pollfd {
+                    fd: g.connection_fd().as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                });
+            } else {
+                /* events are already pending in the queue: dispatch them
+                 * before blocking on anything else */
+                if self.queue.dispatch_pending(&mut self.state).is_err() {
+                    return None;
+                }
+                let _ = self.conn.flush();
+                continue;
+            }
+            if let Some((_, tracker)) = &self.state.clipboard_offer {
+                if let Some(fd) = tracker.read_fd {
+                    fds.push(libc::pollfd { fd, events: libc::POLLIN, revents: 0 });
+                }
+            }
+            if let Some((_, tracker)) = &self.state.primary_offer {
+                if let Some(fd) = tracker.read_fd {
+                    fds.push(libc::pollfd { fd, events: libc::POLLIN, revents: 0 });
+                }
+            }
+            loop {
+                let n = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
+                if n >= 0 {
+                    break;
+                }
+                let err = std::io::Error::last_os_error();
+                if err.kind() != std::io::ErrorKind::Interrupted {
+                    return None;
+                }
+            }
+            /* read + dispatch only when the wayland socket is ready; when
+             * only a selection pipe fired, drop the guard (cancels the
+             * prepared read) and let pump_selection() drain it */
+            if fds[0].revents & (libc::POLLIN | libc::POLLERR | libc::POLLHUP) != 0 {
+                if let Some(g) = guard {
+                    if g.read().is_err() {
+                        return None;
+                    }
+                }
+            }
+            if self.queue.dispatch_pending(&mut self.state).is_err() {
+                return None;
             }
             let _ = self.conn.flush();
         }
     }
 
     fn request_selection(&mut self, clipboard: bool) {
-        let state = &mut self.state;
         let mime = if clipboard {
-            state.clipboard_offer.as_ref().and_then(|(_, t)| t.best_mime())
+            self.state.clipboard_offer.as_ref().and_then(|(_, t)| t.best_mime())
         } else {
-            state.primary_offer.as_ref().and_then(|(_, t)| t.best_mime())
+            self.state.primary_offer.as_ref().and_then(|(_, t)| t.best_mime())
         };
         let Some(mime) = mime else { return };
 
@@ -1063,27 +1139,39 @@ impl Backend for WaylandBackend {
         if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
             return;
         }
-        if clipboard {
-            if let Some((offer, tracker)) = &mut state.clipboard_offer {
-                if tracker.read_fd.is_none() {
+        /* make the read end non-blocking: pump_offer() must never block the
+         * event loop while the compositor streams the selection in */
+        unsafe { libc::fcntl(fds[0], libc::F_SETFL, libc::O_NONBLOCK) };
+
+        /* register the pipe as the transfer target of the offer */
+        let sent = if clipboard {
+            match &mut self.state.clipboard_offer {
+                Some((offer, tracker)) if tracker.read_fd.is_none() => {
                     unsafe { offer.receive(mime.clone(), BorrowedFd::borrow_raw(fds[1])) };
-                    tracker.read_fd = Some(fds[0]);
                     unsafe { libc::close(fds[1]) };
-                    return;
+                    tracker.read_fd = Some(fds[0]);
+                    true
                 }
+                _ => false,
             }
-            unsafe { libc::close(fds[0]); libc::close(fds[1]) };
-        } else if let Some((offer, tracker)) = &mut state.primary_offer {
-            if tracker.read_fd.is_none() {
-                unsafe { offer.receive(mime.clone(), BorrowedFd::borrow_raw(fds[1])) };
-                tracker.read_fd = Some(fds[0]);
-                unsafe { libc::close(fds[1]) };
-                return;
-            }
-            unsafe { libc::close(fds[0]); libc::close(fds[1]) };
         } else {
+            match &mut self.state.primary_offer {
+                Some((offer, tracker)) if tracker.read_fd.is_none() => {
+                    unsafe { offer.receive(mime.clone(), BorrowedFd::borrow_raw(fds[1])) };
+                    unsafe { libc::close(fds[1]) };
+                    tracker.read_fd = Some(fds[0]);
+                    true
+                }
+                _ => false,
+            }
+        };
+        if !sent {
+            /* no offer, or a transfer is already in flight */
             unsafe { libc::close(fds[0]); libc::close(fds[1]) };
         }
+        /* flush so the compositor actually receives the request and writes
+         * to the pipe (next_event() polls it only after this) */
+        let _ = self.conn.flush();
     }
 
     fn is_wayland(&self) -> bool {
