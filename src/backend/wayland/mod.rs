@@ -35,7 +35,7 @@ use crate::render::{Canvas, Color};
 const XKB_OFFSET: u32 = 8;
 
 pub struct WaylandBackend {
-    conn: Connection,
+    connection: Connection,
     queue: EventQueue<EventState>,
     state: EventState,
 }
@@ -62,7 +62,7 @@ struct ShmSlot {
 struct ShmPool {
     pool: wl_shm_pool::WlShmPool,
     fd: RawFd,
-    mem: *mut u8,
+    memory: *mut u8,
     len: usize,
     frame_size: usize,
     slots: Vec<ShmSlot>,
@@ -91,7 +91,7 @@ impl OfferTracker {
 }
 
 pub struct EventState {
-    qh: QueueHandle<Self>,
+    queue_handle: QueueHandle<Self>,
 
     /* globals */
     compositor: Option<wl_compositor::WlCompositor>,
@@ -104,8 +104,8 @@ pub struct EventState {
     pointer: Option<wl_pointer::WlPointer>,
     /* last pointer position, surface-local (button events don't carry
      * coordinates on wayland; the position comes from motion/enter) */
-    ptr_x: f64,
-    ptr_y: f64,
+    pointer_x: f64,
+    pointer_y: f64,
     data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
     data_device: Option<wl_data_device::WlDataDevice>,
     primary_manager:
@@ -141,9 +141,9 @@ pub struct EventState {
 }
 
 impl EventState {
-    fn new(qh: QueueHandle<Self>) -> Self {
+    fn new(queue_handle: QueueHandle<Self>) -> Self {
         EventState {
-            qh,
+            queue_handle,
             compositor: None,
             shm: None,
             outputs: Vec::new(),
@@ -151,8 +151,8 @@ impl EventState {
             seat: None,
             keyboard: None,
             pointer: None,
-            ptr_x: 0.0,
-            ptr_y: 0.0,
+            pointer_x: 0.0,
+            pointer_y: 0.0,
             data_device_manager: None,
             data_device: None,
             primary_manager: None,
@@ -229,7 +229,7 @@ impl EventState {
                     height,
                     stride as i32,
                     wl_shm::Format::Argb8888,
-                    &self.qh,
+                    &self.queue_handle,
                     (),
                 );
                 pool.slots.push(ShmSlot { buffer, offset, released: false });
@@ -241,7 +241,7 @@ impl EventState {
         /* copy RGBA -> BGRA (wl_shm ARGB8888 is little-endian xBGRA in memory
          * on LE hosts) */
         unsafe {
-            let dst = pool.mem.add(offset);
+            let dst = pool.memory.add(offset);
             let n = width as usize * height as usize;
             for i in 0..n {
                 let s = &rgba[i * 4..i * 4 + 4];
@@ -270,7 +270,7 @@ impl EventState {
             unsafe { libc::close(fd) };
             return;
         }
-        let mem = unsafe {
+        let memory = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
                 len,
@@ -280,15 +280,15 @@ impl EventState {
                 0,
             )
         };
-        if mem == libc::MAP_FAILED {
+        if memory == libc::MAP_FAILED {
             unsafe { libc::close(fd) };
             return;
         }
-        let pool = unsafe { shm.create_pool(BorrowedFd::borrow_raw(fd), len as i32, &self.qh, ()) };
+        let pool = unsafe { shm.create_pool(BorrowedFd::borrow_raw(fd), len as i32, &self.queue_handle, ()) };
         self.pool = Some(ShmPool {
             pool,
             fd,
-            mem: mem.cast(),
+            memory: memory.cast(),
             len,
             frame_size,
             slots: Vec::new(),
@@ -303,7 +303,7 @@ impl EventState {
             pool.slots.clear();
             pool.pool.destroy();
             unsafe {
-                libc::munmap(pool.mem.cast(), pool.len);
+                libc::munmap(pool.memory.cast(), pool.len);
                 libc::close(pool.fd);
             }
         }
@@ -320,12 +320,12 @@ impl Drop for EventState {
 
 impl WaylandBackend {
     pub fn new() -> Result<WaylandBackend, String> {
-        let conn =
+        let connection =
             Connection::connect_to_env().map_err(|e| format!("cannot connect: {e}"))?;
-        let mut queue: EventQueue<EventState> = conn.new_event_queue();
-        let qh = queue.handle();
-        let mut state = EventState::new(qh.clone());
-        let _ = conn.display().get_registry(&state.qh, ());
+        let mut queue: EventQueue<EventState> = connection.new_event_queue();
+        let queue_handle = queue.handle();
+        let mut state = EventState::new(queue_handle.clone());
+        let _ = connection.display().get_registry(&state.queue_handle, ());
         /* wait for the initial globals + output modes + seat devices */
         for _ in 0..4 {
             if queue.roundtrip(&mut state).is_err() {
@@ -336,8 +336,8 @@ impl WaylandBackend {
             return Err("compositor has no wl_shm".to_string());
         }
         state.monitors = state.outputs.iter().map(|o| o.info.clone()).collect();
-        let _ = conn.flush();
-        Ok(WaylandBackend { conn, queue, state })
+        let _ = connection.flush();
+        Ok(WaylandBackend { connection, queue, state })
     }
 
     fn pump_selection(&mut self) -> Option<BackendEvent> {
@@ -358,8 +358,8 @@ impl WaylandBackend {
     ) -> Result<(), String> {
         let state = &mut self.state;
         let wm_base = state.wm_base.as_ref().ok_or("no xdg_wm_base")?;
-        let xdg_surface = wm_base.get_xdg_surface(surface, &state.qh, ());
-        let toplevel = xdg_surface.get_toplevel(&state.qh, ());
+        let xdg_surface = wm_base.get_xdg_surface(surface, &state.queue_handle, ());
+        let toplevel = xdg_surface.get_toplevel(&state.queue_handle, ());
         toplevel.set_title(class_hint.to_string());
         toplevel.set_app_id("instantmenu".to_string());
         surface.commit();
@@ -383,37 +383,37 @@ impl WaylandBackend {
         let shell = state.layer_shell.as_ref().ok_or(
             "compositor has no wlr-layer-shell (use -wm for managed windows)",
         )?;
-        let out_idx = state.output_for_point(x, y);
-        let output = state.outputs.get(out_idx).map(|o| o.proxy.clone());
+        let output_index = state.output_for_point(x, y);
+        let output = state.outputs.get(output_index).map(|o| o.proxy.clone());
         let layer_surface = shell.get_layer_surface(
             surface,
             output.as_ref(),
             zwlr_layer_shell_v1::Layer::Top,
             "instantmenu".to_string(),
-            &state.qh,
+            &state.queue_handle,
             (),
         );
 
         /* translate the X11-style absolute geometry into an anchor and
          * margins on the chosen output: anchor the edge the menu sits on,
          * offset from the left; set_size is then honored for both axes */
-        let mon = state.outputs.get(out_idx).map(|o| o.info.clone()).unwrap_or(
+        let monitor = state.outputs.get(output_index).map(|o| o.info.clone()).unwrap_or(
             MonitorInfo { x: 0, y: 0, width: w, height: h, name: String::new() },
         );
 
         let mut anchor = zwlr_layer_surface_v1::Anchor::Left;
         let top;
         let bottom;
-        if y + h / 2 >= mon.y + mon.height / 2 {
+        if y + h / 2 >= monitor.y + monitor.height / 2 {
             anchor |= zwlr_layer_surface_v1::Anchor::Bottom;
             top = 0;
-            bottom = (mon.y + mon.height - (y + h)).max(0);
+            bottom = (monitor.y + monitor.height - (y + h)).max(0);
         } else {
             anchor |= zwlr_layer_surface_v1::Anchor::Top;
-            top = (y - mon.y).max(0);
+            top = (y - monitor.y).max(0);
             bottom = 0;
         }
-        let left = (x - mon.x).max(0);
+        let left = (x - monitor.x).max(0);
 
         layer_surface.set_anchor(anchor);
         layer_surface.set_margin(top, 0, bottom, left);
@@ -488,7 +488,7 @@ impl Backend for WaylandBackend {
             .compositor
             .as_ref()
             .ok_or("compositor has no wl_compositor")?
-            .create_surface(&self.state.qh, ());
+            .create_surface(&self.state.queue_handle, ());
 
         if managed {
             self.create_managed(&surface, class_hint)
@@ -514,19 +514,19 @@ impl Backend for WaylandBackend {
         if let Some(toplevel) = &self.state.xdg_toplevel {
             toplevel.set_title(title.to_string());
         }
-        let _ = self.conn.flush();
+        let _ = self.connection.flush();
     }
 
     fn set_title(&mut self, title: &str) {
         if let Some(toplevel) = &self.state.xdg_toplevel {
             toplevel.set_title(title.to_string());
         }
-        let _ = self.conn.flush();
+        let _ = self.connection.flush();
     }
 
     fn present(&mut self, canvas: &Canvas) {
         self.state.draw(&canvas.data, canvas.width, canvas.height);
-        let _ = self.conn.flush();
+        let _ = self.connection.flush();
     }
 
     fn raise(&mut self) {
@@ -562,7 +562,7 @@ impl Backend for WaylandBackend {
                 if self.queue.dispatch_pending(&mut self.state).is_err() {
                     return None;
                 }
-                let _ = self.conn.flush();
+                let _ = self.connection.flush();
                 continue;
             }
             if let Some((_, tracker)) = &self.state.clipboard_offer {
@@ -598,7 +598,7 @@ impl Backend for WaylandBackend {
             if self.queue.dispatch_pending(&mut self.state).is_err() {
                 return None;
             }
-            let _ = self.conn.flush();
+            let _ = self.connection.flush();
         }
     }
 
@@ -646,7 +646,7 @@ impl Backend for WaylandBackend {
         }
         /* flush so the compositor actually receives the request and writes
          * to the pipe (next_event() polls it only after this) */
-        let _ = self.conn.flush();
+        let _ = self.connection.flush();
     }
 
     fn is_wayland(&self) -> bool {
