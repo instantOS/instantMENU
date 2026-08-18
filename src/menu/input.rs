@@ -15,7 +15,7 @@ impl Menu {
 
         let last = self
             .cfg
-            .rejectnomatch
+            .reject_no_match
             .then(|| (self.text.clone(), self.cursor));
         let cursor = self.cursor as isize;
 
@@ -25,10 +25,10 @@ impl Menu {
             self.text.insert_str(cursor as usize, &s[..byte_len]);
             self.cursor = (cursor + byte_len as isize) as usize;
 
-            if self.cfg.smartcase {
+            if self.cfg.smart_case {
                 let has_upper = self.text.bytes().any(|b| (65..=90).contains(&b));
                 if has_upper {
-                    self.cfg.smartcase = false;
+                    self.cfg.smart_case = false;
                     self.insensitive = false;
                 }
             }
@@ -47,9 +47,9 @@ impl Menu {
 
         self.do_match();
 
-        if self.matches.is_empty() && self.cfg.rejectnomatch {
+        if self.matches.is_empty() && self.cfg.reject_no_match {
             /* revert to last text value if theres no match */
-            let (text, cursor) = last.expect("rejectnomatch snapshot");
+            let (text, cursor) = last.expect("reject_no_match snapshot");
             self.text = text;
             self.cursor = cursor;
             self.do_match();
@@ -57,7 +57,7 @@ impl Menu {
     }
 
     /// nextrune: location of the next utf8 rune in the given direction.
-    pub(super) fn nextrune(&self, inc: isize) -> usize {
+    pub(super) fn next_rune(&self, inc: isize) -> usize {
         let bytes = self.text.as_bytes();
         let mut n = self.cursor as isize + inc;
         while n + inc >= 0
@@ -74,36 +74,36 @@ impl Menu {
         self.text
             .as_bytes()
             .get(pos)
-            .map(|b| self.cfg.worddelimiters.as_bytes().contains(b))
+            .map(|b| self.cfg.word_delimiters.as_bytes().contains(b))
             .unwrap_or(false)
     }
 
-    pub(super) fn movewordedge(&mut self, dir: isize) {
+    pub(super) fn move_word_edge(&mut self, dir: isize) {
         if dir < 0 {
             /* move cursor to the start of the word */
-            while self.cursor > 0 && self.is_delimiter(self.nextrune(-1)) {
-                self.cursor = self.nextrune(-1);
+            while self.cursor > 0 && self.is_delimiter(self.next_rune(-1)) {
+                self.cursor = self.next_rune(-1);
             }
-            while self.cursor > 0 && !self.is_delimiter(self.nextrune(-1)) {
-                self.cursor = self.nextrune(-1);
+            while self.cursor > 0 && !self.is_delimiter(self.next_rune(-1)) {
+                self.cursor = self.next_rune(-1);
             }
         } else {
             /* move cursor to the end of the word */
             while self.cursor < self.text.len() && self.is_delimiter(self.cursor) {
-                self.cursor = self.nextrune(1);
+                self.cursor = self.next_rune(1);
             }
             while self.cursor < self.text.len() && !self.is_delimiter(self.cursor) {
-                self.cursor = self.nextrune(1);
+                self.cursor = self.next_rune(1);
             }
         }
     }
 
-    /// readstdin — getline-per-line semantics: split on '\n' (a final chunk
+    /// read_stdin — getline-per-line semantics: split on '\n' (a final chunk
     /// without trailing newline is still an item), then strip ONE trailing
     /// '\n' or '\t' byte and cut at the first NUL like strdup would.
-    pub fn readstdin(&mut self) {
-        if self.cfg.passwd || self.cfg.inputonly {
-            self.inputw = 0;
+    pub fn read_stdin(&mut self) {
+        if self.cfg.password || self.cfg.input_only {
+            self.input_width = 0;
             self.cfg.lines = 0;
             return;
         }
@@ -126,7 +126,7 @@ impl Menu {
             };
             self.items.push(Item {
                 text: line.to_owned(),
-                out: false,
+                already_output: false,
             });
             count += 1;
         }
@@ -136,17 +136,18 @@ impl Menu {
         let i = count;
         self.cfg.lines = lines.min(i / columns + (i % columns != 0) as i32);
         if columns != 1 && self.cfg.lines != 0 {
-            self.cfg.columns = (i / self.cfg.lines + (i % self.cfg.lines != 0) as i32).min(columns);
+            self.cfg.columns =
+                (i / self.cfg.lines + (i % self.cfg.lines != 0) as i32).min(columns);
         }
     }
 
-    /// `-it` — initial input text, applied with rejectnomatch temporarily
+    /// `-it` — initial input text, applied with reject_no_match temporarily
     /// disabled (port of the insert() call in the argv loop; items are empty
     /// at that point, so this only seeds text/cursor/smartcase).
     pub fn initial_text(&mut self, s: &str) {
-        let tmp = self.cfg.rejectnomatch;
-        self.cfg.rejectnomatch = false;
+        let tmp = self.cfg.reject_no_match;
+        self.cfg.reject_no_match = false;
         self.insert(Some(s), s.len() as i32);
-        self.cfg.rejectnomatch = tmp;
+        self.cfg.reject_no_match = tmp;
     }
 }

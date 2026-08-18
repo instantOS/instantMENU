@@ -60,14 +60,14 @@ impl Dispatch<wl_registry::WlRegistry, ()> for EventState {
     ) {
         match event {
             wl_registry::Event::Global { name, interface, version } => {
-                let v = version.min(7);
+                let max_version = version.min(7);
                 match interface.as_str() {
                     "wl_compositor" => {
-                        state.compositor = Some(registry.bind(name, v.min(6), qh, ()))
+                        state.compositor = Some(registry.bind(name, max_version.min(6), qh, ()))
                     }
-                    "wl_shm" => state.shm = Some(registry.bind(name, 1.min(v), qh, ())),
+                    "wl_shm" => state.shm = Some(registry.bind(name, 1.min(max_version), qh, ())),
                     "wl_output" => {
-                        let proxy: wl_output::WlOutput = registry.bind(name, v.min(4), qh, ());
+                        let proxy: wl_output::WlOutput = registry.bind(name, max_version.min(4), qh, ());
                         state.outputs.push(OutputEntry {
                             proxy,
                             info: MonitorInfo {
@@ -80,22 +80,22 @@ impl Dispatch<wl_registry::WlRegistry, ()> for EventState {
                         });
                     }
                     "wl_seat" => {
-                        let seat: wl_seat::WlSeat = registry.bind(name, v.min(5), qh, ());
+                        let seat: wl_seat::WlSeat = registry.bind(name, max_version.min(5), qh, ());
                         state.seat = Some(seat);
                     }
                     "wl_data_device_manager" => {
                         state.data_device_manager =
-                            Some(registry.bind(name, v.min(3), qh, ()))
+                            Some(registry.bind(name, max_version.min(3), qh, ()))
                     }
                     "zwp_primary_selection_device_manager_v1" => {
                         state.primary_manager =
-                            Some(registry.bind(name, 1.min(v), qh, ()))
+                            Some(registry.bind(name, 1.min(max_version), qh, ()))
                     }
                     "zwlr_layer_shell_v1" => {
-                        state.layer_shell = Some(registry.bind(name, v.min(4), qh, ()))
+                        state.layer_shell = Some(registry.bind(name, max_version.min(4), qh, ()))
                     }
                     "xdg_wm_base" => {
-                        state.wm_base = Some(registry.bind(name, v.min(6), qh, ()))
+                        state.wm_base = Some(registry.bind(name, max_version.min(6), qh, ()))
                     }
                     _ => {}
                 }
@@ -156,13 +156,13 @@ impl Dispatch<wl_seat::WlSeat, ()> for EventState {
             }
             /* bind the selection devices once we have a seat */
             if state.data_device.is_none() {
-                if let Some(mgr) = &state.data_device_manager {
-                    state.data_device = Some(mgr.get_data_device(seat, qh, ()));
+                if let Some(manager) = &state.data_device_manager {
+                    state.data_device = Some(manager.get_data_device(seat, qh, ()));
                 }
             }
             if state.primary_device.is_none() {
-                if let Some(mgr) = &state.primary_manager {
-                    state.primary_device = Some(mgr.get_device(seat, qh, ()));
+                if let Some(manager) = &state.primary_manager {
+                    state.primary_device = Some(manager.get_device(seat, qh, ()));
                 }
             }
         }
@@ -189,11 +189,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for EventState {
                 }
                 /* fd is an OwnedFd and closes on drop */
             }
-            wl_keyboard::Event::Key { key, state: keystate, .. } => {
+            wl_keyboard::Event::Key { key, state: key_state, .. } => {
                 let Some(x) = state.xkb.as_mut() else { return };
                 let code = Keycode::new(key + XKB_OFFSET);
                 let pressed =
-                    matches!(keystate, WEnum::Value(wl_keyboard::KeyState::Pressed));
+                    matches!(key_state, WEnum::Value(wl_keyboard::KeyState::Pressed));
                 x.state.update_key(
                     code,
                     if pressed { KeyDirection::Down } else { KeyDirection::Up },
@@ -235,31 +235,31 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
         let mods = state.xkb.as_ref().map(|x| x.mods).unwrap_or(0);
         match event {
             wl_pointer::Event::Enter { surface_x, surface_y, .. } => {
-                state.ptr_x = surface_x;
-                state.ptr_y = surface_y;
+                state.pointer_x = surface_x;
+                state.pointer_y = surface_y;
             }
             wl_pointer::Event::Motion { time, surface_x, surface_y } => {
-                state.ptr_x = surface_x;
-                state.ptr_y = surface_y;
+                state.pointer_x = surface_x;
+                state.pointer_y = surface_y;
                 state.events.push_back(BackendEvent::Motion {
                     time,
                     x: surface_x as i32,
                     y: surface_y as i32,
                 });
             }
-            wl_pointer::Event::Button { button, state: bstate, .. } => {
-                if let WEnum::Value(wl_pointer::ButtonState::Pressed) = bstate {
-                    let xbutton = match button {
+            wl_pointer::Event::Button { button, state: button_state, .. } => {
+                if let WEnum::Value(wl_pointer::ButtonState::Pressed) = button_state {
+                    let x11_button = match button {
                         0x110 => 1, // left
                         0x111 => 2, // middle
                         0x112 => 3, // right
                         _ => return,
                     };
                     state.events.push_back(BackendEvent::ButtonPress {
-                        button: xbutton,
+                        button: x11_button,
                         state: mods,
-                        x: state.ptr_x as i32,
-                        y: state.ptr_y as i32,
+                        x: state.pointer_x as i32,
+                        y: state.pointer_y as i32,
                     });
                 }
             }

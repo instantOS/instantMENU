@@ -9,13 +9,13 @@ impl Menu {
     /// run — port of the event loop in run().
     pub fn run(&mut self) {
         if self.cfg.toast != 0 {
-            self.drawmenu();
+            self.draw_menu();
             let toast = self.cfg.toast;
             std::thread::sleep(Duration::from_micros(toast as u64 * 100_000));
             std::process::exit(0);
         }
 
-        let mut lasttime: u32 = 0;
+        let mut last_time: u32 = 0;
         let mut preselected = self.cfg.preselected;
         loop {
             let Some(ev) = self.backend.next_event() else {
@@ -24,33 +24,33 @@ impl Menu {
 
             if preselected != 0 {
                 for _ in 0..preselected {
-                    if let Some(s) = self.sel {
+                    if let Some(s) = self.selected {
                         if s + 1 < self.matches.len() {
-                            self.sel = Some(s + 1);
-                            if self.sel == self.next {
-                                self.curr = self.next;
-                                self.calcoffsets();
+                            self.selected = Some(s + 1);
+                            if self.selected == self.next {
+                                self.current = self.next;
+                                self.calc_offsets();
                             }
                         }
                     }
                 }
-                self.drawmenu();
+                self.draw_menu();
                 preselected = 0;
             }
 
             match ev {
                 BackendEvent::Motion { time, x, y } => {
-                    if time.wrapping_sub(lasttime) <= 1000 / 60 {
+                    if time.wrapping_sub(last_time) <= 1000 / 60 {
                         continue;
                     }
-                    lasttime = time;
-                    self.setselection(x, y);
+                    last_time = time;
+                    self.set_selection(x, y);
                 }
                 BackendEvent::Destroyed => {
                     std::process::exit(1);
                 }
                 BackendEvent::ButtonPress { button, state, x, y } => {
-                    self.buttonpress(button, state, x, y);
+                    self.button_press(button, state, x, y);
                 }
                 BackendEvent::Expose => {
                     self.backend.present(&self.canvas);
@@ -64,10 +64,10 @@ impl Menu {
                     self.backend.grab_focus(&title);
                 }
                 BackendEvent::KeyPress { sym, state, text } => {
-                    self.keypress(sym, state, &text);
+                    self.key_press(sym, state, &text);
                 }
                 BackendEvent::KeyRelease { sym, state } => {
-                    self.keyrelease(sym, state);
+                    self.key_release(sym, state);
                 }
                 BackendEvent::SelectionNotify { text } => {
                     self.paste(&text);

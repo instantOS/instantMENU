@@ -7,9 +7,9 @@ use std::fs::Metadata;
 use std::io::{BufRead, Write};
 use std::time::UNIX_EPOCH;
 
-/// itest's flag storage: FLAG(x) = flag[x - 'a']
+/// itest's flag storage: FLAG(x) = flags[x - 'a']
 struct Flags {
-    flag: [bool; 26],
+    flags: [bool; 26],
     /// mtime of the -n reference (newer than file)
     new_mtime: Option<i64>,
     /// mtime of the -o reference (older than file)
@@ -18,11 +18,11 @@ struct Flags {
 
 impl Flags {
     fn get(&self, c: u8) -> bool {
-        self.flag[(c - b'a') as usize]
+        self.flags[(c - b'a') as usize]
     }
 
     fn set(&mut self, c: u8, v: bool) {
-        self.flag[(c - b'a') as usize] = v;
+        self.flags[(c - b'a') as usize] = v;
     }
 }
 
@@ -33,17 +33,18 @@ fn usage() -> ! {
     std::process::exit(2); /* like test(1) return > 1 on error */
 }
 
-fn mtime(md: &Metadata) -> i64 {
-    md.modified()
+fn mtime(metadata: &Metadata) -> i64 {
+    metadata
+        .modified()
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
 }
 
-fn mode_bits(md: &Metadata) -> u32 {
+fn mode_bits(metadata: &Metadata) -> u32 {
     use std::os::unix::fs::MetadataExt;
-    md.mode()
+    metadata.mode()
 }
 
 /// access(2) wrapper (F_OK/R_OK/W_OK/X_OK).
@@ -54,10 +55,10 @@ fn access_ok(path: &str, mode: i32) -> bool {
 
 /// Port of test(): prints `name` when the path satisfies every given flag
 /// (inverted by -v). Returns true when it matched.
-fn test(path: &str, name: &str, f: &Flags, out: &mut impl Write) -> bool {
+fn test(path: &str, name: &str, flags: &Flags, out: &mut impl Write) -> bool {
     /* stat() result — failures make the whole chain false, like C */
-    let st = std::fs::metadata(path).ok();
-    let ln = std::fs::symlink_metadata(path).ok();
+    let stat = std::fs::metadata(path).ok();
+    let link_stat = std::fs::symlink_metadata(path).ok();
 
     let mut result = true;
     macro_rules! check {
@@ -66,68 +67,69 @@ fn test(path: &str, name: &str, f: &Flags, out: &mut impl Write) -> bool {
         };
     }
 
-    if let Some(st) = &st {
-        if f.get(b'a') || !name.starts_with('.') {
+    if let Some(stat) = &stat {
+        if flags.get(b'a') || !name.starts_with('.') {
             check!(true); /* hidden files */
         } else {
             check!(false);
         }
-        if f.get(b'b') {
-            check!(mode_bits(st) & libc::S_IFMT == libc::S_IFBLK); /* block special */
+        if flags.get(b'b') {
+            check!(mode_bits(stat) & libc::S_IFMT == libc::S_IFBLK); /* block special */
         }
-        if f.get(b'c') {
-            check!(mode_bits(st) & libc::S_IFMT == libc::S_IFCHR); /* character special */
+        if flags.get(b'c') {
+            check!(mode_bits(stat) & libc::S_IFMT == libc::S_IFCHR); /* character special */
         }
-        if f.get(b'd') {
-            check!(st.is_dir()); /* directory */
+        if flags.get(b'd') {
+            check!(stat.is_dir()); /* directory */
         }
-        if f.get(b'g') {
-            check!(mode_bits(st) & libc::S_ISGID != 0); /* set-group-id flag */
+        if flags.get(b'g') {
+            check!(mode_bits(stat) & libc::S_ISGID != 0); /* set-group-id flag */
         }
-        if f.get(b'n') {
+        if flags.get(b'n') {
             /* newer than file */
-            check!(f.new_mtime.map(|t| mtime(st) > t).unwrap_or(false));
+            check!(flags.new_mtime.map(|t| mtime(stat) > t).unwrap_or(false));
         }
-        if f.get(b'o') {
+        if flags.get(b'o') {
             /* older than file */
-            check!(f.old_mtime.map(|t| mtime(st) < t).unwrap_or(false));
+            check!(flags.old_mtime.map(|t| mtime(stat) < t).unwrap_or(false));
         }
-        if f.get(b'p') {
-            check!(mode_bits(st) & libc::S_IFMT == libc::S_IFIFO); /* named pipe */
+        if flags.get(b'p') {
+            check!(mode_bits(stat) & libc::S_IFMT == libc::S_IFIFO); /* named pipe */
         }
-        if f.get(b's') {
-            check!(st.len() > 0); /* not empty */
+        if flags.get(b's') {
+            check!(stat.len() > 0); /* not empty */
         }
-        if f.get(b'u') {
-            check!(mode_bits(st) & libc::S_ISUID != 0); /* set-user-id flag */
+        if flags.get(b'u') {
+            check!(mode_bits(stat) & libc::S_ISUID != 0); /* set-user-id flag */
         }
     } else {
         /* stat failed: only -h (lstat) can still make the chain true */
         check!(false);
     }
-    if f.get(b'e') {
+    if flags.get(b'e') {
         check!(access_ok(path, libc::F_OK)); /* exists */
     }
-    if f.get(b'h') {
+    if flags.get(b'h') {
         check!(
             /* symbolic link */
-            ln.as_ref()
+            link_stat
+                .as_ref()
                 .map(|m| mode_bits(m) & libc::S_IFMT == libc::S_IFLNK)
                 .unwrap_or(false),
         );
     }
-    if f.get(b'r') {
+    if flags.get(b'r') {
         check!(access_ok(path, libc::R_OK)); /* readable */
     }
-    if f.get(b'w') {
+    if flags.get(b'w') {
         check!(access_ok(path, libc::W_OK)); /* writable */
     }
-    if f.get(b'x') {
+    if flags.get(b'x') {
         check!(access_ok(path, libc::X_OK)); /* executable */
     }
 
-    if result != f.get(b'v') {
-        if f.get(b'q') {
+    if result != flags.get(b'v') {
+        if flags.get(b'q') {
             std::process::exit(0);
         }
         println!("{name}");
@@ -141,7 +143,7 @@ fn main() {
     /* die silently on a closed pipe like the C version (| head etc.) */
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    let mut f = Flags { flag: [false; 26], new_mtime: None, old_mtime: None };
+    let mut flags = Flags { flags: [false; 26], new_mtime: None, old_mtime: None };
     let mut files: Vec<String> = Vec::new();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
@@ -175,24 +177,24 @@ fn main() {
                         argv[i].clone()
                     };
                     match std::fs::metadata(&file) {
-                        Ok(md) => {
-                            let t = mtime(&md);
+                        Ok(metadata) => {
+                            let mtime_value = mtime(&metadata);
                             if c == b'n' {
-                                f.new_mtime = Some(t);
+                                flags.new_mtime = Some(mtime_value);
                             } else {
-                                f.old_mtime = Some(t);
+                                flags.old_mtime = Some(mtime_value);
                             }
-                            f.set(c, true);
+                            flags.set(c, true);
                         }
                         Err(e) => {
                             eprintln!("{file}: {e}");
-                            f.set(c, false);
+                            flags.set(c, false);
                         }
                     }
                 }
                 _ => {
                     if b"abcdefghlpqrsuvwx".contains(&c) {
-                        f.set(c, true);
+                        flags.set(c, true);
                     } else {
                         usage(); /* unknown flag */
                     }
@@ -209,24 +211,24 @@ fn main() {
         for line in stdin.lock().split(b'\n') {
             let Ok(line) = line else { break };
             let s = String::from_utf8_lossy(&line).into_owned();
-            if test(&s, &s, &f, &mut out) {
+            if test(&s, &s, &flags, &mut out) {
                 matched = true;
             }
         }
     } else {
         for path in &files {
             /* -l on a directory: test its contents */
-            if f.get(b'l') && std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false) {
+            if flags.get(b'l') && std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false) {
                 if let Ok(entries) = std::fs::read_dir(path) {
                     for entry in entries.flatten() {
                         let name = entry.file_name().to_string_lossy().into_owned();
                         let full = format!("{path}/{name}");
-                        if test(&full, &name, &f, &mut out) {
+                        if test(&full, &name, &flags, &mut out) {
                             matched = true;
                         }
                     }
                 }
-            } else if test(path, path, &f, &mut out) {
+            } else if test(path, path, &flags, &mut out) {
                 matched = true;
             }
         }
