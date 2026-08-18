@@ -1,68 +1,13 @@
-//! Command line: clap with the legacy instantmenu flags.
-//!
-//! The original argv loop (`-fn`, `-nb`, `-wm`, `-ct`, ...) predates GNU-style
-//! option parsing; a shim rewrites the legacy tokens to long options before
-//! clap sees them, so scripts keep working unchanged. Values keep C `atoi`
-//! semantics (parse leading digits, default 0).
+//! Command line: clap with long options (plus a few single-letter shorts
+//! carried over from the C flags). Values keep C `atoi` semantics (parse
+//! leading digits, default 0).
 
 use clap::Parser;
-
-/// Legacy flag (no argument) → long option.
-const FLAGS: &[(&str, &str)] = &[
-    ("-b", "--bottom"),
-    ("-r", "--reject-no-match"),
-    ("-f", "--fast"),
-    ("-ct", "--commented"),
-    ("-c", "--centered"),
-    ("-C", "--follow-cursor"),
-    ("-S", "--space-confirm"),
-    ("-I", "--input-only"),
-    ("-s", "--smart-case"),
-    ("-F", "--no-fuzzy"),
-    ("-pm", "--pre-match"),
-    ("-E", "--exact"),
-    ("-H", "--full-height"),
-    ("-i", "--insensitive"),
-    ("-n", "--instant"),
-    ("-P", "--password"),
-    ("-M", "--monospace"),
-    ("-G", "--no-grab"),
-    ("-A", "--alt-tab"),
-    ("-wm", "--managed"),
-];
-
-/// Legacy flag with one argument → long option taking a value.
-const OPTS: &[(&str, &str)] = &[
-    ("-T", "--toast"),
-    ("-rc", "--right-cmd"),
-    ("-lc", "--left-cmd"),
-    ("-g", "--columns"),
-    ("-l", "--lines"),
-    ("-x", "--x-offset"),
-    ("-xr", "--right-x-offset"),
-    ("-y", "--y-offset"),
-    ("-w", "--width"),
-    ("-m", "--monitor"),
-    ("-p", "--prompt"),
-    ("-q", "--search-text"),
-    ("-fn", "--font"),
-    ("-h", "--line-height"),
-    ("-a", "--animation"),
-    ("-nb", "--normal-bg"),
-    ("-nf", "--normal-fg"),
-    ("-sb", "--selected-bg"),
-    ("-sf", "--selected-fg"),
-    ("-W", "--embed"),
-    ("-bw", "--border-width"),
-    ("-ps", "--preselect"),
-    ("-it", "--initial-text"),
-];
 
 #[derive(Parser, Debug)]
 #[command(
     name = "instantmenu",
     about = "A dynamic menu for X11 and Wayland (instantMENU, Rust port)",
-    disable_help_flag = true,
     disable_version_flag = true,
 )]
 pub struct Args {
@@ -70,12 +15,8 @@ pub struct Args {
     #[arg(long, short = 'v')]
     pub version: bool,
 
-    /// Show this help and exit.
-    #[arg(long)]
-    pub help: bool,
-
     /// Appears at the bottom of the screen.
-    #[arg(long)]
+    #[arg(long, short = 'b')]
     pub bottom: bool,
 
     /// Reject input if it results in no matches.
@@ -131,7 +72,7 @@ pub struct Args {
     pub full_height: bool,
 
     /// Case-insensitive item matching.
-    #[arg(long)]
+    #[arg(long, short = 'i')]
     pub insensitive: bool,
 
     /// Instantly select the only match.
@@ -171,11 +112,11 @@ pub struct Args {
     pub columns: Option<String>,
 
     /// Number of lines in a vertical list.
-    #[arg(long, value_name = "N")]
+    #[arg(long, short = 'l', value_name = "N")]
     pub lines: Option<String>,
 
     /// Window x offset.
-    #[arg(long, value_name = "N")]
+    #[arg(long, short = 'x', value_name = "N")]
     pub x_offset: Option<String>,
 
     /// Window x offset counted from the right side of the screen.
@@ -183,19 +124,19 @@ pub struct Args {
     pub right_x_offset: Option<String>,
 
     /// Window y offset (from bottom up with --bottom).
-    #[arg(long, value_name = "N")]
+    #[arg(long, short = 'y', value_name = "N")]
     pub y_offset: Option<String>,
 
     /// Make instantmenu this wide.
-    #[arg(long, value_name = "N")]
+    #[arg(long, short = 'w', value_name = "N")]
     pub width: Option<String>,
 
     /// Select monitor by index.
-    #[arg(long, value_name = "N")]
+    #[arg(long, short = 'm', value_name = "N")]
     pub monitor: Option<String>,
 
     /// Prompt added to the left of the input field.
-    #[arg(long, value_name = "TEXT")]
+    #[arg(long, short = 'p', value_name = "TEXT")]
     pub prompt: Option<String>,
 
     /// Placeholder inside the input field.
@@ -247,43 +188,8 @@ pub struct Args {
     pub initial_text: Option<String>,
 }
 
-/// Rewrite the legacy single-dash flags to long options for clap.
-fn map_legacy(args: &[String]) -> Vec<String> {
-    let mut out = Vec::with_capacity(args.len());
-    let mut i = 0;
-    while i < args.len() {
-        let a = &args[i];
-        if let Some((_, long)) = FLAGS.iter().find(|(s, _)| s == a) {
-            out.push(long.to_string());
-        } else if let Some((_, long)) = OPTS.iter().find(|(s, _)| s == a) {
-            out.push(long.to_string());
-            /* keep the value with the option (clap allows --opt value) */
-            if let Some(v) = args.get(i + 1) {
-                out.push(v.clone());
-                i += 1;
-            }
-        } else {
-            out.push(a.clone());
-        }
-        i += 1;
-    }
-    out
-}
-
 pub fn parse() -> Args {
-    let raw: Vec<String> = std::env::args().skip(1).collect();
-    /* -v is handled before clap so the output matches the C version */
-    if raw.iter().any(|a| a == "-v") {
-        println!("instantmenu-{}", crate::config::VERSION);
-        std::process::exit(0);
-    }
-    /* try_parse_from expects argv[0] (the program name) as the first item */
-    let mut argv = vec!["instantmenu".to_string()];
-    argv.extend(map_legacy(&raw));
-    match Args::try_parse_from(argv) {
-        Ok(args) => args,
-        Err(err) => err.exit(),
-    }
+    Args::parse()
 }
 
 /// C `atoi`: leading whitespace, optional sign, leading digits; 0 otherwise.

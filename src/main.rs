@@ -9,23 +9,10 @@ use instantmenu::enums::{Scheme, COL_BG, COL_FG};
 use instantmenu::menu::Menu;
 use instantmenu::render::Renderer;
 
-fn usage() -> ! {
-    eprintln!(
-        "usage: instantmenu [-bfirnPv] [-l lines] [-g columns] [-p prompt] [-m monitor]\n\
-         \x20            [-x xoffset] [-xr right xoffset] [-y yoffset] [-w width]\n\
-         \x20            [-h height] [-fn font]\n\
-         \x20            [-nb color] [-nf color] [-sb color] [-sf color] [-W windowid]"
-    );
-    std::process::exit(1);
-}
-
 fn main() {
     /* die silently on a closed pipe like the C version (| head etc.) */
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     let args = cli::parse();
-    if args.help {
-        usage();
-    }
     if args.version {
         println!("instantmenu-{}", instantmenu::config::VERSION);
         std::process::exit(0);
