@@ -78,13 +78,15 @@ impl Menu {
             if !tokens.iter().all(|tok| self.contains(&item.text, tok)) {
                 continue; // not all tokens match
             }
-            /* exact matches go first, then prefixes, then substrings */
             if tokens.is_empty() || self.eq_n(text_bytes, item.text.as_bytes(), textsize) {
-                exact.push(i);
-            } else if self.eq_n(first_token.as_bytes(), item.text.as_bytes(), len) {
-                prefix.push(i);
-            } else if self.cfg.match_mode != MatchMode::Exact {
-                substr.push(i);
+                exact.push(i); /* exact matches always go first */
+            } else if self.cfg.match_mode == MatchMode::Dmenu {
+                /* dmenu mode also ranks prefixes, then substrings */
+                if self.eq_n(first_token.as_bytes(), item.text.as_bytes(), len) {
+                    prefix.push(i);
+                } else {
+                    substr.push(i);
+                }
             }
         }
         let had_substr = !substr.is_empty();

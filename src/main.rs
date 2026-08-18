@@ -9,6 +9,7 @@ use instantmenu::enums::{ColorRole, Scheme};
 use instantmenu::menu::Menu;
 use instantmenu::render::Renderer;
 use clap::Parser;
+use std::io::IsTerminal;
 
 fn main() {
     /* die silently on a closed pipe like the C version (| head etc.) */
@@ -60,7 +61,7 @@ fn main() {
     /* fast && !isatty(0): grab before reading stdin so the menu is snappy on
      * slow stdin producers */
     let grab = menu.cfg.toast == 0 && !menu.cfg.no_grab;
-    let fast = menu.cfg.fast && unsafe { libc::isatty(0) } == 0;
+    let fast = menu.cfg.fast && !std::io::stdin().is_terminal();
     if fast {
         if grab {
             menu.backend.grab_keyboard();

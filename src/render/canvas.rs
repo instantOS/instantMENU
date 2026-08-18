@@ -1,7 +1,9 @@
 //! The pixel canvas both backends present. BGRA8, row-major, matching X11
 //! ZPixmap and little-endian Wayland ARGB8888 directly.
 
-/// The pixel canvas both backends present. RGBA8, row-major.
+/// The pixel canvas both backends present. BGRA8, row-major
+/// (b, g, r, a in memory, matching little-endian wl_shm ARGB8888 and X11
+/// ZPixmap as written by put_image).
 pub struct Canvas {
     pub width: i32,
     pub height: i32,

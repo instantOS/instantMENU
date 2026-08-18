@@ -1,15 +1,9 @@
 //! Window geometry, monitor selection and menu setup.
 
 use super::Menu;
-use crate::backend::MonitorInfo;
+use crate::backend::{intersect_area, MonitorInfo};
 use crate::config::Position;
 use crate::enums::Scheme;
-
-/// INTERSECT macro: overlap area of rect (x,y,w,h) with a monitor.
-fn intersect_area(x: i32, y: i32, w: i32, h: i32, monitor: &MonitorInfo) -> i32 {
-    (0.max((x + w).min(monitor.x + monitor.width) - x.max(monitor.x)))
-        * (0.max((y + h).min(monitor.y + monitor.height) - y.max(monitor.y)))
-}
 
 impl Menu {
     /// setup — geometry, monitor selection, window creation, first draw.

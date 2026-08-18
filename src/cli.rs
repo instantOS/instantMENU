@@ -58,7 +58,7 @@ pub struct Args {
     #[arg(long, short = 's')]
     pub smart_case: bool,
 
-    /// Item matching algorithm: fuzzy, standard or exact.
+    /// Item matching algorithm: fuzzy, dmenu or exact.
     #[arg(long, value_enum, value_name = "MODE")]
     pub match_mode: Option<MatchMode>,
 
@@ -266,8 +266,8 @@ mod tests {
     fn match_mode_parses() {
         let a = Args::try_parse_from(["instantmenu", "--match-mode", "exact"]).unwrap();
         assert_eq!(a.match_mode, Some(MatchMode::Exact));
-        let a = Args::try_parse_from(["instantmenu", "--match-mode", "standard"]).unwrap();
-        assert_eq!(a.match_mode, Some(MatchMode::Standard));
+        let a = Args::try_parse_from(["instantmenu", "--match-mode", "dmenu"]).unwrap();
+        assert_eq!(a.match_mode, Some(MatchMode::Dmenu));
         assert!(Args::try_parse_from(["instantmenu", "--match-mode", "fuzzy"]).is_ok());
         /* the old spellings are gone */
         assert!(Args::try_parse_from(["instantmenu", "-F"]).is_err());

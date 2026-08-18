@@ -87,10 +87,13 @@ impl Menu {
 
     /// spawn — run a command detached and exit.
     fn spawn(&mut self, cmd: &str) -> ! {
-        let command = format!("{cmd} &> /dev/null");
+        /* like the C `system(cmd + " &> /dev/null")`: stdout and stderr go
+         * nowhere, stdin is inherited */
         let _ = std::process::Command::new("sh")
             .arg("-c")
-            .arg(&command)
+            .arg(cmd)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .spawn();
         self.finish(0)
     }

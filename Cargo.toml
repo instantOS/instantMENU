@@ -32,6 +32,7 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 xkbcommon = { version = "0.9", features = ["x11", "wayland"] }
 
 # Shared text rendering (both backends)
+csscolorparser = "0.7"
 cosmic-text = "0.19"
 fontdb = "0.23"
 ttf-parser = "0.25"

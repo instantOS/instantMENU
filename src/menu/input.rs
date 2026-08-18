@@ -21,7 +21,10 @@ impl Menu {
 
         if n > 0 {
             let s = s.unwrap_or("");
-            let byte_len = (n as usize).min(s.len()).min(TEXT_MAX - self.text.len());
+            // cut at the TEXT_MAX budget on a char boundary; a raw byte cut
+            // could land inside a multi-byte char and panic on insert_str
+            let byte_len = s
+                .floor_char_boundary((n as usize).min(s.len()).min(TEXT_MAX - self.text.len()));
             self.text.insert_str(cursor as usize, &s[..byte_len]);
             self.cursor = (cursor + byte_len as isize) as usize;
 
@@ -39,7 +42,8 @@ impl Menu {
         } else if let Some(s) = s {
             // n == 0 with a payload: -it inserts with strlen(text)
             if !s.is_empty() {
-                let byte_len = s.len().min(TEXT_MAX - self.text.len());
+                let byte_len =
+                    s.floor_char_boundary(s.len().min(TEXT_MAX - self.text.len()));
                 self.text.insert_str(self.cursor, &s[..byte_len]);
                 self.cursor += byte_len;
             }
@@ -56,18 +60,16 @@ impl Menu {
         }
     }
 
-    /// nextrune: location of the next utf8 rune in the given direction.
+    /// nextrune: location of the next utf8 rune in the given direction
+    /// (std's floor/ceil_char_boundary, the optimized form of the C byte
+    /// walk). Callers guard cursor > 0 / cursor < len, so the C quirk of
+    /// returning cursor + 1 past the end is never observable.
     pub(super) fn next_rune(&self, inc: isize) -> usize {
-        let bytes = self.text.as_bytes();
-        let mut n = self.cursor as isize + inc;
-        while n + inc >= 0
-            && n >= 0
-            && (n as usize) < bytes.len()
-            && is_utf8_continuation(bytes[n as usize])
-        {
-            n += inc;
+        if inc > 0 {
+            self.text.ceil_char_boundary(self.cursor + 1)
+        } else {
+            self.text.floor_char_boundary(self.cursor - 1)
         }
-        n.max(0) as usize
     }
 
     pub(super) fn is_delimiter(&self, pos: usize) -> bool {
@@ -150,9 +152,4 @@ impl Menu {
         self.insert(Some(s), s.len() as i32);
         self.cfg.reject_no_match = tmp;
     }
-}
-
-/// True when `byte` is a UTF-8 continuation byte (0b10xxxxxx).
-fn is_utf8_continuation(byte: u8) -> bool {
-    byte & 0xc0 == 0x80
 }

@@ -3,18 +3,6 @@
 use super::Menu;
 use crate::enums::{output_offset, ItemCategory, Scheme};
 
-/// Byte-slice a string safely (C pointer arithmetic on the item text).
-fn safe_slice(s: &str, from: usize, to: usize) -> &str {
-    if from >= to || from > s.len() {
-        return "";
-    }
-    if s.is_char_boundary(from) && s.is_char_boundary(to.min(s.len())) {
-        &s[from..to.min(s.len())]
-    } else {
-        ""
-    }
-}
-
 impl Menu {
     /// recalculate_numbers
     fn recalculate_numbers(&mut self) {
@@ -51,13 +39,17 @@ impl Menu {
         }
 
         let output: &str = if self.cfg.commented {
-            // single letter display
-            &text[..text.len().min(1)]
+            // single letter display (the full first UTF-8 char; a raw byte
+            // cut would panic on multi-byte text)
+            match text.chars().next() {
+                Some(c) => &text[..c.len_utf8()],
+                None => "",
+            }
         } else {
             &text
         };
         let offset = output_offset(category);
-        let shown = safe_slice(output, offset, output.len());
+        let shown = output.get(offset..).unwrap_or("");
 
         if is_selected {
             self.selected_y = y;
@@ -155,7 +147,7 @@ impl Menu {
             .rev()
             .find(|&i| text.is_char_boundary(i))
             .unwrap_or(3);
-        let icon_text = safe_slice(text, 3, end);
+        let icon_text = text.get(3..end).unwrap_or("");
         let left_padding = (temp_padding as f64 / 2.6) as i32;
         self.renderer.text(
             &mut self.canvas,
@@ -204,7 +196,7 @@ impl Menu {
     fn update_commented_prompt(&mut self) {
         if self.cfg.commented && !self.matches.is_empty() {
             let selected_text = self.selected_text().unwrap_or_default();
-            let stripped = safe_slice(&selected_text, 1, selected_text.len());
+            let stripped = selected_text.get(1..).unwrap_or("");
             self.comment_prompt = Some(stripped.to_string());
         }
     }
@@ -276,11 +268,11 @@ impl Menu {
                 w,
                 self.bar_height,
                 self.renderer.horizontal_padding / 2,
-                &self.text.clone(),
+                &self.text,
                 false,
                 false,
             );
-        } else if let Some(search_text) = self.cfg.search_text.clone() {
+        } else if let Some(search_text) = self.cfg.search_text.as_deref() {
             self.renderer.set_scheme(Scheme::Fade);
             self.renderer.text(
                 &mut self.canvas,
@@ -289,7 +281,7 @@ impl Menu {
                 w,
                 self.bar_height,
                 self.renderer.horizontal_padding / 2,
-                &search_text,
+                search_text,
                 false,
                 false,
             );

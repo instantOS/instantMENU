@@ -18,10 +18,14 @@ pub enum Position {
 }
 
 /// Item matching algorithm (`--match-mode`).
+///
+/// `Dmenu` is the classic dmenu matcher: every whitespace-separated word of
+/// the input must appear contiguously in the item; exact, prefix and
+/// substring matches are ranked in that order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum MatchMode {
     Fuzzy,
-    Standard,
+    Dmenu,
     Exact,
 }
 

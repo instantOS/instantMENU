@@ -14,7 +14,7 @@ use x11rb::xcb_ffi::XCBConnection;
 use xkbcommon::xkb::x11 as xkbx11;
 use xkbcommon::xkb::{self, Keycode, KeyDirection};
 
-use super::{Backend, BackendEvent, MonitorInfo, MouseButton};
+use super::{intersect_area, Backend, BackendEvent, MonitorInfo, MouseButton};
 use crate::render::{Canvas, Color};
 
 /// X11 keycode -> xkb keycode offset.
@@ -218,7 +218,7 @@ impl Backend for X11Backend {
         let mut best = 0usize;
         let mut area = 0;
         for (idx, monitor) in self.monitors.iter().enumerate() {
-            let a = intersect(
+            let a = intersect_area(
                 translated.dst_x as i32,
                 translated.dst_y as i32,
                 geometry.width as i32,
@@ -607,11 +607,6 @@ fn query_monitors(connection: &XCBConnection) -> Vec<MonitorInfo> {
         }
     }
     monitors
-}
-
-fn intersect(x: i32, y: i32, w: i32, h: i32, monitor: &MonitorInfo) -> i32 {
-    (0.max((x + w).min(monitor.x + monitor.width) - x.max(monitor.x)))
-        * (0.max((y + h).min(monitor.y + monitor.height) - y.max(monitor.y)))
 }
 
 /// X11 button number -> normalized button.
