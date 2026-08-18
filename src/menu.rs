@@ -3,7 +3,7 @@
 //! The structure mirrors the C file function by function so behaviour can be
 //! audited against `old_c_codebase/instantmenu.c`.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::time::Duration;
 
 use xkbcommon::xkb::keysyms as ks;
@@ -124,7 +124,7 @@ impl Menu {
     }
 
     /// TEXTW macro
-    fn textw(&mut self, s: &str) -> i32 {
+    pub fn textw(&mut self, s: &str) -> i32 {
         if self.cfg.commented {
             self.bh
         } else {
@@ -221,7 +221,7 @@ impl Menu {
         // (strtok collapses runs of spaces)
         let tokv: Vec<&str> = self.text.split(' ').filter(|t| !t.is_empty()).collect();
         let tokc = tokv.len();
-        let len = tokc.then(|| tokv[0].len()).unwrap_or(0);
+        let len = if tokc > 0 { tokv[0].len() } else { 0 };
 
         let mut exact: Vec<usize> = Vec::new();
         let mut prefix: Vec<usize> = Vec::new();
@@ -266,7 +266,7 @@ impl Menu {
         let text_len = text_bytes.len();
 
         /* walk through all items */
-        for (idx, item) in self.items.iter().enumerate() {
+        for (idx, item) in self.items.iter_mut().enumerate() {
             if text_len > 0 {
                 let itext = item.text.as_bytes();
                 let mut pidx = 0usize; /* pointer */
@@ -713,7 +713,7 @@ impl Menu {
         }
 
         /* draw input field */
-        let mut w = if self.cfg.lines > 0 || self.matches.is_empty() {
+        let w = if self.cfg.lines > 0 || self.matches.is_empty() {
             self.mw - x
         } else {
             self.inputw
@@ -1493,7 +1493,7 @@ impl Menu {
         let mut x = 0;
         let mut y = 0;
         let h = self.bh;
-        let mut w;
+        let w;
 
         if let Some(prompt) = self.prompt() {
             if !prompt.is_empty() {
@@ -1509,7 +1509,7 @@ impl Menu {
         };
 
         if self.cfg.lines > 0 {
-            w = self.mw - x;
+            /* (C re-assigns w = mw - x here; already covered above) */
             if self.cfg.columns > 0 {
                 // check mouse hover for columns (ported literally)
                 let mut i = 0;
@@ -1607,7 +1607,7 @@ impl Menu {
         let mut x = 0;
         let y = 0;
         let h = self.bh;
-        let mut w;
+        let w;
 
         /* right-click: exit */
         if button == 3 {
@@ -1631,7 +1631,7 @@ impl Menu {
          * NOTE: if there is no left-arrow the space for < is reserved so
          *       add that to the input width */
         if button == 1 {
-            let arrowwidth = self.textw("");
+            let _arrowwidth = self.textw("");
             let input_hit = (self.cfg.lines <= 0
                 && ev_x >= 0
                 && ev_x
@@ -1654,8 +1654,8 @@ impl Menu {
                 }
                 return;
             } else if self.cfg.lines > 0 {
-                /* vertical list: (ctrl)left-click on item */
-                w = self.mw - x;
+                /* vertical list: (ctrl)left-click on item
+                 * (C sets w = mw - x here but never reads it) */
                 let item = self.sel_text();
                 if let Some(text) = &item {
                     if text.starts_with('>') {
@@ -1827,11 +1827,11 @@ impl Menu {
     }
 
     /// max_textw — widest item text.
-    fn max_textw(&mut self) -> i32 {
+    pub fn max_textw(&mut self) -> i32 {
+        let texts: Vec<String> = self.items.iter().map(|i| i.text.clone()).collect();
         let mut len = 0;
-        for item in &self.items {
-            let w = self.textw(&item.text.clone());
-            len = len.max(w);
+        for text in &texts {
+            len = len.max(self.textw(text));
         }
         len
     }
@@ -1851,9 +1851,9 @@ impl Menu {
         let promptw = if self.cfg.commented {
             self.bh * 15
         } else {
-            match self.prompt() {
+            match self.prompt().map(|p| p.to_string()) {
                 Some(p) if !p.is_empty() => {
-                    let w = self.textw(p);
+                    let w = self.textw(&p);
                     w - self.renderer.lrpad / 4
                 }
                 _ => 0,
@@ -2070,7 +2070,18 @@ impl Menu {
         let border_color = self.renderer.scheme(Scheme::Sel as usize)[crate::enums::COL_BG];
         if self
             .backend
-            .create_window(x, y, self.mw, self.mh, self.cfg.border_width, managed, class, bg, border_color)
+            .create_window(
+                x,
+                y,
+                self.mw,
+                self.mh,
+                self.cfg.border_width,
+                managed,
+                !self.cfg.nograb && self.cfg.toast == 0,
+                class,
+                bg,
+                border_color,
+            )
             .is_err()
         {
             eprintln!("instantmenu: cannot create window");
@@ -2088,7 +2099,7 @@ impl Menu {
 
         self.backend.map_window();
         if self.cfg.embed.is_some() {
-            self.backend.embed_setup();
+            self.backend.embed_setup(x, y);
         }
         self.canvas.resize(self.mw, self.mh);
         self.drawmenu();

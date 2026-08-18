@@ -71,6 +71,8 @@ pub trait Backend {
     fn embed_parent_size(&self) -> Option<(i32, i32)>;
 
     /// Create the menu window (XCreateWindow in setup()).
+    /// `grab` = whether the keyboard should be grabbed (Wayland layer-shell
+    /// keyboard interactivity; X11 grabs separately).
     fn create_window(
         &mut self,
         x: i32,
@@ -79,6 +81,7 @@ pub trait Backend {
         h: i32,
         border_width: i32,
         managed: bool,
+        grab: bool,
         class_hint: &str,
         bg: Color,
         border_color: Color,
@@ -86,7 +89,7 @@ pub trait Backend {
     /// XMapRaised + embedding reparenting when `-W` was given.
     fn map_window(&mut self);
     /// Embedding: reparent + select input on parent + grab focus.
-    fn embed_setup(&mut self);
+    fn embed_setup(&mut self, x: i32, y: i32);
     /// XGrabKeyboard retry loop (dies on failure like the C version).
     fn grab_keyboard(&mut self);
     /// Focus grab loop; `title` is set as WM_NAME in managed mode.
@@ -102,6 +105,10 @@ pub trait Backend {
     fn next_event(&mut self) -> Option<BackendEvent>;
     /// Ask for the selection/clipboard contents (XConvertSelection).
     fn request_selection(&mut self, clipboard: bool);
+    /// X resource "key -> value" pairs (X11 only, empty on Wayland).
+    fn resource_pairs(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
 
     fn is_wayland(&self) -> bool;
 }
@@ -117,13 +124,14 @@ pub const MOD4_MASK: u32 = 1 << 6;
 pub const MOD5_MASK: u32 = 1 << 7;
 
 /// Open the backend: Wayland when WAYLAND_DISPLAY is set, else X11.
-pub fn open() -> Result<Box<dyn Backend>, String> {
+/// `embed` is the `-W` window id (X11 only; ignored on Wayland).
+pub fn open(embed: Option<u32>) -> Result<Box<dyn Backend>, String> {
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
         match wayland::WaylandBackend::new() {
             Ok(b) => return Ok(Box::new(b)),
             Err(e) => eprintln!("instantmenu: wayland connection failed ({e}), trying X11"),
         }
     }
-    let x11 = x11::X11Backend::new()?;
+    let x11 = x11::X11Backend::new(embed)?;
     Ok(Box::new(x11))
 }

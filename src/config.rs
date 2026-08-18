@@ -138,8 +138,8 @@ impl Default for Config {
                 scheme("#000000", "#8AB4F8", "#536DFE"), // Sel
                 scheme("#000000", "#3579CA", "#3579CA"), // Out
                 scheme("#000000", "#81c995", "#1e8e3e"), // Green
-                scheme("#000000", "#f28b82", "#d93025"), // Red
                 scheme("#000000", "#fdd663", "#f9ab00"), // Yellow
+                scheme("#000000", "#f28b82", "#d93025"), // Red
             ],
             lines: 0,
             columns: 1,

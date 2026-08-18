@@ -91,6 +91,9 @@ impl Color {
     pub fn b(self) -> u8 {
         self.0[2]
     }
+    pub fn a(self) -> u8 {
+        self.0[3]
+    }
 }
 
 /// Table of common X11 color names (the set typically used for menu theming).
@@ -434,7 +437,7 @@ impl Renderer {
         if full_width > avail {
             // find the longest prefix after which an ellipsis still fits
             let max = (avail - ellipsis_width).max(0);
-            let mut chars: Vec<(usize, char)> = text.char_indices().collect();
+            let chars: Vec<(usize, char)> = text.char_indices().collect();
             // binary search over char count
             let mut lo = 0usize;
             let mut hi = chars.len();
@@ -585,14 +588,21 @@ fn primary_font_height(font_system: &mut FontSystem, families: &[String], px: f3
             style: fontdb::Style::Normal,
         };
         let Some(face_id) = db.query(&query) else { continue };
-        let Some(face) = db.face(face_id) else { continue };
-        let upem = face.units_per_em.max(1) as f32;
-        let ascent = face.ascent as f32;
-        let descent = face.descent as f32; // negative
-        let h = ((ascent - descent) / upem * px).round() as i32;
-        if h > 0 {
-            height = h;
+        /* FaceInfo carries no metrics; read them from the face data itself */
+        let h = db
+            .with_face_data(face_id, |data, index| {
+                ttf_parser::Face::parse(data, index).map_or(0, |face| {
+                    let upem = face.units_per_em().max(1) as f32;
+                    let ascent = face.ascender() as f32;
+                    let descent = face.descender() as f32; // negative
+                    ((ascent - descent) / upem * px).round() as i32
+                })
+            })
+            .unwrap_or(0);
+        if h <= 0 {
+            continue;
         }
+        height = h;
         break;
     }
     height

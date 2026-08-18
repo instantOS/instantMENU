@@ -3,14 +3,16 @@
 use std::time::Duration;
 
 use x11rb::connection::Connection;
+use x11rb::protocol::xinerama;
 use x11rb::protocol::xproto::{
-    AtomEnum, ChangeWindowAttributesAux, ConfigureWindowAux, ConnectionExt, CreateGCAux,
-    EventMask, GrabMode, GrabStatus, PropMode, Visibility, Window, WindowClass,
+    AtomEnum, ChangeWindowAttributesAux, ConfigureWindowAux, ConnectionExt as _, CreateGCAux,
+    CreateWindowAux, EventMask, GrabMode, GrabStatus, InputFocus, PropMode, Visibility, Window,
+    WindowClass,
 };
 use x11rb::protocol::Event;
-use x11rb::rust_connection::RustConnection;
-use xkbcommon::xkb::{self, Keycode, KeyDirection};
+use x11rb::xcb_ffi::XCBConnection;
 use xkbcommon::xkb::x11 as xkbx11;
+use xkbcommon::xkb::{self, Keycode, KeyDirection};
 
 use super::{Backend, BackendEvent, MonitorInfo};
 use crate::render::{Canvas, Color};
@@ -19,7 +21,7 @@ use crate::render::{Canvas, Color};
 const XKB_OFFSET: u32 = 8;
 
 pub struct X11Backend {
-    conn: RustConnection,
+    conn: XCBConnection,
     screen_num: usize,
     root: Window,
     pub win: Window,
@@ -29,8 +31,11 @@ pub struct X11Backend {
     created: bool,
     managed: bool,
 
-    /* keyboard */
+    /* keyboard (ctx/keymap keep the C-level keymap alive for the state; only
+     * the state is read from) */
+    #[allow(dead_code)]
     xkb_ctx: xkb::Context,
+    #[allow(dead_code)]
     xkb_keymap: xkb::Keymap,
     xkb_state: xkb::State,
 
@@ -55,10 +60,9 @@ struct Atoms {
 }
 
 impl X11Backend {
-    pub fn new() -> Result<X11Backend, String> {
-        let conn =
-            RustConnection::connect(None).map_err(|e| format!("cannot open display: {e}"))?;
-        let screen_num = conn.primary_screen_number();
+    pub fn new(embed: Option<u32>) -> Result<X11Backend, String> {
+        let (conn, screen_num) =
+            XCBConnection::connect(None).map_err(|e| format!("cannot open display: {e}"))?;
         let screen = conn
             .setup()
             .roots
@@ -110,9 +114,11 @@ impl X11Backend {
 
         /* monitor list via Xinerama (like the C build with -DXINERAMA) */
         let mut monitors = Vec::new();
-        if conn.extension_information().xinerama.is_some() {
-            if let Ok(reply) = conn.xinerama().query_screens() {
-                if let Ok(screens) = reply.reply() {
+        if let Some(is_active) = xinerama::is_active(&conn).ok().and_then(|c| c.reply().ok()) {
+            if is_active.state != 0 {
+                if let Some(screens) =
+                    xinerama::query_screens(&conn).ok().and_then(|c| c.reply().ok())
+                {
                     for (i, s) in screens.screen_info.iter().enumerate() {
                         monitors.push(MonitorInfo {
                             x: s.x_org as i32,
@@ -134,8 +140,8 @@ impl X11Backend {
             screen_num,
             root,
             win: 0,
-            parent: root,
-            embed: None,
+            parent: embed.unwrap_or(root),
+            embed,
             gc: None,
             created: false,
             managed: false,
@@ -154,9 +160,66 @@ impl X11Backend {
         self.conn.setup().roots[self.screen_num].clone()
     }
 
+    /// keysym + utf8 text for a raw X11 keycode, keeping the xkb state fresh.
+    fn lookup_key(&mut self, keycode: u8, pressed: bool) -> (u32, String) {
+        let code = Keycode::new(keycode as u32 + XKB_OFFSET);
+        self.xkb_state.update_key(
+            code,
+            if pressed { KeyDirection::Down } else { KeyDirection::Up },
+        );
+        let sym = self.xkb_state.key_get_one_sym(code).raw();
+        let text = self.xkb_state.key_get_utf8(code);
+        (sym, text)
+    }
+
+    fn flush(&self) {
+        let _ = self.conn.flush();
+    }
+
+    /// The grab loop from grabfocus(): 100 tries, managed windows rename
+    /// themselves instead of forcing focus.
+    fn grab_focus_inner(&mut self, title: Option<&str>) {
+        if !self.created {
+            return;
+        }
+        for _ in 0..100 {
+            let focused = self
+                .conn
+                .get_input_focus()
+                .ok()
+                .and_then(|c| c.reply().ok())
+                .map(|r| r.focus)
+                .unwrap_or(0);
+            if focused == self.win {
+                return;
+            }
+            if self.managed {
+                if let Some(title) = title {
+                    self.set_title(title);
+                }
+            } else {
+                let _ = self.conn.set_input_focus(
+                    InputFocus::PARENT,
+                    self.win,
+                    x11rb::CURRENT_TIME,
+                );
+            }
+            self.flush();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        eprintln!("instantmenu: cannot grab focus");
+        std::process::exit(1);
+    }
+}
+
+impl Backend for X11Backend {
+    fn monitors(&self) -> &[MonitorInfo] {
+        &self.monitors
+    }
+
     /// Read the RESOURCE_MANAGER property of the root window and return
     /// "key -> value" pairs (a small Xrm stand-in).
-    pub fn resource_pairs(&self) -> Vec<(String, String)> {
+    fn resource_pairs(&self) -> Vec<(String, String)> {
         let Ok(reply) = self.conn.get_property(
             false,
             self.root,
@@ -196,62 +259,6 @@ impl X11Backend {
             }
         }
         out
-    }
-
-    /// keysym + utf8 text for a raw X11 keycode, keeping the xkb state fresh.
-    fn lookup_key(&mut self, keycode: u8, pressed: bool) -> (u32, String) {
-        let code = Keycode::new(keycode as u32 + XKB_OFFSET);
-        self.xkb_state.update_key(
-            code,
-            if pressed { KeyDirection::Down } else { KeyDirection::Up },
-        );
-        let sym = self.xkb_state.key_get_one_sym(code).raw();
-        let text = self.xkb_state.key_get_utf8(code);
-        (sym, text)
-    }
-
-    fn flush(&self) {
-        let _ = self.conn.flush();
-    }
-
-    /// The grab loop from grabfocus(): 100 tries, managed windows rename
-    /// themselves instead of forcing focus.
-    fn grab_focus_inner(&mut self, title: Option<&str>) {
-        if !self.created {
-            return;
-        }
-        for _ in 0..100 {
-            let focused = self
-                .conn
-                .get_input_focus()
-                .and_then(|c| c.reply())
-                .map(|r| r.focus)
-                .unwrap_or(0);
-            if focused == self.win {
-                return;
-            }
-            if self.managed {
-                if let Some(title) = title {
-                    self.set_title(title);
-                }
-            } else {
-                let _ = self.conn.set_input_focus(
-                    self.win,
-                    x11rb::protocol::xproto::InputFocus::PARENT,
-                    x11rb::CURRENT_TIME,
-                );
-            }
-            self.flush();
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        eprintln!("instantmenu: cannot grab focus");
-        std::process::exit(1);
-    }
-}
-
-impl Backend for X11Backend {
-    fn monitors(&self) -> &[MonitorInfo] {
-        &self.monitors
     }
 
     fn root_size(&self) -> (i32, i32) {
@@ -312,15 +319,17 @@ impl Backend for X11Backend {
         h: i32,
         border_width: i32,
         managed: bool,
+        _grab: bool,
         class_hint: &str,
         bg: Color,
         border_color: Color,
     ) -> Result<(), String> {
         let screen = self.screen();
         let win = self.conn.generate_id().map_err(|e| e.to_string())?;
-        let attrs = ChangeWindowAttributesAux::new()
-            .override_redirect(!managed as u32)
+        let attrs = CreateWindowAux::new()
+            .override_redirect(u32::from(!managed))
             .background_pixel(x11_pixel(bg))
+            .border_pixel(x11_pixel(border_color))
             .event_mask(
                 EventMask::EXPOSURE
                     | EventMask::KEY_PRESS
@@ -333,7 +342,7 @@ impl Backend for X11Backend {
             .create_window(
                 screen.root_depth,
                 win,
-                self.root,
+                self.parent,
                 x as i16,
                 y as i16,
                 w as u16,
@@ -342,12 +351,6 @@ impl Backend for X11Backend {
                 WindowClass::INPUT_OUTPUT,
                 x11rb::COPY_FROM_PARENT,
                 &attrs,
-            )
-            .map_err(|e| e.to_string())?;
-        self.conn
-            .change_window_attributes(
-                win,
-                &ChangeWindowAttributesAux::new().border_pixel(x11_pixel(border_color)),
             )
             .map_err(|e| e.to_string())?;
 
@@ -409,8 +412,12 @@ impl Backend for X11Backend {
     }
 
     fn grab_keyboard(&mut self) {
-        /* XGrabKeyboard(owner_events=true, root) retried 50x like the C code */
-        for _ in 0..50 {
+        /* C grabkeyboard(): no-op when embedding or in managed mode */
+        if self.embed.is_some() || self.managed {
+            return;
+        }
+        /* XGrabKeyboard(owner_events=true, root) retried 1000x like the C code */
+        for _ in 0..1000 {
             let ok = self
                 .conn
                 .grab_keyboard(
@@ -420,8 +427,9 @@ impl Backend for X11Backend {
                     GrabMode::ASYNC,
                     GrabMode::ASYNC,
                 )
-                .and_then(|c| c.reply())
-                .map(|r| r.status == GrabStatus::OK)
+                .ok()
+                .and_then(|c| c.reply().ok())
+                .map(|r| r.status == GrabStatus::SUCCESS)
                 .unwrap_or(false);
             if ok {
                 self.flush();
@@ -485,7 +493,7 @@ impl Backend for X11Backend {
             if let Ok(gcid) = self.conn.generate_id() {
                 let _ = self
                     .conn
-                    .create_gc(gcid, self.win, &CreateGCAux::new().graphics_exposures(false));
+                    .create_gc(gcid, self.win, &CreateGCAux::new().graphics_exposures(0));
                 self.gc = Some(gcid);
             }
         }
@@ -526,16 +534,16 @@ impl Backend for X11Backend {
             match ev {
                 Event::KeyPress(k) => {
                     let (sym, text) = self.lookup_key(k.detail, true);
-                    return Some(BackendEvent::KeyPress { sym, state: k.state, text });
+                    return Some(BackendEvent::KeyPress { sym, state: k.state.bits() as u32, text });
                 }
                 Event::KeyRelease(k) => {
                     let (sym, _) = self.lookup_key(k.detail, false);
-                    return Some(BackendEvent::KeyRelease { sym, state: k.state });
+                    return Some(BackendEvent::KeyRelease { sym, state: k.state.bits() as u32 });
                 }
                 Event::ButtonPress(b) => {
                     return Some(BackendEvent::ButtonPress {
                         button: b.detail as u8,
-                        state: b.state,
+                        state: b.state.bits() as u32,
                         x: b.event_x as i32,
                         y: b.event_y as i32,
                     });
@@ -607,14 +615,6 @@ impl Backend for X11Backend {
 
     fn is_wayland(&self) -> bool {
         false
-    }
-}
-
-/// Set the embedding window (called from main before setup).
-impl X11Backend {
-    pub fn set_embed(&mut self, embed: u32) {
-        self.embed = Some(embed);
-        self.parent = embed;
     }
 }
 

@@ -273,6 +273,7 @@ dependencies = [
  "cosmic-text",
  "fontdb",
  "libc",
+ "ttf-parser",
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",
@@ -678,6 +679,7 @@ checksum = "9993aa5be5a26815fe2c3eacfc1fde061fc1a1f094bf1ad2a18bf9c495dd7414"
 dependencies = [
  "as-raw-xcb-connection",
  "gethostname",
+ "libc",
  "rustix",
  "x11rb-protocol",
 ]
