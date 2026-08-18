@@ -4,8 +4,8 @@
 
 use instantmenu::backend;
 use instantmenu::cli;
-use instantmenu::config::{Config, XRES_COLOR_TYPES};
-use instantmenu::enums::{Scheme, COLOR_BG, COLOR_FG};
+use instantmenu::config::Config;
+use instantmenu::enums::{ColorRole, Scheme};
 use instantmenu::menu::Menu;
 use instantmenu::render::Renderer;
 use clap::Parser;
@@ -36,8 +36,8 @@ fn main() {
     if let Some(f) = temp_font {
         cfg.fonts[0] = f;
     }
-    for (scheme, col, value) in color_temp {
-        cfg.colors[scheme as usize][col] = value;
+    for (scheme, role, value) in color_temp {
+        *cfg.colors[scheme as usize].role_mut(role) = value;
     }
 
     /* drw_fontset_create + lrpad = drw->fonts->h */
@@ -141,7 +141,7 @@ fn apply_flags(args: &cli::Args, cfg: &mut Config) {
 
 /// Value options, plus the temporary font/color overrides applied after X
 /// resources.
-fn apply_values(args: &cli::Args, cfg: &mut Config) -> (Option<String>, Vec<(Scheme, usize, String)>) {
+fn apply_values(args: &cli::Args, cfg: &mut Config) -> (Option<String>, Vec<(Scheme, ColorRole, String)>) {
     if let Some(v) = args.toast {
         cfg.toast = v;
     }
@@ -207,18 +207,18 @@ fn apply_values(args: &cli::Args, cfg: &mut Config) -> (Option<String>, Vec<(Sch
     if args.monospace {
         temp_font = Some("Fira Code Nerd Font:pixelsize=15".to_string());
     }
-    let mut color_temp: Vec<(Scheme, usize, String)> = Vec::new();
+    let mut color_temp: Vec<(Scheme, ColorRole, String)> = Vec::new();
     if let Some(c) = &args.normal_bg {
-        color_temp.push((Scheme::Normal, COLOR_BG, c.clone()));
+        color_temp.push((Scheme::Normal, ColorRole::Background, c.clone()));
     }
     if let Some(c) = &args.normal_fg {
-        color_temp.push((Scheme::Normal, COLOR_FG, c.clone()));
+        color_temp.push((Scheme::Normal, ColorRole::Foreground, c.clone()));
     }
     if let Some(c) = &args.selected_bg {
-        color_temp.push((Scheme::Selected, COLOR_BG, c.clone()));
+        color_temp.push((Scheme::Selected, ColorRole::Background, c.clone()));
     }
     if let Some(c) = &args.selected_fg {
-        color_temp.push((Scheme::Selected, COLOR_FG, c.clone()));
+        color_temp.push((Scheme::Selected, ColorRole::Foreground, c.clone()));
     }
 
     (temp_font, color_temp)
@@ -232,9 +232,9 @@ fn apply_resources(backend: &dyn backend::Backend, cfg: &mut Config) {
             continue;
         }
         for scheme in Scheme::ALL {
-            for (col, ctype) in XRES_COLOR_TYPES.iter().enumerate() {
-                if key == format!("{}.{}", scheme.x_resource_name(), ctype) {
-                    cfg.colors[scheme as usize][col] = value.clone();
+            for role in ColorRole::ALL {
+                if key == format!("{}.{}", scheme.x_resource_name(), role.x_res_name()) {
+                    *cfg.colors[scheme as usize].role_mut(role) = value.clone();
                 }
             }
         }

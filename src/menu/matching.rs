@@ -64,8 +64,8 @@ impl Menu {
         // separate input text into tokens to be matched individually
         // (strtok collapses runs of spaces)
         let tokens: Vec<&str> = self.text.split(' ').filter(|t| !t.is_empty()).collect();
-        let token_count = tokens.len();
-        let len = if token_count > 0 { tokens[0].len() } else { 0 };
+        let first_token = tokens.first().copied().unwrap_or("");
+        let len = first_token.len();
 
         let mut exact: Vec<usize> = Vec::new();
         let mut prefix: Vec<usize> = Vec::new();
@@ -78,9 +78,9 @@ impl Menu {
                 continue; // not all tokens match
             }
             /* exact matches go first, then prefixes, then substrings */
-            if token_count == 0 || self.eq_n(text_bytes, item.text.as_bytes(), textsize) {
+            if tokens.is_empty() || self.eq_n(text_bytes, item.text.as_bytes(), textsize) {
                 exact.push(i);
-            } else if self.eq_n(tokens[0].as_bytes(), item.text.as_bytes(), len) {
+            } else if self.eq_n(first_token.as_bytes(), item.text.as_bytes(), len) {
                 prefix.push(i);
             } else if !self.cfg.exact {
                 substr.push(i);
@@ -95,8 +95,10 @@ impl Menu {
         self.selected = self.current;
 
         if self.cfg.instant && self.matches.len() == 1 && !had_substr {
-            let text = self.items[self.matches[0]].text.clone();
-            self.println(&text);
+            if let Some(&item_index) = self.matches.first() {
+                let text = self.items[item_index].text.clone();
+                self.println(&text);
+            }
             self.finish(0);
         }
 
@@ -119,45 +121,35 @@ impl Menu {
         /* walk through all items */
         let mut scored: Vec<(usize, f64)> = Vec::new();
         for (idx, item) in self.items.iter().enumerate() {
-                let item_text = item.text.as_bytes();
-                let mut pattern_index = 0usize; /* pointer */
-                let mut match_start: i32 = -1; /* start of match */
-                let mut match_end: i32 = -1; /* end of match */
-                let mut i = 0usize;
-                /* walk through item text */
-                while i < item_text.len() {
-                    let c = item_text[i];
-                    /* fuzzy match pattern (single byte compare, like
-                     * fstrncmp(&text[pattern_index], &c, 1)) */
-                    let equal = pattern_index < text_len
-                        && if self.insensitive {
-                            text_bytes[pattern_index].eq_ignore_ascii_case(&c)
-                        } else {
-                            text_bytes[pattern_index] == c
-                        };
-                    if equal {
-                        if match_start == -1 {
-                            match_start = i as i32;
-                        }
-                        pattern_index += 1;
-                        if pattern_index == text_len {
-                            match_end = i as i32;
-                            break;
-                        }
+            let mut pattern_index = 0usize;
+            let mut match_start = None;
+            let mut match_end = None;
+            for (i, &c) in item.text.as_bytes().iter().enumerate() {
+                /* fuzzy match pattern (single byte compare, like
+                 * fstrncmp(&text[pattern_index], &c, 1)) */
+                let equal = pattern_index < text_len
+                    && if self.insensitive {
+                        text_bytes[pattern_index].eq_ignore_ascii_case(&c)
+                    } else {
+                        text_bytes[pattern_index] == c
+                    };
+                if equal {
+                    match_start.get_or_insert(i);
+                    pattern_index += 1;
+                    if pattern_index == text_len {
+                        match_end = Some(i);
+                        break;
                     }
-                    i += 1;
                 }
-                /* build list of matches */
-                if match_end != -1 {
-                    /* compute distance:
-                     * add penalty if match starts late (log(match_start+2))
-                     * add penalty for a long match without many matching
-                     * characters */
-                    let distance = ((match_start + 2) as f64).ln()
-                        + (match_end - match_start) as f64
-                        - text_len as f64;
-                    scored.push((idx, distance));
-                }
+            }
+            /* compute distance:
+             * add penalty if match starts late (log(match_start+2))
+             * add penalty for a long match without many matching characters */
+            if let (Some(start), Some(end)) = (match_start, match_end) {
+                let distance =
+                    ((start + 2) as f64).ln() + (end - start) as f64 - text_len as f64;
+                scored.push((idx, distance));
+            }
         }
 
         /* sort matches according to distance */
@@ -168,8 +160,10 @@ impl Menu {
         self.selected = self.current;
 
         if self.cfg.instant && self.matches.len() == 1 {
-            let text = self.items[self.matches[0]].text.clone();
-            self.println(&text);
+            if let Some(&item_index) = self.matches.first() {
+                let text = self.items[item_index].text.clone();
+                self.println(&text);
+            }
             self.finish(0);
         }
 
@@ -187,40 +181,39 @@ impl Menu {
         };
 
         /* calculate which items will begin the next page */
-        let mut pos = self.current;
-        let mut i: i32 = 0;
-        while let Some(p) = pos {
-            i += if self.cfg.lines > 0 {
-                self.bar_height
-            } else {
-                let item_text = self.items[self.matches[p]].text.clone();
-                self.text_width_clamp(&item_text, n)
-            };
-            if i > n {
-                break;
+        let mut next = None;
+        if let Some(start) = self.current {
+            let mut used: i32 = 0;
+            for pos in start..self.matches.len() {
+                used += if self.cfg.lines > 0 {
+                    self.bar_height
+                } else {
+                    let item_text = self.items[self.matches[pos]].text.clone();
+                    self.text_width_clamp(&item_text, n)
+                };
+                if used > n {
+                    next = Some(pos);
+                    break;
+                }
             }
-            pos = if p + 1 < self.matches.len() {
-                Some(p + 1)
-            } else {
-                None
-            };
         }
-        self.next = pos;
+        self.next = next;
 
         /* and the previous page */
-        let mut prev = self.current.unwrap_or(0);
-        let mut i: i32 = 0;
-        while prev > 0 {
-            i += if self.cfg.lines > 0 {
+        let start = self.current.unwrap_or(0);
+        let mut used: i32 = 0;
+        let mut prev = start;
+        for pos in (0..start).rev() {
+            used += if self.cfg.lines > 0 {
                 self.bar_height
             } else {
-                let item_text = self.items[self.matches[prev - 1]].text.clone();
+                let item_text = self.items[self.matches[pos]].text.clone();
                 self.text_width_clamp(&item_text, n)
             };
-            if i > n {
+            if used > n {
                 break;
             }
-            prev -= 1;
+            prev = pos;
         }
         self.prev = prev;
     }

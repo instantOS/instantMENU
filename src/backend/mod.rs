@@ -16,6 +16,16 @@ pub struct MonitorInfo {
     pub name: String,
 }
 
+/// A mouse button (or scroll-wheel direction), normalized across backends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseButton {
+    Left,
+    Middle,
+    Right,
+    ScrollUp,
+    ScrollDown,
+}
+
 /// Backend-agnostic events, port of the XEvent switch in `run()`.
 #[derive(Debug, Clone)]
 pub enum BackendEvent {
@@ -32,8 +42,7 @@ pub enum BackendEvent {
         state: u32,
     },
     ButtonPress {
-        /// X11 button number (1 left, 2 middle, 3 right, 4/5 wheel).
-        button: u8,
+        button: MouseButton,
         state: u32,
         x: i32,
         y: i32,

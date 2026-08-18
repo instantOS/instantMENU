@@ -2,7 +2,7 @@
 
 use super::Menu;
 use crate::backend::MonitorInfo;
-use crate::enums::{Scheme, COLOR_BG};
+use crate::enums::Scheme;
 
 /// INTERSECT macro: overlap area of rect (x,y,w,h) with a monitor.
 fn intersect_area(x: i32, y: i32, w: i32, h: i32, monitor: &MonitorInfo) -> i32 {
@@ -262,19 +262,17 @@ impl Menu {
     fn apply_pre_match(&mut self) {
         if self.cfg.pre_match && !self.matches.is_empty() && !self.text.is_empty() {
             // remember the item that was the first match for the pretyped text
-            let first_match_item = self.matches[0];
+            let first_match_item = *self.matches.first().unwrap();
             let cursor = self.cursor as i32;
             self.insert(None, -cursor);
             // selected = that item (find its position in the rebuilt match list)
             self.selected = self.matches.iter().position(|&it| it == first_match_item);
             if let Some(next_pos) = self.next {
-                let mut pos = next_pos;
-                while pos + 1 < self.matches.len() {
+                for pos in next_pos..self.matches.len() {
                     if self.matches[pos] == first_match_item {
                         self.current = self.selected;
                         break;
                     }
-                    pos += 1;
                 }
             }
             self.calc_offsets();
@@ -286,8 +284,8 @@ impl Menu {
     fn create_window(&mut self, x: i32, y: i32) {
         let managed = self.cfg.managed;
         let class = if managed { "floatmenu" } else { "dmenu" };
-        let bg = self.renderer.schemes[Scheme::Normal as usize][COLOR_BG];
-        let border_color = self.renderer.schemes[Scheme::Selected as usize][COLOR_BG];
+        let bg = self.renderer.color_scheme(Scheme::Normal).bg;
+        let border_color = self.renderer.color_scheme(Scheme::Selected).bg;
         if self
             .backend
             .create_window(

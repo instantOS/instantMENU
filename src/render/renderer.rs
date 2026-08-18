@@ -7,10 +7,10 @@ use cosmic_text::{
     Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics, Shaping, SwashCache, Wrap,
 };
 
-use crate::enums::{COLOR_BG, COLOR_DETAIL, COLOR_FG};
+use crate::enums::Scheme;
 
 use super::canvas::Canvas;
-use super::color::{scheme_from_strings, Color, SchemeColors};
+use super::color::{scheme_from_strings, Color, SchemeColors, SchemeStrings};
 use super::font::{parse_font_name, primary_font_height, resolve_family, FontSpec};
 
 /// The shared drawing context: fontset + color schemes + canvas, port of
@@ -45,7 +45,7 @@ struct TextLayout {
 impl Renderer {
     /// Create the renderer and load the fontset. Mirrors `drw_fontset_create`
     /// + `drw_scm_create` + `lrpad = drw->fonts->h`.
-    pub fn new(fonts: &[String], scheme_strings: &[[String; 3]; 9]) -> Self {
+    pub fn new(fonts: &[String], scheme_strings: &[SchemeStrings; 9]) -> Self {
         let mut font_system = FontSystem::new();
         let specs: Vec<FontSpec> = fonts.iter().map(|f| parse_font_name(f)).collect();
 
@@ -67,27 +67,37 @@ impl Renderer {
             families,
             font_height,
             horizontal_padding: font_height,
-            scheme: [Color::rgb(0, 0, 0); 3],
+            scheme: SchemeColors::default(),
             frame_background: None,
             layout_cache: HashMap::new(),
         };
-        renderer.scheme = renderer.schemes[0];
+        renderer.scheme = renderer.schemes.first().copied().unwrap_or_default();
         renderer
     }
 
+    /// Look up a configured scheme by its enum variant.
+    pub fn color_scheme(&self, scheme: Scheme) -> SchemeColors {
+        self.schemes[scheme as usize]
+    }
+
+    /// Make `scheme` the current drawing scheme.
+    pub fn set_scheme(&mut self, scheme: Scheme) {
+        self.scheme = self.color_scheme(scheme);
+    }
+
     pub fn clear(&mut self, canvas: &mut Canvas, color: Color) {
-        canvas.fill_rect(0, 0, canvas.width, canvas.height, color.0);
+        canvas.fill_rect(0, 0, canvas.width, canvas.height, color.channels());
         self.frame_background = Some(color);
     }
 
     /// drw_rect — filled rect in the current scheme; `invert` swaps fg/bg,
     /// `rounded` paints the bottom 4px strip with the detail color.
     pub fn rect(&mut self, canvas: &mut Canvas, x: i32, y: i32, w: i32, h: i32, filled: bool, invert: bool, rounded: bool) {
-        let color = if invert { self.scheme[COLOR_BG] } else { self.scheme[COLOR_FG] };
+        let color = if invert { self.scheme.bg } else { self.scheme.fg };
         if filled && h < 40 {
             if rounded {
                 self.fill_rect(canvas, x, y, w, h - 4, color);
-                self.fill_rect(canvas, x, y + h - 4, w, 4, self.scheme[COLOR_DETAIL]);
+                self.fill_rect(canvas, x, y + h - 4, w, 4, self.scheme.detail);
             } else {
                 self.fill_rect(canvas, x, y, w, h, color);
             }
@@ -97,7 +107,7 @@ impl Renderer {
     }
 
     fn fill_rect(&self, canvas: &mut Canvas, x: i32, y: i32, w: i32, h: i32, color: Color) {
-        canvas.fill_rect(x, y, w, h, color.0);
+        canvas.fill_rect(x, y, w, h, color.channels());
     }
 
     /// `drw_fontset_getwidth` — width of `text` (without lrpad).
@@ -210,10 +220,10 @@ impl Renderer {
         }
 
         // background
-        let fill = if invert { self.scheme[COLOR_FG] } else { self.scheme[COLOR_BG] };
+        let fill = if invert { self.scheme.fg } else { self.scheme.bg };
         if rounded {
             self.fill_rect(canvas, x, y, w, h - 4, fill);
-            self.fill_rect(canvas, x, y + h - 4, w, 4, self.scheme[COLOR_DETAIL]);
+            self.fill_rect(canvas, x, y + h - 4, w, 4, self.scheme.detail);
         } else if self.frame_background != Some(fill) {
             self.fill_rect(canvas, x, y, w, h, fill);
         }
@@ -221,8 +231,8 @@ impl Renderer {
             return x + w;
         }
 
-        let color = if invert { self.scheme[COLOR_BG] } else { self.scheme[COLOR_FG] };
-        let cosmic_color = CosmicColor::rgba(color.0[0], color.0[1], color.0[2], color.0[3]);
+        let color = if invert { self.scheme.bg } else { self.scheme.fg };
+        let cosmic_color = CosmicColor::rgba(color.r(), color.g(), color.b(), color.a());
 
         let available = w - left_padding;
         let mut display_text = text;

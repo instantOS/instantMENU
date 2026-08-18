@@ -10,6 +10,6 @@ mod font;
 mod renderer;
 
 pub use canvas::Canvas;
-pub use color::{parse_color, scheme_from_strings, Color, SchemeColors};
+pub use color::{parse_color, scheme_from_strings, Color, SchemeColors, SchemeStrings};
 pub use font::{parse_font_name, FontSpec};
 pub use renderer::Renderer;

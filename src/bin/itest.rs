@@ -7,9 +7,47 @@ use std::fs::Metadata;
 use std::io::{BufRead, Write};
 use std::time::UNIX_EPOCH;
 
-/// itest's flag storage: FLAG(x) = flags[x - 'a']
+/// itest's flag set, one named field per `-x` option (port of `FLAG(x)`).
+#[derive(Default)]
 struct Flags {
-    flags: [bool; 26],
+    /// -a: include hidden files
+    all: bool,
+    /// -b: block special
+    block: bool,
+    /// -c: character special
+    character: bool,
+    /// -d: directory
+    directory: bool,
+    /// -e: exists
+    exists: bool,
+    /// -f: regular file
+    regular: bool,
+    /// -g: set-group-id flag
+    set_group_id: bool,
+    /// -h: symbolic link
+    symlink: bool,
+    /// -l: test a directory's contents
+    list_dir: bool,
+    /// -n: newer than reference file
+    newer: bool,
+    /// -o: older than reference file
+    older: bool,
+    /// -p: named pipe
+    pipe: bool,
+    /// -q: quit on first match
+    quiet: bool,
+    /// -r: readable
+    readable: bool,
+    /// -s: not empty
+    not_empty: bool,
+    /// -u: set-user-id flag
+    set_user_id: bool,
+    /// -v: invert the result
+    invert: bool,
+    /// -w: writable
+    writable: bool,
+    /// -x: executable
+    executable: bool,
     /// mtime of the -n reference (newer than file)
     new_mtime: Option<i64>,
     /// mtime of the -o reference (older than file)
@@ -17,12 +55,29 @@ struct Flags {
 }
 
 impl Flags {
-    fn get(&self, c: u8) -> bool {
-        self.flags[(c - b'a') as usize]
-    }
-
-    fn set(&mut self, c: u8, v: bool) {
-        self.flags[(c - b'a') as usize] = v;
+    /// Enable the flag named by `flag`; Err on an unknown letter.
+    fn set(&mut self, flag: u8) -> Result<(), ()> {
+        match flag {
+            b'a' => self.all = true,
+            b'b' => self.block = true,
+            b'c' => self.character = true,
+            b'd' => self.directory = true,
+            b'e' => self.exists = true,
+            b'f' => self.regular = true,
+            b'g' => self.set_group_id = true,
+            b'h' => self.symlink = true,
+            b'l' => self.list_dir = true,
+            b'p' => self.pipe = true,
+            b'q' => self.quiet = true,
+            b'r' => self.readable = true,
+            b's' => self.not_empty = true,
+            b'u' => self.set_user_id = true,
+            b'v' => self.invert = true,
+            b'w' => self.writable = true,
+            b'x' => self.executable = true,
+            _ => return Err(()),
+        }
+        Ok(())
     }
 }
 
@@ -68,68 +123,48 @@ fn test(path: &str, name: &str, flags: &Flags, out: &mut impl Write) -> bool {
     }
 
     if let Some(stat) = &stat {
-        if flags.get(b'a') || !name.starts_with('.') {
-            check!(true); /* hidden files */
-        } else {
-            check!(false);
-        }
-        if flags.get(b'b') {
-            check!(mode_bits(stat) & libc::S_IFMT == libc::S_IFBLK); /* block special */
-        }
-        if flags.get(b'c') {
-            check!(mode_bits(stat) & libc::S_IFMT == libc::S_IFCHR); /* character special */
-        }
-        if flags.get(b'd') {
-            check!(stat.is_dir()); /* directory */
-        }
-        if flags.get(b'g') {
-            check!(mode_bits(stat) & libc::S_ISGID != 0); /* set-group-id flag */
-        }
-        if flags.get(b'n') {
-            /* newer than file */
+        check!(flags.all || !name.starts_with('.'));
+        if flags.block { check!(mode_bits(stat) & libc::S_IFMT == libc::S_IFBLK); }
+        if flags.character { check!(mode_bits(stat) & libc::S_IFMT == libc::S_IFCHR); }
+        if flags.directory { check!(stat.is_dir()); }
+        if flags.regular { check!(stat.is_file()); }
+        if flags.set_group_id { check!(mode_bits(stat) & libc::S_ISGID != 0); }
+        if flags.newer {
             check!(flags.new_mtime.map(|t| mtime(stat) > t).unwrap_or(false));
         }
-        if flags.get(b'o') {
-            /* older than file */
+        if flags.older {
             check!(flags.old_mtime.map(|t| mtime(stat) < t).unwrap_or(false));
         }
-        if flags.get(b'p') {
-            check!(mode_bits(stat) & libc::S_IFMT == libc::S_IFIFO); /* named pipe */
-        }
-        if flags.get(b's') {
-            check!(stat.len() > 0); /* not empty */
-        }
-        if flags.get(b'u') {
-            check!(mode_bits(stat) & libc::S_ISUID != 0); /* set-user-id flag */
-        }
+        if flags.pipe { check!(mode_bits(stat) & libc::S_IFMT == libc::S_IFIFO); }
+        if flags.not_empty { check!(stat.len() > 0); }
+        if flags.set_user_id { check!(mode_bits(stat) & libc::S_ISUID != 0); }
     } else {
         /* stat failed: only -h (lstat) can still make the chain true */
         check!(false);
     }
-    if flags.get(b'e') {
-        check!(access_ok(path, libc::F_OK)); /* exists */
+    if flags.exists {
+        check!(access_ok(path, libc::F_OK));
     }
-    if flags.get(b'h') {
+    if flags.symlink {
         check!(
-            /* symbolic link */
             link_stat
                 .as_ref()
                 .map(|m| mode_bits(m) & libc::S_IFMT == libc::S_IFLNK)
                 .unwrap_or(false),
         );
     }
-    if flags.get(b'r') {
-        check!(access_ok(path, libc::R_OK)); /* readable */
+    if flags.readable {
+        check!(access_ok(path, libc::R_OK));
     }
-    if flags.get(b'w') {
-        check!(access_ok(path, libc::W_OK)); /* writable */
+    if flags.writable {
+        check!(access_ok(path, libc::W_OK));
     }
-    if flags.get(b'x') {
-        check!(access_ok(path, libc::X_OK)); /* executable */
+    if flags.executable {
+        check!(access_ok(path, libc::X_OK));
     }
 
-    if result != flags.get(b'v') {
-        if flags.get(b'q') {
+    if result != flags.invert {
+        if flags.quiet {
             std::process::exit(0);
         }
         println!("{name}");
@@ -142,66 +177,64 @@ fn test(path: &str, name: &str, flags: &Flags, out: &mut impl Write) -> bool {
 fn main() {
     /* die silently on a closed pipe like the C version (| head etc.) */
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
-    let argv: Vec<String> = std::env::args().skip(1).collect();
-    let mut flags = Flags { flags: [false; 26], new_mtime: None, old_mtime: None };
+    let mut flags = Flags::default();
     let mut files: Vec<String> = Vec::new();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
 
-    let mut i = 0;
-    while i < argv.len() {
-        let arg = &argv[i];
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
         let Some(rest) = arg.strip_prefix('-') else {
-            files.push(arg.clone());
-            i += 1;
+            files.push(arg);
             continue;
         };
-        let bytes: Vec<u8> = rest.bytes().collect();
-        let mut j = 0;
-        while j < bytes.len() {
-            let c = bytes[j];
-            j += 1;
-            match c {
-                /* newer/older than file: value is the rest of this arg or the
-                 * next one (EARGF semantics) */
+
+        /* flags may be bundled (-abc) or take the rest of the arg / the next
+         * arg as their value (-n file / -nfile, EARGF semantics) */
+        let mut remaining = rest.as_bytes();
+        while let Some((&flag, tail)) = remaining.split_first() {
+            remaining = tail;
+            match flag {
+                /* newer/older than file */
                 b'n' | b'o' => {
-                    let file: String = if j < bytes.len() {
-                        let s = String::from_utf8_lossy(&bytes[j..]).into_owned();
-                        j = bytes.len();
-                        s
-                    } else {
-                        i += 1;
-                        if i >= argv.len() {
-                            usage();
+                    let file = if tail.is_empty() {
+                        match args.next() {
+                            Some(next) => next,
+                            None => usage(),
                         }
-                        argv[i].clone()
+                    } else {
+                        let file = String::from_utf8_lossy(tail).into_owned();
+                        remaining = &[];
+                        file
                     };
                     match std::fs::metadata(&file) {
                         Ok(metadata) => {
                             let mtime_value = mtime(&metadata);
-                            if c == b'n' {
+                            if flag == b'n' {
                                 flags.new_mtime = Some(mtime_value);
+                                flags.newer = true;
                             } else {
                                 flags.old_mtime = Some(mtime_value);
+                                flags.older = true;
                             }
-                            flags.set(c, true);
                         }
                         Err(e) => {
                             eprintln!("{file}: {e}");
-                            flags.set(c, false);
+                            if flag == b'n' {
+                                flags.newer = false;
+                            } else {
+                                flags.older = false;
+                            }
                         }
                     }
                 }
                 _ => {
-                    if b"abcdefghlpqrsuvwx".contains(&c) {
-                        flags.set(c, true);
-                    } else {
+                    if flags.set(flag).is_err() {
                         usage(); /* unknown flag */
                     }
                 }
             }
         }
-        i += 1;
     }
 
     let mut matched = false;
@@ -218,7 +251,7 @@ fn main() {
     } else {
         for path in &files {
             /* -l on a directory: test its contents */
-            if flags.get(b'l') && std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false) {
+            if flags.list_dir && std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false) {
                 if let Ok(entries) = std::fs::read_dir(path) {
                     for entry in entries.flatten() {
                         let name = entry.file_name().to_string_lossy().into_owned();

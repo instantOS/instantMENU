@@ -17,8 +17,7 @@ impl Menu {
         if !self.cfg.animated || self.cfg.frame_count == 0 {
             return;
         }
-        let sc = self.renderer.schemes[Scheme::Selected as usize];
-        self.renderer.scheme = sc;
+        self.renderer.set_scheme(Scheme::Selected);
         let frame_count = self.cfg.frame_count;
         for time in 0..frame_count {
             let t = time as f64 / frame_count as f64;
@@ -71,8 +70,7 @@ impl Menu {
         if !self.cfg.animated || self.cfg.frame_count == 0 {
             return;
         }
-        let sc = self.renderer.schemes[Scheme::Selected as usize];
-        self.renderer.scheme = sc;
+        self.renderer.set_scheme(Scheme::Selected);
         let frame_count = self.cfg.frame_count;
         for time in 0..frame_count {
             let f = ease_out_quint(time as f64 / frame_count as f64);

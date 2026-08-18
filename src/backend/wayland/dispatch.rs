@@ -18,6 +18,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 };
 use xkbcommon::xkb::{Keycode, KeyDirection};
 
+use crate::backend::MouseButton;
 use super::selection::{load_keymap, x11_mask};
 use super::{BackendEvent, EventState, MonitorInfo, OfferTracker, OutputEntry, XKB_OFFSET};
 
@@ -249,26 +250,21 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
             }
             wl_pointer::Event::Button { button, state: button_state, .. } => {
                 if let WEnum::Value(wl_pointer::ButtonState::Pressed) = button_state {
-                    let x11_button = match button {
-                        0x110 => 1, // left
-                        0x111 => 2, // middle
-                        0x112 => 3, // right
-                        _ => return,
-                    };
+                    let Some(button) = evdev_button(button) else { return };
                     state.events.push_back(BackendEvent::ButtonPress {
-                        button: x11_button,
+                        button,
                         state: mods,
                         x: state.pointer_x as i32,
                         y: state.pointer_y as i32,
                     });
                 }
             }
-            /* wheel: map to the X11 buttons 4/5 the menu core understands */
+            /* wheel: map to the scroll buttons the menu core understands */
             wl_pointer::Event::Axis { axis, value, .. } => {
                 if let WEnum::Value(a) = axis {
                     if a == wl_pointer::Axis::VerticalScroll {
                         state.events.push_back(BackendEvent::ButtonPress {
-                            button: if value > 0.0 { 5 } else { 4 },
+                            button: if value > 0.0 { MouseButton::ScrollDown } else { MouseButton::ScrollUp },
                             state: mods,
                             x: -1,
                             y: -1,
@@ -500,5 +496,15 @@ impl Dispatch<zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1, ()>
                 tracker.mimes.push(mime_type);
             }
         }
+    }
+}
+
+/// Linux evdev button code -> normalized button.
+fn evdev_button(code: u32) -> Option<MouseButton> {
+    match code {
+        0x110 => Some(MouseButton::Left),
+        0x111 => Some(MouseButton::Middle),
+        0x112 => Some(MouseButton::Right),
+        _ => None,
     }
 }

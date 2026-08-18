@@ -14,7 +14,7 @@ use x11rb::xcb_ffi::XCBConnection;
 use xkbcommon::xkb::x11 as xkbx11;
 use xkbcommon::xkb::{self, Keycode, KeyDirection};
 
-use super::{Backend, BackendEvent, MonitorInfo};
+use super::{Backend, BackendEvent, MonitorInfo, MouseButton};
 use crate::render::{Canvas, Color};
 
 /// X11 keycode -> xkb keycode offset.
@@ -466,8 +466,9 @@ impl Backend for X11Backend {
                     return Some(BackendEvent::KeyRelease { sym, state: k.state.bits() as u32 });
                 }
                 Event::ButtonPress(b) => {
+                    let Some(button) = mouse_button(b.detail) else { continue };
                     return Some(BackendEvent::ButtonPress {
-                        button: b.detail as u8,
+                        button,
                         state: b.state.bits() as u32,
                         x: b.event_x as i32,
                         y: b.event_y as i32,
@@ -613,7 +614,19 @@ fn intersect(x: i32, y: i32, w: i32, h: i32, monitor: &MonitorInfo) -> i32 {
         * (0.max((y + h).min(monitor.y + monitor.height) - y.max(monitor.y)))
 }
 
+/// X11 button number -> normalized button.
+fn mouse_button(detail: u8) -> Option<MouseButton> {
+    match detail {
+        1 => Some(MouseButton::Left),
+        2 => Some(MouseButton::Middle),
+        3 => Some(MouseButton::Right),
+        4 => Some(MouseButton::ScrollUp),
+        5 => Some(MouseButton::ScrollDown),
+        _ => None,
+    }
+}
+
 /// X11 pixel value for a 24-bit depth: RGB in the top three bytes.
 fn x11_pixel(color: Color) -> u32 {
-    ((color.0[0] as u32) << 16) | ((color.0[1] as u32) << 8) | color.0[2] as u32
+    ((color.r() as u32) << 16) | ((color.g() as u32) << 8) | color.b() as u32
 }

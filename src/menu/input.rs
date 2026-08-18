@@ -26,7 +26,7 @@ impl Menu {
             self.cursor = (cursor + byte_len as isize) as usize;
 
             if self.cfg.smart_case {
-                let has_upper = self.text.bytes().any(|b| (65..=90).contains(&b));
+                let has_upper = self.text.bytes().any(|b| b.is_ascii_uppercase());
                 if has_upper {
                     self.cfg.smart_case = false;
                     self.insensitive = false;
@@ -63,7 +63,7 @@ impl Menu {
         while n + inc >= 0
             && n >= 0
             && (n as usize) < bytes.len()
-            && (bytes[n as usize] & 0xc0) == 0x80
+            && is_utf8_continuation(bytes[n as usize])
         {
             n += inc;
         }
@@ -150,4 +150,9 @@ impl Menu {
         self.insert(Some(s), s.len() as i32);
         self.cfg.reject_no_match = tmp;
     }
+}
+
+/// True when `byte` is a UTF-8 continuation byte (0b10xxxxxx).
+fn is_utf8_continuation(byte: u8) -> bool {
+    byte & 0xc0 == 0x80
 }

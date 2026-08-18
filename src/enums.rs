@@ -67,8 +67,23 @@ pub fn output_offset(category: ItemCategory) -> usize {
     }
 }
 
-/* color indices within a scheme */
-pub const COLOR_FG: usize = 0;
-pub const COLOR_BG: usize = 1;
-pub const COLOR_DETAIL: usize = 2;
-pub const COLOR_COUNT: usize = 3;
+/// A slot within a color scheme (fg / bg / detail).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColorRole {
+    Foreground,
+    Background,
+    Detail,
+}
+
+impl ColorRole {
+    pub const ALL: [ColorRole; 3] = [ColorRole::Foreground, ColorRole::Background, ColorRole::Detail];
+
+    /// X resource color type name, port of `xrescolortype`.
+    pub fn x_res_name(self) -> &'static str {
+        match self {
+            ColorRole::Foreground => "fg",
+            ColorRole::Background => "bg",
+            ColorRole::Detail => "detail",
+        }
+    }
+}

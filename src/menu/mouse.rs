@@ -1,7 +1,7 @@
 //! Mouse handling: hover selection, button presses and paste.
 
 use super::Menu;
-use crate::backend::{CONTROL_MASK, SHIFT_MASK};
+use crate::backend::{MouseButton, CONTROL_MASK, SHIFT_MASK};
 
 impl Menu {
     /// x offset after the prompt (0 when there is no prompt).
@@ -37,49 +37,25 @@ impl Menu {
         }
     }
 
-    /// Column/grid hover selection.
+    /// Column/grid hover selection: hit-test the same cell layout as draw_grid.
     fn hover_columns(&mut self, ev_x: i32, ev_y: i32, x: i32) {
-        let y = 0;
         let row_height = self.bar_height;
-        let mut i = 0;
-        let mut init = false;
-        let mut check_y = y;
-        let mut check_x = x;
         let column_width = self.menu_width / self.cfg.columns;
-        let mut pos = self.current;
-        while let Some(p) = pos {
-            if Some(p) == self.next {
-                break;
-            }
-            if i >= self.cfg.lines {
-                i = 0;
-                check_x += column_width;
-                check_y = y;
-            } else {
-                if !init {
-                    init = true;
-                } else {
-                    pos = if p + 1 < self.matches.len() { Some(p + 1) } else { None };
-                    if pos.is_none() {
-                        break;
-                    }
-                }
-                i += 1;
-                check_y += row_height;
-            }
-            // event in range
+        let start = self.current.unwrap_or(0);
+        let end = self.next.unwrap_or(self.matches.len());
+        for (i, pos) in (start..end).enumerate() {
+            let check_x = x + (i as i32 / self.cfg.lines) * column_width;
+            let check_y = (i as i32 % self.cfg.lines + 1) * row_height;
             if ev_y >= check_y
-                && ev_y <= (check_y + row_height)
+                && ev_y <= check_y + row_height
                 && ev_x >= check_x
-                && ev_x <= (check_x + column_width)
+                && ev_x <= check_x + column_width
             {
-                if let Some(pos) = pos {
-                    if self.selected == Some(pos) {
-                        return;
-                    }
-                    self.selected = Some(pos);
-                    self.draw_menu();
+                if self.selected == Some(pos) {
+                    return;
                 }
+                self.selected = Some(pos);
+                self.draw_menu();
                 return;
             }
         }
@@ -89,21 +65,18 @@ impl Menu {
     fn hover_vertical(&mut self, ev_y: i32) {
         let mut y = 0;
         let row_height = self.bar_height;
-        let mut pos = self.current;
-        while let Some(p) = pos {
-            if Some(p) == self.next {
-                break;
-            }
+        let start = self.current.unwrap_or(0);
+        let end = self.next.unwrap_or(self.matches.len());
+        for pos in start..end {
             y += row_height;
             if ev_y >= y && ev_y <= (y + row_height) {
-                if self.selected == Some(p) {
+                if self.selected == Some(pos) {
                     return;
                 }
-                self.selected = Some(p);
+                self.selected = Some(pos);
                 self.draw_menu();
                 return;
             }
-            pos = if p + 1 < self.matches.len() { Some(p + 1) } else { None };
         }
     }
 
@@ -111,62 +84,59 @@ impl Menu {
     fn hover_horizontal(&mut self, ev_x: i32, mut x: i32) {
         x += self.input_width;
         let mut arrow_width = self.text_width("<");
-        let mut pos = self.current;
-        while let Some(p) = pos {
-            if Some(p) == self.next {
-                break;
-            }
+        let start = self.current.unwrap_or(0);
+        let end = self.next.unwrap_or(self.matches.len());
+        for pos in start..end {
             x += arrow_width;
-            let item_text = self.items[self.matches[p]].text.clone();
+            let item_text = self.items[self.matches[pos]].text.clone();
             let right_arrow_width = self.text_width(">");
             arrow_width = self.text_width(&item_text).min(self.menu_width - x - right_arrow_width);
             if ev_x >= x && ev_x <= x + arrow_width {
-                if self.selected == Some(p) {
+                if self.selected == Some(pos) {
                     return;
                 }
-                self.selected = Some(p);
+                self.selected = Some(pos);
                 self.draw_menu();
                 return;
             }
-            pos = if p + 1 < self.matches.len() { Some(p + 1) } else { None };
         }
     }
 
     /// button_press
-    pub(super) fn button_press(&mut self, button: u8, state: u32, ev_x: i32, ev_y: i32) {
+    pub(super) fn button_press(&mut self, button: MouseButton, state: u32, ev_x: i32, ev_y: i32) {
         /* right-click: exit */
-        if button == 3 {
+        if button == MouseButton::Right {
             std::process::exit(1);
         }
 
         let x = self.prompt_offset();
         let w = self.input_field_width(x);
 
-        if button == 1 {
-            self.left_click(state, ev_x, ev_y, x, w);
-        }
-
-        /* middle-mouse click: paste selection */
-        if button == 2 {
-            self.backend.request_selection(state & SHIFT_MASK != 0);
-            self.draw_menu();
-            return;
-        }
-        /* scroll up */
-        if button == 4 && (self.prev != 0 || self.current.map(|c| c > 0).unwrap_or(false)) {
-            self.selected = self.current;
-            self.current = Some(self.prev);
-            self.calc_offsets();
-            self.draw_menu();
-            return;
-        }
-        /* scroll down */
-        if button == 5 && self.next.is_some() {
-            let next = self.next.unwrap();
-            self.selected = Some(next);
-            self.current = Some(next);
-            self.calc_offsets();
-            self.draw_menu();
+        match button {
+            MouseButton::Left => self.left_click(state, ev_x, ev_y, x, w),
+            /* middle-mouse click: paste selection */
+            MouseButton::Middle => {
+                self.backend.request_selection(state & SHIFT_MASK != 0);
+                self.draw_menu();
+            }
+            /* scroll up */
+            MouseButton::ScrollUp
+                if self.prev != 0 || self.current.map(|c| c > 0).unwrap_or(false) =>
+            {
+                self.selected = self.current;
+                self.current = Some(self.prev);
+                self.calc_offsets();
+                self.draw_menu();
+            }
+            /* scroll down */
+            MouseButton::ScrollDown if self.next.is_some() => {
+                let next = self.next.unwrap();
+                self.selected = Some(next);
+                self.current = Some(next);
+                self.calc_offsets();
+                self.draw_menu();
+            }
+            _ => {}
         }
     }
 
@@ -242,13 +212,11 @@ impl Menu {
                 return;
             }
         }
-        let mut pos = self.current;
-        while let Some(p) = pos {
-            if Some(p) == self.next {
-                break;
-            }
+        let start = self.current.unwrap_or(0);
+        let end = self.next.unwrap_or(self.matches.len());
+        for pos in start..end {
             x += arrow_width;
-            let item_text = self.items[self.matches[p]].text.clone();
+            let item_text = self.items[self.matches[pos]].text.clone();
             let right_arrow_width = self.text_width(">");
             arrow_width = self.text_width(&item_text).min(self.menu_width - x - right_arrow_width);
             if ev_x >= x && ev_x <= x + arrow_width {
@@ -262,12 +230,11 @@ impl Menu {
                 if state & CONTROL_MASK == 0 {
                     std::process::exit(0);
                 }
-                self.selected = Some(p);
-                self.items[self.matches[p]].already_output = true;
+                self.selected = Some(pos);
+                self.items[self.matches[pos]].already_output = true;
                 self.draw_menu();
                 return;
             }
-            pos = if p + 1 < self.matches.len() { Some(p + 1) } else { None };
         }
         /* left-click on right arrow */
         let right_arrow_width = self.text_width(">");

@@ -1,13 +1,12 @@
 //! Port of `config.def.h` — default settings; can be overridden by command
 //! line and X resources.
 
+use crate::render::SchemeStrings;
+
 pub const VERSION: &str = "4.9";
 
 /// `xresname`
 pub const XRES_NAME: &str = "instantmenu";
-
-/// X resource color type names, port of `xrescolortype`.
-pub const XRES_COLOR_TYPES: [&str; 3] = ["fg", "bg", "detail"];
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -44,8 +43,8 @@ pub struct Config {
     pub left_command: Option<String>,
     /* -rc option; command run on shift+right */
     pub right_command: Option<String>,
-    /*        fg         bg     detail  */
-    pub colors: [[String; 3]; 9],
+    /* fg / bg / detail per scheme */
+    pub colors: [SchemeStrings; 9],
 
     /* -l option; if nonzero, vertical list with given number of lines */
     pub lines: i32,
@@ -97,8 +96,10 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        let scheme = |fg: &str, bg: &str, detail: &str| {
-            [fg.to_string(), bg.to_string(), detail.to_string()]
+        let scheme = |fg: &str, bg: &str, detail: &str| SchemeStrings {
+            fg: fg.to_string(),
+            bg: bg.to_string(),
+            detail: detail.to_string(),
         };
         Config {
             top_bar: true,
