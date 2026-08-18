@@ -83,8 +83,8 @@ fn main() {
 /// Boolean flags: applied before the value options they gate.
 fn apply_flags(args: &cli::Args, cfg: &mut Config) {
     /* boolean flags, port of the argument loop in main() */
-    if args.bottom {
-        cfg.top_bar = false;
+    if let Some(p) = args.position {
+        cfg.position = p;
     }
     if args.reject_no_match {
         cfg.reject_no_match = true;
@@ -92,9 +92,6 @@ fn apply_flags(args: &cli::Args, cfg: &mut Config) {
     if args.commented {
         cfg.commented = true;
         cfg.prompt = Some("prompts".to_string());
-    }
-    if args.centered {
-        cfg.centered = true;
     }
     if args.follow_cursor {
         cfg.follow_cursor = true;
@@ -105,15 +102,11 @@ fn apply_flags(args: &cli::Args, cfg: &mut Config) {
     if args.smart_case {
         cfg.smart_case = true;
     }
-    if args.no_fuzzy {
-        cfg.fuzzy = false;
+    if let Some(m) = args.match_mode {
+        cfg.match_mode = m;
     }
     if args.pre_match {
         cfg.pre_match = true;
-    }
-    if args.exact {
-        cfg.exact = true;
-        cfg.fuzzy = false;
     }
     if args.full_height {
         cfg.full_height = true;
@@ -196,8 +189,8 @@ fn apply_values(args: &cli::Args, cfg: &mut Config) -> (Option<String>, Vec<(Sch
             cfg.line_height = h;
         }
     }
-    if let Some(w) = &args.embed {
-        cfg.embed = Some(cli::strtol0(w));
+    if let Some(w) = args.embed {
+        cfg.embed = Some(w);
     }
     cfg.left_command = args.left_cmd.clone();
     cfg.right_command = args.right_cmd.clone();

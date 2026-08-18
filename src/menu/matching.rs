@@ -1,6 +1,7 @@
 //! Item matching: ports of `match`, `fuzzymatch` and `calcoffsets`.
 
 use super::Menu;
+use crate::config::MatchMode;
 
 impl Menu {
     /// fstrncmp(a, b, n) == 0, honoring the case-insensitivity switch.
@@ -56,7 +57,7 @@ impl Menu {
             }
         }
 
-        if self.cfg.fuzzy {
+        if self.cfg.match_mode == MatchMode::Fuzzy {
             self.fuzzy_match();
             return;
         }
@@ -82,7 +83,7 @@ impl Menu {
                 exact.push(i);
             } else if self.eq_n(first_token.as_bytes(), item.text.as_bytes(), len) {
                 prefix.push(i);
-            } else if !self.cfg.exact {
+            } else if self.cfg.match_mode != MatchMode::Exact {
                 substr.push(i);
             }
         }

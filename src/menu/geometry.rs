@@ -2,6 +2,7 @@
 
 use super::Menu;
 use crate::backend::MonitorInfo;
+use crate::config::Position;
 use crate::enums::Scheme;
 
 /// INTERSECT macro: overlap area of rect (x,y,w,h) with a monitor.
@@ -90,7 +91,7 @@ impl Menu {
         let mut x = 0;
         let mut y = 0;
 
-        if self.cfg.centered {
+        if self.cfg.position == Position::Centered {
             if self.cfg.width != 0 && self.cfg.width < monitor.width {
                 self.menu_width = self.cfg.width;
             } else {
@@ -162,7 +163,7 @@ impl Menu {
                 monitor.x + self.cfg.x_offset
             };
             y = monitor.y
-                + if self.cfg.top_bar {
+                + if self.cfg.position == Position::Top {
                     self.cfg.y_offset
                 } else {
                     monitor.height - self.menu_height - self.cfg.y_offset
@@ -220,7 +221,7 @@ impl Menu {
         };
         let mut x = 0;
         let mut y = 0;
-        if self.cfg.centered {
+        if self.cfg.position == Position::Centered {
             let max_width = (self.max_text_width() + self.prompt_width)
                 .max(self.cfg.min_width)
                 .min(parent_width);
@@ -244,7 +245,7 @@ impl Menu {
             self.menu_width = max_width;
         } else {
             x = self.cfg.x_offset;
-            y = if self.cfg.top_bar {
+            y = if self.cfg.position == Position::Top {
                 self.cfg.y_offset
             } else {
                 parent_height - self.menu_height - self.cfg.y_offset

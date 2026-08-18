@@ -6,7 +6,7 @@ instantMENU \- menu for instantOS
 .RB [ OPTIONS ]
 .br
 .B instantmenu
-.RB [ \-bcrfiInPsvMGAH ]
+.RB [ \-rfiInPsvMGAH ]
 .RB [ \-l
 .IR lines ]
 .RB [ \-g
@@ -51,8 +51,11 @@ Print command line help and exit.
 .BI \-v ", " \-\-version
 Print version information to stdout and exit.
 .TP
-.BI \-b ", " \-\-bottom
-instantmenu appears at the bottom of the screen.
+.BI \-\-position " position"
+Choose where instantmenu appears on the screen:
+.BR top " (the default), "
+.BR bottom ", or "
+.BR centered .
 .TP
 .BI \-r ", " \-\-reject-no-match
 Reject input if it results in no matches.
@@ -68,9 +71,6 @@ seconds and exits without a selection.
 .BI \-\-commented
 Activate instantASSIST mode (single\-letter launcher).
 .TP
-.BI \-c ", " \-\-centered
-instantmenu appears centered on the screen.
-.TP
 .BI \-C ", " \-\-follow-cursor
 instantmenu appears at the position of the mouse cursor.
 .TP
@@ -81,15 +81,15 @@ Only display the input field, without the item list.
 Enable smart case matching: the pattern is matched case\-insensitively unless
 it contains an uppercase letter.
 .TP
-.BI \-F ", " \-\-no-fuzzy
-Disable fuzzy matching.
+.BI \-\-match-mode " mode"
+Select the item matching algorithm:
+.BR fuzzy " (the default), "
+.BR standard " (all tokens must appear in each item; exact matches first,
+then prefixes, then substrings), or
+.BR exact " (only exact matches)."
 .TP
 .BI \-\-pre-match
 Enable pre matching.
-.TP
-.BI \-E ", " \-\-exact
-Enable exact matching (implies
-.BR \-\-no-fuzzy ).
 .TP
 .BI \-H ", " \-\-full-height
 Make instantmenu take the full screen height.
@@ -140,7 +140,7 @@ Can be negative.
 .TP
 .BI \-y ", " \-\-y-offset " yoffset"
 Place instantmenu at this offset measured from the top of the monitor.  If the
-.B \-b
+.B \-\-position bottom
 option is used, the offset is measured from the bottom.  Can be negative.
 .TP
 .BI \-w ", " \-\-width " width"

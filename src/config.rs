@@ -1,6 +1,7 @@
 //! Port of `config.def.h` — default settings; can be overridden by command
 //! line and X resources.
 
+use clap::ValueEnum;
 use crate::render::SchemeStrings;
 
 pub const VERSION: &str = "4.9";
@@ -8,24 +9,38 @@ pub const VERSION: &str = "4.9";
 /// `xresname`
 pub const XRES_NAME: &str = "instantmenu";
 
+/// Where the menu appears on screen (`--position`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Position {
+    Top,
+    Bottom,
+    Centered,
+}
+
+/// Item matching algorithm (`--match-mode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum MatchMode {
+    Fuzzy,
+    Standard,
+    Exact,
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
-    /* -b option; if 0, instantmenu appears at bottom */
-    pub top_bar: bool,
-    /* -c option; centers dmenu on screen */
-    pub centered: bool,
+    /* --position option; top (default), bottom, or centered on screen */
+    pub position: Position,
     /* -C option; place menu at mouse position */
     pub follow_cursor: bool,
     /* minimum width when centered */
     pub min_width: i32,
 
     pub instant: bool,
-    pub fuzzy: bool,
+    /* --match-mode option; item matching algorithm */
+    pub match_mode: MatchMode,
     pub pre_match: bool,
     pub smart_case: bool,
     /* -i option; case-insensitive item matching */
     pub insensitive: bool,
-    pub exact: bool,
     pub animated: bool,
     pub frame_count: i32,
     pub full_height: bool,
@@ -102,16 +117,14 @@ impl Default for Config {
             detail: detail.to_string(),
         };
         Config {
-            top_bar: true,
-            centered: false,
+            position: Position::Top,
             follow_cursor: false,
             min_width: 500,
             instant: false,
-            fuzzy: true,
+            match_mode: MatchMode::Fuzzy,
             pre_match: false,
             smart_case: false,
             insensitive: false,
-            exact: false,
             animated: false,
             frame_count: 7,
             full_height: false,
