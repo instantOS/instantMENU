@@ -6,10 +6,6 @@ use xkbcommon::xkb::keysyms as ks;
 use super::{Menu, TEXT_MAX};
 use crate::backend::{CONTROL_MASK, MOD1_MASK, MOD4_MASK, SHIFT_MASK};
 
-fn sym_eq(a: u32, b: u32) -> bool {
-    a == b
-}
-
 impl Menu {
     /// selectnumber — Ctrl-1..9 select the n-th item and hit Return.
     fn selectnumber(&mut self, number: usize, state: u32) {
@@ -129,63 +125,63 @@ impl Menu {
         let mut sym = sym;
         let mut state = state;
         match sym {
-            s if sym_eq(s, ks::KEY_a) => sym = ks::KEY_Home,
-            s if sym_eq(s, ks::KEY_b) => sym = ks::KEY_Left,
-            s if sym_eq(s, ks::KEY_c) => sym = ks::KEY_Escape,
-            s if sym_eq(s, ks::KEY_d) => sym = ks::KEY_Delete,
-            s if sym_eq(s, ks::KEY_e) => sym = ks::KEY_End,
-            s if sym_eq(s, ks::KEY_f) => sym = ks::KEY_Right,
-            s if sym_eq(s, ks::KEY_g) => sym = ks::KEY_Escape,
-            s if sym_eq(s, ks::KEY_h) => sym = ks::KEY_BackSpace,
-            s if sym_eq(s, ks::KEY_i) => sym = ks::KEY_Tab,
-            s if sym_eq(s, ks::KEY_j)
-                || sym_eq(s, ks::KEY_J)
-                || sym_eq(s, ks::KEY_m)
-                || sym_eq(s, ks::KEY_M) =>
+            s if s == ks::KEY_a => sym = ks::KEY_Home,
+            s if s == ks::KEY_b => sym = ks::KEY_Left,
+            s if s == ks::KEY_c => sym = ks::KEY_Escape,
+            s if s == ks::KEY_d => sym = ks::KEY_Delete,
+            s if s == ks::KEY_e => sym = ks::KEY_End,
+            s if s == ks::KEY_f => sym = ks::KEY_Right,
+            s if s == ks::KEY_g => sym = ks::KEY_Escape,
+            s if s == ks::KEY_h => sym = ks::KEY_BackSpace,
+            s if s == ks::KEY_i => sym = ks::KEY_Tab,
+            s if s == ks::KEY_j
+                || s == ks::KEY_J
+                || s == ks::KEY_m
+                || s == ks::KEY_M =>
             {
                 sym = ks::KEY_Return;
                 state &= !CONTROL_MASK;
             }
-            s if sym_eq(s, ks::KEY_n) => sym = ks::KEY_Down,
-            s if sym_eq(s, ks::KEY_p) => sym = ks::KEY_Up,
-            s if sym_eq(s, ks::KEY_s) => {
+            s if s == ks::KEY_n => sym = ks::KEY_Down,
+            s if s == ks::KEY_p => sym = ks::KEY_Up,
+            s if s == ks::KEY_s => {
                 self.insert(Some(".*"), 2);
             }
-            s if sym_eq(s, ks::KEY_v) => {
+            s if s == ks::KEY_v => {
                 /* paste clipboard */
                 self.backend.request_selection(state & SHIFT_MASK != 0);
                 self.drawmenu();
                 return None;
             }
-            s if sym_eq(s, ks::KEY_k) => {
+            s if s == ks::KEY_k => {
                 /* delete right */
                 self.text.truncate(self.cursor);
                 self.do_match();
             }
-            s if sym_eq(s, ks::KEY_u) => {
+            s if s == ks::KEY_u => {
                 /* delete left */
                 let cursor = self.cursor as i32;
                 self.insert(None, -cursor);
             }
-            s if sym_eq(s, ks::KEY_w) => {
+            s if s == ks::KEY_w => {
                 self.delete_word();
             }
-            s if sym_eq(s, ks::KEY_y) || sym_eq(s, ks::KEY_Y) => {
+            s if s == ks::KEY_y || s == ks::KEY_Y => {
                 /* paste selection */
                 self.backend.request_selection(state & SHIFT_MASK != 0);
                 return None;
             }
-            s if sym_eq(s, ks::KEY_Left) || sym_eq(s, ks::KEY_KP_Left) => {
+            s if s == ks::KEY_Left || s == ks::KEY_KP_Left => {
                 self.movewordedge(-1);
                 self.drawmenu();
                 return None;
             }
-            s if sym_eq(s, ks::KEY_Right) || sym_eq(s, ks::KEY_KP_Right) => {
+            s if s == ks::KEY_Right || s == ks::KEY_KP_Right => {
                 self.movewordedge(1);
                 self.drawmenu();
                 return None;
             }
-            s if sym_eq(s, ks::KEY_Return) || sym_eq(s, ks::KEY_KP_Enter) => {
+            s if s == ks::KEY_Return || s == ks::KEY_KP_Enter => {
                 // fall through to the main switch with Return
             }
             s if (ks::KEY_1..=ks::KEY_9).contains(&s) => {
@@ -193,7 +189,7 @@ impl Menu {
                 self.drawmenu();
                 return None;
             }
-            s if sym_eq(s, ks::KEY_bracketleft) => {
+            s if s == ks::KEY_bracketleft => {
                 self.finish(1);
             }
             _ => return None,
@@ -256,30 +252,30 @@ impl Menu {
     fn mod1_key(&mut self, sym: u32) -> Option<u32> {
         let mut sym = sym;
         match sym {
-            s if sym_eq(s, ks::KEY_F4) => self.finish(1),
-            s if sym_eq(s, ks::KEY_b) => {
+            s if s == ks::KEY_F4 => self.finish(1),
+            s if s == ks::KEY_b => {
                 self.movewordedge(-1);
                 self.drawmenu();
                 return None;
             }
-            s if sym_eq(s, ks::KEY_f) => {
+            s if s == ks::KEY_f => {
                 self.movewordedge(1);
                 self.drawmenu();
                 return None;
             }
-            s if sym_eq(s, ks::KEY_g) => sym = ks::KEY_Home,
-            s if sym_eq(s, ks::KEY_G) => sym = ks::KEY_End,
-            s if sym_eq(s, ks::KEY_h) => sym = ks::KEY_Up,
-            s if sym_eq(s, ks::KEY_j) => sym = ks::KEY_Next,
-            s if sym_eq(s, ks::KEY_k) => sym = ks::KEY_Prior,
-            s if sym_eq(s, ks::KEY_l) => sym = ks::KEY_Down,
-            s if sym_eq(s, ks::KEY_space) => {
+            s if s == ks::KEY_g => sym = ks::KEY_Home,
+            s if s == ks::KEY_G => sym = ks::KEY_End,
+            s if s == ks::KEY_h => sym = ks::KEY_Up,
+            s if s == ks::KEY_j => sym = ks::KEY_Next,
+            s if s == ks::KEY_k => sym = ks::KEY_Prior,
+            s if s == ks::KEY_l => sym = ks::KEY_Down,
+            s if s == ks::KEY_space => {
                 if self.cfg.alttab {
                     self.tabbed = false;
                     self.cfg.alttab = false;
                 }
             }
-            s if sym_eq(s, ks::KEY_Tab) => {
+            s if s == ks::KEY_Tab => {
                 self.tabbed = true;
 
                 if let Some(s) = self.sel {
@@ -305,7 +301,7 @@ impl Menu {
 
     /// Mod4-prefixed keys (only Mod4-q is bound: quit).
     fn mod4_key(&mut self, sym: u32) {
-        if sym_eq(sym, ks::KEY_q) {
+        if sym == ks::KEY_q {
             self.finish(1);
         }
     }
@@ -313,7 +309,7 @@ impl Menu {
     /// Editing keys handled before list navigation. Returns Some(redraw) when
     /// the key was an editing key, None to defer to navigation/insertion.
     fn edit_key(&mut self, sym: u32) -> Option<bool> {
-        if sym_eq(sym, ks::KEY_Delete) || sym_eq(sym, ks::KEY_KP_Delete) {
+        if sym == ks::KEY_Delete || sym == ks::KEY_KP_Delete {
             if self.cursor >= self.text.len() {
                 return Some(false);
             }
@@ -325,14 +321,14 @@ impl Menu {
             let nr = self.nextrune(-1);
             self.insert(None, nr as i32 - self.cursor as i32);
             Some(true)
-        } else if sym_eq(sym, ks::KEY_BackSpace) {
+        } else if sym == ks::KEY_BackSpace {
             if self.cursor == 0 {
                 return Some(false);
             }
             let nr = self.nextrune(-1);
             self.insert(None, nr as i32 - self.cursor as i32);
             Some(true)
-        } else if sym_eq(sym, ks::KEY_End) || sym_eq(sym, ks::KEY_KP_End) {
+        } else if sym == ks::KEY_End || sym == ks::KEY_KP_End {
             if self.cursor < self.text.len() {
                 self.cursor = self.text.len();
             } else if self.next.is_some() {
@@ -344,9 +340,9 @@ impl Menu {
                 Some(self.matches.len() - 1)
             };
             Some(true)
-        } else if sym_eq(sym, ks::KEY_Escape) {
+        } else if sym == ks::KEY_Escape {
             self.finish(1);
-        } else if sym_eq(sym, ks::KEY_Home) || sym_eq(sym, ks::KEY_KP_Home) {
+        } else if sym == ks::KEY_Home || sym == ks::KEY_KP_Home {
             if self.sel.is_none() && self.matches.is_empty() {
                 self.cursor = 0;
             } else if self.sel == Some(0) {
@@ -393,29 +389,29 @@ impl Menu {
 
     /// List navigation, actions and raw insertion. Returns whether to redraw.
     fn nav_key(&mut self, sym: u32, state: u32, buf: &str) -> bool {
-        if sym_eq(sym, ks::KEY_Left) || sym_eq(sym, ks::KEY_KP_Left) {
+        if sym == ks::KEY_Left || sym == ks::KEY_KP_Left {
             return self.move_left(state);
-        } else if sym_eq(sym, ks::KEY_Up) || sym_eq(sym, ks::KEY_KP_Up) {
+        } else if sym == ks::KEY_Up || sym == ks::KEY_KP_Up {
             self.nav_up();
-        } else if sym_eq(sym, ks::KEY_Next) || sym_eq(sym, ks::KEY_KP_Next) {
+        } else if sym == ks::KEY_Next || sym == ks::KEY_KP_Next {
             let Some(next) = self.next else { return false };
             self.sel = Some(next);
             self.curr = Some(next);
             self.calcoffsets();
-        } else if sym_eq(sym, ks::KEY_Prior) || sym_eq(sym, ks::KEY_KP_Prior) {
+        } else if sym == ks::KEY_Prior || sym == ks::KEY_KP_Prior {
             if self.curr.is_none() {
                 return false;
             }
             self.sel = Some(self.prev);
             self.curr = Some(self.prev);
             self.calcoffsets();
-        } else if sym_eq(sym, ks::KEY_Return) || sym_eq(sym, ks::KEY_KP_Enter) {
+        } else if sym == ks::KEY_Return || sym == ks::KEY_KP_Enter {
             self.handle_return(state);
-        } else if sym_eq(sym, ks::KEY_Right) || sym_eq(sym, ks::KEY_KP_Right) {
+        } else if sym == ks::KEY_Right || sym == ks::KEY_KP_Right {
             return self.move_right(state);
-        } else if sym_eq(sym, ks::KEY_Down) || sym_eq(sym, ks::KEY_KP_Down) {
+        } else if sym == ks::KEY_Down || sym == ks::KEY_KP_Down {
             self.nav_down();
-        } else if sym_eq(sym, ks::KEY_Tab) {
+        } else if sym == ks::KEY_Tab {
             if !self.cfg.alttab {
                 let Some(s) = self.sel else { return false };
                 let sel_text = self.items[self.matches[s]].text.clone();

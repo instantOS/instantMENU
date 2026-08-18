@@ -201,7 +201,7 @@ impl Menu {
             i += if self.cfg.lines > 0 {
                 self.bh
             } else {
-                let item_text = self.item_text(p);
+                let item_text = self.items[self.matches[p]].text.clone();
                 self.textw_clamp(&item_text, n)
             };
             if i > n {
@@ -222,7 +222,7 @@ impl Menu {
             i += if self.cfg.lines > 0 {
                 self.bh
             } else {
-                let item_text = self.item_text(prev - 1);
+                let item_text = self.items[self.matches[prev - 1]].text.clone();
                 self.textw_clamp(&item_text, n)
             };
             if i > n {

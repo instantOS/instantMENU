@@ -187,10 +187,6 @@ pub struct Args {
     pub initial_text: Option<String>,
 }
 
-pub fn parse() -> Args {
-    Args::parse()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

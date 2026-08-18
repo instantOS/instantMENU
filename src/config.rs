@@ -1,8 +1,6 @@
 //! Port of `config.def.h` — default settings; can be overridden by command
 //! line and X resources.
 
-use crate::enums::Scheme;
-
 pub const VERSION: &str = "4.9";
 
 /// `xresname`
@@ -160,17 +158,5 @@ impl Default for Config {
             embed: None,
             fast: false,
         }
-    }
-}
-
-impl Config {
-    /// Apply a scheme color override (command line `-nb`/`-nf`/... or X
-    /// resources), port of the `colortemp` handling.
-    pub fn set_color(&mut self, scheme: Scheme, col: usize, value: &str) {
-        self.colors[scheme as usize][col] = value.to_string();
-    }
-
-    pub fn scheme_color(&self, scheme: Scheme, col: usize) -> &str {
-        &self.colors[scheme as usize][col]
     }
 }

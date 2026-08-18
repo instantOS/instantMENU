@@ -63,12 +63,18 @@ pub trait Backend {
     /// Size of the root window / total output area (`drw->w/h`).
     fn root_size(&self) -> (i32, i32);
     /// Root pointer position (`getrootptr`).
-    fn pointer_position(&self) -> Option<(i32, i32)>;
+    fn pointer_position(&self) -> Option<(i32, i32)> {
+        None
+    }
     /// Monitor index of the focused window, if known (X11 only).
-    fn focused_monitor(&self) -> Option<usize>;
+    fn focused_monitor(&self) -> Option<usize> {
+        None
+    }
     /// Size of the embedding parent window (`-W`), or the root window when
     /// not embedding. None when there is no parent to query.
-    fn embed_parent_size(&self) -> Option<(i32, i32)>;
+    fn embed_parent_size(&self) -> Option<(i32, i32)> {
+        None
+    }
 
     /// Create the menu window (XCreateWindow in setup()).
     /// `grab` = whether the keyboard should be grabbed (Wayland layer-shell
@@ -87,11 +93,11 @@ pub trait Backend {
         border_color: Color,
     ) -> Result<(), String>;
     /// XMapRaised + embedding reparenting when `-W` was given.
-    fn map_window(&mut self);
+    fn map_window(&mut self) {}
     /// Embedding: reparent + select input on parent + grab focus.
-    fn embed_setup(&mut self, x: i32, y: i32);
+    fn embed_setup(&mut self, _x: i32, _y: i32) {}
     /// XGrabKeyboard retry loop (dies on failure like the C version).
-    fn grab_keyboard(&mut self);
+    fn grab_keyboard(&mut self) {}
     /// Focus grab loop; `title` is set as WM_NAME in managed mode.
     fn grab_focus(&mut self, title: &str);
     /// Set the window title (WM_NAME / _NET_WM_NAME).
@@ -100,7 +106,7 @@ pub trait Backend {
     /// Blit the canvas to the window (`drw_map`).
     fn present(&mut self, canvas: &Canvas);
     /// Raise the window (XRaiseWindow on VisibilityNotify).
-    fn raise(&mut self);
+    fn raise(&mut self) {}
     /// Block for the next event, None when the connection died.
     fn next_event(&mut self) -> Option<BackendEvent>;
     /// Ask for the selection/clipboard contents (XConvertSelection).
@@ -109,8 +115,6 @@ pub trait Backend {
     fn resource_pairs(&self) -> Vec<(String, String)> {
         Vec::new()
     }
-
-    fn is_wayland(&self) -> bool;
 }
 
 /// Modifier masks, X11 values (both backends map into these).

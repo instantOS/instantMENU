@@ -8,11 +8,12 @@ use instantmenu::config::{Config, XRES_COLOR_TYPES};
 use instantmenu::enums::{Scheme, COL_BG, COL_FG};
 use instantmenu::menu::Menu;
 use instantmenu::render::Renderer;
+use clap::Parser;
 
 fn main() {
     /* die silently on a closed pipe like the C version (| head etc.) */
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
-    let args = cli::parse();
+    let args = cli::Args::parse();
     if args.version {
         println!("instantmenu-{}", instantmenu::config::VERSION);
         std::process::exit(0);

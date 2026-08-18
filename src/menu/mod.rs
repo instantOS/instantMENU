@@ -113,10 +113,6 @@ impl Menu {
 
     /* ── helpers over the matches list ─────────────────────────────────── */
 
-    fn item_text(&self, pos: usize) -> String {
-        self.items[self.matches[pos]].text.clone()
-    }
-
     fn sel_text(&self) -> Option<String> {
         self.sel
             .map(|pos| self.items[self.matches[pos]].text.clone())
@@ -153,10 +149,6 @@ impl Menu {
             Some(dynamic) => Some(dynamic.as_str()),
             None => self.cfg.prompt.as_deref(),
         }
-    }
-
-    fn present(&mut self) {
-        self.backend.present(&self.canvas);
     }
 
     /// max_textw — widest item text.

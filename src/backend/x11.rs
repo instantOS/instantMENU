@@ -22,8 +22,8 @@ const XKB_OFFSET: u32 = 8;
 
 pub struct X11Backend {
     conn: XCBConnection,
-    screen_num: usize,
     root: Window,
+    root_depth: u8,
     pub win: Window,
     parent: Window,
     pub embed: Option<Window>,
@@ -78,8 +78,8 @@ impl X11Backend {
 
         Ok(X11Backend {
             conn,
-            screen_num,
             root,
+            root_depth: screen.root_depth,
             win: 0,
             parent: embed.unwrap_or(root),
             embed,
@@ -94,10 +94,6 @@ impl X11Backend {
             root_h,
             atoms,
         })
-    }
-
-    fn screen(&self) -> x11rb::protocol::xproto::Screen {
-        self.conn.setup().roots[self.screen_num].clone()
     }
 
     /// keysym + utf8 text for a raw X11 keycode, keeping the xkb state fresh.
@@ -213,27 +209,27 @@ impl Backend for X11Backend {
     }
 
     fn focused_monitor(&self) -> Option<usize> {
-        /* find the top-level window containing the current input focus */
+        /* Locate the focused window in root coordinates. GetGeometry and
+         * TranslateCoordinates are independent once the focus id is known,
+         * so queue both before waiting. This replaces the old parent-by-parent
+         * QueryTree walk (one round-trip per nesting level) plus geometry. */
         let reply = self.conn.get_input_focus().ok()?.reply().ok()?;
-        let mut w = reply.focus;
+        let w = reply.focus;
         if w == self.root || w == 0 || w == 1 {
             return None; // PointerRoot(1)/None(0)
         }
-        let mut pw = w;
-        while w != self.root && w != pw {
-            let tree = self.conn.query_tree(w).ok()?.reply().ok()?;
-            pw = w;
-            w = tree.parent;
-        }
-        let attrs = self.conn.get_geometry(pw).ok()?.reply().ok()?;
+        let geometry = self.conn.get_geometry(w).ok()?;
+        let translated = self.conn.translate_coordinates(w, self.root, 0, 0).ok()?;
+        let geometry = geometry.reply().ok()?;
+        let translated = translated.reply().ok()?;
         let mut best = 0usize;
         let mut area = 0;
         for (idx, mon) in self.monitors.iter().enumerate() {
             let a = intersect(
-                attrs.x as i32,
-                attrs.y as i32,
-                attrs.width as i32,
-                attrs.height as i32,
+                translated.dst_x as i32,
+                translated.dst_y as i32,
+                geometry.width as i32,
+                geometry.height as i32,
                 mon,
             );
             if a > area {
@@ -266,7 +262,6 @@ impl Backend for X11Backend {
         bg: Color,
         border_color: Color,
     ) -> Result<(), String> {
-        let screen = self.screen();
         let win = self.conn.generate_id().map_err(|e| e.to_string())?;
         let attrs = CreateWindowAux::new()
             .override_redirect(u32::from(!managed))
@@ -282,7 +277,7 @@ impl Backend for X11Backend {
             );
         self.conn
             .create_window(
-                screen.root_depth,
+                self.root_depth,
                 win,
                 self.parent,
                 x as i16,
@@ -315,14 +310,12 @@ impl Backend for X11Backend {
         self.win = win;
         self.created = true;
         self.managed = managed;
-        self.flush();
         Ok(())
     }
 
     fn map_window(&mut self) {
         if self.created {
             let _ = self.conn.map_window(self.win);
-            self.flush();
         }
     }
 
@@ -414,8 +407,6 @@ impl Backend for X11Backend {
         if !self.created {
             return;
         }
-        let screen = self.screen();
-
         let w = canvas.width.max(0) as usize;
         let h = canvas.height.max(0) as usize;
         if w == 0 || h == 0 {
@@ -439,7 +430,7 @@ impl Backend for X11Backend {
                 0,
                 0,
                 0,
-                screen.root_depth,
+                self.root_depth,
                 &canvas.data,
             );
         }
@@ -551,9 +542,6 @@ impl Backend for X11Backend {
         self.flush();
     }
 
-    fn is_wayland(&self) -> bool {
-        false
-    }
 }
 
 /// Set up XKB so keysyms/text match what the server keymap produces.
@@ -581,18 +569,23 @@ fn xkb_setup(conn: &XCBConnection) -> Result<(xkb::Context, xkb::Keymap, xkb::St
 
 /// Intern the atoms the backend uses.
 fn intern_atoms(conn: &XCBConnection) -> Result<Atoms, String> {
-    let atom = |name: &str| -> Result<u32, String> {
-        conn.intern_atom(false, name.as_bytes())
-            .map_err(|e| e.to_string())?
-            .reply()
-            .map(|r| r.atom)
-            .map_err(|e| e.to_string())
-    };
+    /* Queue every independent request before waiting. The first reply flushes
+     * the batch, so all three atoms cost one server round-trip instead of
+     * three serial round-trips. */
+    let net_wm_name = conn
+        .intern_atom(false, b"_NET_WM_NAME")
+        .map_err(|e| e.to_string())?;
+    let utf8_string = conn
+        .intern_atom(false, b"UTF8_STRING")
+        .map_err(|e| e.to_string())?;
+    let clipboard = conn
+        .intern_atom(false, b"CLIPBOARD")
+        .map_err(|e| e.to_string())?;
     Ok(Atoms {
         wm_name: AtomEnum::WM_NAME.into(),
-        net_wm_name: atom("_NET_WM_NAME")?,
-        utf8_string: atom("UTF8_STRING")?,
-        clipboard: atom("CLIPBOARD")?,
+        net_wm_name: net_wm_name.reply().map_err(|e| e.to_string())?.atom,
+        utf8_string: utf8_string.reply().map_err(|e| e.to_string())?.atom,
+        clipboard: clipboard.reply().map_err(|e| e.to_string())?.atom,
         wm_class: AtomEnum::WM_CLASS.into(),
         string: AtomEnum::STRING.into(),
     })
@@ -601,12 +594,13 @@ fn intern_atoms(conn: &XCBConnection) -> Result<Atoms, String> {
 /// Monitor list via Xinerama (like the C build with -DXINERAMA).
 fn query_monitors(conn: &XCBConnection) -> Vec<MonitorInfo> {
     let mut monitors = Vec::new();
-    if let Some(is_active) = xinerama::is_active(conn).ok().and_then(|c| c.reply().ok()) {
+    /* These requests are independent. Queue both so the first reply flushes a
+     * single batch rather than making QueryScreens wait for IsActive. */
+    let is_active = xinerama::is_active(conn).ok();
+    let screens = xinerama::query_screens(conn).ok();
+    if let Some(is_active) = is_active.and_then(|c| c.reply().ok()) {
         if is_active.state != 0 {
-            if let Some(screens) = xinerama::query_screens(conn)
-                .ok()
-                .and_then(|c| c.reply().ok())
-            {
+            if let Some(screens) = screens.and_then(|c| c.reply().ok()) {
                 for (i, s) in screens.screen_info.iter().enumerate() {
                     monitors.push(MonitorInfo {
                         x: s.x_org as i32,
@@ -629,5 +623,5 @@ fn intersect(x: i32, y: i32, w: i32, h: i32, mon: &MonitorInfo) -> i32 {
 
 /// X11 pixel value for a 24-bit depth: RGB in the top three bytes.
 fn x11_pixel(c: Color) -> u32 {
-    ((c.r() as u32) << 16) | ((c.g() as u32) << 8) | c.b() as u32
+    ((c.0[0] as u32) << 16) | ((c.0[1] as u32) << 8) | c.0[2] as u32
 }

@@ -268,8 +268,8 @@ impl Menu {
     fn create_window(&mut self, x: i32, y: i32) {
         let managed = self.cfg.managed;
         let class = if managed { "floatmenu" } else { "dmenu" };
-        let bg = self.renderer.scheme(Scheme::Norm as usize)[COL_BG];
-        let border_color = self.renderer.scheme(Scheme::Sel as usize)[COL_BG];
+        let bg = self.renderer.schemes[Scheme::Norm as usize][COL_BG];
+        let border_color = self.renderer.schemes[Scheme::Sel as usize][COL_BG];
         if self
             .backend
             .create_window(

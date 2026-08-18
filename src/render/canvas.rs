@@ -55,15 +55,6 @@ impl Canvas {
         }
     }
 
-    #[inline]
-    pub fn fill_pixel(&mut self, x: i32, y: i32, color: [u8; 4]) {
-        if x < 0 || y < 0 || x >= self.width || y >= self.height {
-            return;
-        }
-        let off = ((y as usize) * (self.width as usize) + (x as usize)) * 4;
-        self.data[off..off + 4].copy_from_slice(&[color[2], color[1], color[0], color[3]]);
-    }
-
     /// Blit an alpha mask (8bpp) at (x, y) with the given color — used by the
     /// cosmic-text draw callbacks.
     #[inline]

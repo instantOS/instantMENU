@@ -53,7 +53,7 @@ impl Menu {
                     self.buttonpress(button, state, x, y);
                 }
                 BackendEvent::Expose => {
-                    self.present();
+                    self.backend.present(&self.canvas);
                 }
                 BackendEvent::FocusInOther => {
                     /* regrab focus from parent window */

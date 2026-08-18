@@ -17,8 +17,8 @@ impl Menu {
         if !self.cfg.animated || self.cfg.framecount == 0 {
             return;
         }
-        let sc = self.renderer.scheme(Scheme::Sel as usize);
-        self.renderer.setscheme(sc);
+        let sc = self.renderer.schemes[Scheme::Sel as usize];
+        self.renderer.scheme = sc;
         let framecount = self.cfg.framecount;
         for time in 0..framecount {
             let t = time as f64 / framecount as f64;
@@ -41,7 +41,7 @@ impl Menu {
             let top_y = (self.sely + 4) as f64 - ease_out_quint(t) * (self.sely + 4) as f64;
             self.renderer
                 .rect(&mut self.canvas, 0, top_y as i32, self.mw, top_h as i32, true, true, false);
-            self.present();
+            self.backend.present(&self.canvas);
             std::thread::sleep(Duration::from_micros(19000));
         }
     }
@@ -51,8 +51,8 @@ impl Menu {
         if !self.cfg.animated || self.cfg.framecount == 0 {
             return;
         }
-        let sc = self.renderer.scheme(Scheme::Sel as usize);
-        self.renderer.setscheme(sc);
+        let sc = self.renderer.schemes[Scheme::Sel as usize];
+        self.renderer.scheme = sc;
         let framecount = self.cfg.framecount;
         for time in 0..framecount {
             let f = ease_out_quint(time as f64 / framecount as f64);
@@ -62,7 +62,7 @@ impl Menu {
             let rh = h1 as f64 + (h2 - h1) as f64 * f;
             self.renderer
                 .rect(&mut self.canvas, rx as i32, ry as i32, rw as i32, rh as i32, true, true, false);
-            self.present();
+            self.backend.present(&self.canvas);
             std::thread::sleep(Duration::from_micros(19000));
         }
     }

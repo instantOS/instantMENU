@@ -78,15 +78,6 @@ impl Renderer {
         renderer
     }
 
-    /// drw_setscheme
-    pub fn setscheme(&mut self, scheme: SchemeColors) {
-        self.scheme = scheme;
-    }
-
-    pub fn scheme(&self, index: usize) -> SchemeColors {
-        self.schemes[index]
-    }
-
     /// Start a fully repainted frame. Text cells using the same plain
     /// background can subsequently skip their redundant rectangle fill.
     pub fn clear(&mut self, canvas: &mut Canvas, color: Color) {
@@ -95,7 +86,7 @@ impl Renderer {
             0,
             canvas.width,
             canvas.height,
-            [color.r(), color.g(), color.b(), color.a()],
+            color.0,
         );
         self.frame_background = Some(color);
     }
@@ -131,8 +122,7 @@ impl Renderer {
     }
 
     fn fill_rect(&self, canvas: &mut Canvas, x: i32, y: i32, w: i32, h: i32, color: Color) {
-        let px = [color.r(), color.g(), color.b(), color.a()];
-        canvas.fill_rect(x, y, w, h, px);
+        canvas.fill_rect(x, y, w, h, color.0);
     }
 
     /// `drw_fontset_getwidth` — width of `text` (without lrpad).
@@ -268,7 +258,7 @@ impl Renderer {
         } else {
             self.scheme[COL_FG]
         };
-        let cosmic_color = CosmicColor::rgba(color.r(), color.g(), color.b(), color.a());
+        let cosmic_color = CosmicColor::rgba(color.0[0], color.0[1], color.0[2], color.0[3]);
 
         let avail = w - lpad;
         let mut display_text = text;

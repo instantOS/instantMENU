@@ -112,18 +112,18 @@ impl Menu {
                 };
                 match scheme {
                     Some(s) => {
-                        let sc = self.renderer.scheme(s as usize);
-                        self.renderer.setscheme(sc);
+                        let sc = self.renderer.schemes[s as usize];
+                        self.renderer.scheme = sc;
                     }
                     None => {
                         category = ItemCategory::Comment;
-                        let sc = self.renderer.scheme(Scheme::Norm as usize);
-                        self.renderer.setscheme(sc);
+                        let sc = self.renderer.schemes[Scheme::Norm as usize];
+                        self.renderer.scheme = sc;
                     }
                 }
             } else {
-                let sc = self.renderer.scheme(Scheme::Norm as usize);
-                self.renderer.setscheme(sc);
+                let sc = self.renderer.schemes[Scheme::Norm as usize];
+                self.renderer.scheme = sc;
                 category = ItemCategory::Comment;
             }
         } else if bytes.first() == Some(&b':') {
@@ -138,28 +138,28 @@ impl Menu {
                 };
                 match scheme {
                     Some(s) => {
-                        let sc = self.renderer.scheme(s as usize);
-                        self.renderer.setscheme(sc);
+                        let sc = self.renderer.schemes[s as usize];
+                        self.renderer.scheme = sc;
                     }
                     None => {
-                        let sc = self.renderer.scheme(Scheme::Sel as usize);
-                        self.renderer.setscheme(sc);
+                        let sc = self.renderer.schemes[Scheme::Sel as usize];
+                        self.renderer.scheme = sc;
                         category = ItemCategory::Normal;
                     }
                 }
             } else {
-                let sc = self.renderer.scheme(Scheme::Norm as usize);
-                self.renderer.setscheme(sc);
+                let sc = self.renderer.schemes[Scheme::Norm as usize];
+                self.renderer.scheme = sc;
             }
         } else {
             let sc = if is_sel {
-                self.renderer.scheme(Scheme::Sel as usize)
+                self.renderer.schemes[Scheme::Sel as usize]
             } else if self.items[self.matches[pos]].out {
-                self.renderer.scheme(Scheme::Out as usize)
+                self.renderer.schemes[Scheme::Out as usize]
             } else {
-                self.renderer.scheme(Scheme::Norm as usize)
+                self.renderer.schemes[Scheme::Norm as usize]
             };
-            self.renderer.setscheme(sc);
+            self.renderer.scheme = sc;
         }
         category
     }
@@ -194,11 +194,11 @@ impl Menu {
             is_sel,
         );
         let sc = if is_sel {
-            self.renderer.scheme(Scheme::Hover as usize)
+            self.renderer.schemes[Scheme::Hover as usize]
         } else {
-            self.renderer.scheme(Scheme::Norm as usize)
+            self.renderer.schemes[Scheme::Norm as usize]
         };
-        self.renderer.setscheme(sc);
+        self.renderer.scheme = sc;
         temppadding
     }
 
@@ -210,8 +210,8 @@ impl Menu {
 
         self.update_commented_prompt();
 
-        let scheme_norm = self.renderer.scheme(Scheme::Norm as usize);
-        self.renderer.setscheme(scheme_norm);
+        let scheme_norm = self.renderer.schemes[Scheme::Norm as usize];
+        self.renderer.scheme = scheme_norm;
         self.renderer
             .clear(&mut self.canvas, scheme_norm[crate::enums::COL_BG]);
 
@@ -227,7 +227,7 @@ impl Menu {
         }
 
         self.draw_footer(arrowwidth);
-        self.present();
+        self.backend.present(&self.canvas);
     }
 
     /// commented mode: the prompt follows the selected item.
@@ -246,8 +246,8 @@ impl Menu {
             if self.cfg.leftcmd.is_some() {
                 *x += arrowwidth;
             }
-            let sc = self.renderer.scheme(Scheme::Sel as usize);
-            self.renderer.setscheme(sc);
+            let sc = self.renderer.schemes[Scheme::Sel as usize];
+            self.renderer.scheme = sc;
             if self.cfg.lines < 8 {
                 *x = self.renderer.text(
                     &mut self.canvas,
@@ -284,8 +284,8 @@ impl Menu {
         } else {
             self.inputw
         };
-        let sc = self.renderer.scheme(Scheme::Norm as usize);
-        self.renderer.setscheme(sc);
+        let sc = self.renderer.schemes[Scheme::Norm as usize];
+        self.renderer.scheme = sc;
 
         if self.cfg.passwd {
             let dots = ".".repeat(self.text.len());
@@ -317,8 +317,8 @@ impl Menu {
                 false,
             );
         } else if let Some(searchtext) = self.cfg.searchtext.clone() {
-            let sc = self.renderer.scheme(Scheme::Fade as usize);
-            self.renderer.setscheme(sc);
+            let sc = self.renderer.schemes[Scheme::Fade as usize];
+            self.renderer.scheme = sc;
             self.renderer.text(
                 &mut self.canvas,
                 x + if self.cfg.leftcmd.is_some() {
@@ -334,8 +334,8 @@ impl Menu {
                 false,
                 false,
             );
-            let sc = self.renderer.scheme(Scheme::Norm as usize);
-            self.renderer.setscheme(sc);
+            let sc = self.renderer.schemes[Scheme::Norm as usize];
+            self.renderer.scheme = sc;
         }
 
         // cursor position: width of text before cursor minus width after
@@ -346,8 +346,8 @@ impl Menu {
         };
         curpos += self.renderer.lrpad / 2 - 1;
         if curpos < w {
-            let sc = self.renderer.scheme(Scheme::Norm as usize);
-            self.renderer.setscheme(sc);
+            let sc = self.renderer.schemes[Scheme::Norm as usize];
+            self.renderer.scheme = sc;
             // disable cursor on password prompt
             if !self.cfg.passwd && self.cfg.toast == 0 {
                 self.renderer.rect(
@@ -394,8 +394,8 @@ impl Menu {
         x += self.inputw;
         let mut w_arrow = self.textw("<");
         if self.curr.map(|c| c > 0).unwrap_or(false) {
-            let sc = self.renderer.scheme(Scheme::Norm as usize);
-            self.renderer.setscheme(sc);
+            let sc = self.renderer.schemes[Scheme::Norm as usize];
+            self.renderer.scheme = sc;
             self.renderer.text(
                 &mut self.canvas,
                 x,
@@ -428,8 +428,8 @@ impl Menu {
 
         if self.next.is_some() {
             w_arrow = self.textw(">");
-            let sc = self.renderer.scheme(Scheme::Norm as usize);
-            self.renderer.setscheme(sc);
+            let sc = self.renderer.schemes[Scheme::Norm as usize];
+            self.renderer.scheme = sc;
             if self.tempnumer {
                 let numbers = self.numbers.clone();
                 let numbers_w = self.textw(&numbers);
@@ -450,8 +450,8 @@ impl Menu {
 
     /// Draw the item counter and the left/right command cells.
     fn draw_footer(&mut self, arrowwidth: i32) {
-        let sc = self.renderer.scheme(Scheme::Norm as usize);
-        self.renderer.setscheme(sc);
+        let sc = self.renderer.schemes[Scheme::Norm as usize];
+        self.renderer.scheme = sc;
         if self.tempnumer {
             let numbers = self.numbers.clone();
             let numbers_w = self.textw(&numbers);
@@ -474,8 +474,8 @@ impl Menu {
         }
         if self.cfg.lines > 0 {
             if self.cfg.leftcmd.is_some() {
-                let sc = self.renderer.scheme(Scheme::Highlight as usize);
-                self.renderer.setscheme(sc);
+                let sc = self.renderer.schemes[Scheme::Highlight as usize];
+                self.renderer.scheme = sc;
                 self.renderer.text(
                     &mut self.canvas,
                     0,
@@ -489,8 +489,8 @@ impl Menu {
                 );
             }
             if self.cfg.rightcmd.is_some() {
-                let sc = self.renderer.scheme(Scheme::Highlight as usize);
-                self.renderer.setscheme(sc);
+                let sc = self.renderer.schemes[Scheme::Highlight as usize];
+                self.renderer.scheme = sc;
                 self.renderer.text(
                     &mut self.canvas,
                     self.mw - arrowwidth,
