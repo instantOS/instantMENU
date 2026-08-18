@@ -37,9 +37,6 @@ fn main() {
     if args.follow_cursor {
         cfg.followcursor = true;
     }
-    if args.space_confirm {
-        cfg.spaceconfirm = true;
-    }
     if args.input_only {
         cfg.inputonly = true;
     }
@@ -79,12 +76,12 @@ fn main() {
     }
     cfg.fast = args.fast;
 
-    /* value options (atoi semantics) */
-    if let Some(v) = &args.toast {
-        cfg.toast = cli::atoi(v);
+    /* value options */
+    if let Some(v) = args.toast {
+        cfg.toast = v;
     }
-    if let Some(c) = &args.columns {
-        cfg.columns = cli::atoi(c);
+    if let Some(c) = args.columns {
+        cfg.columns = c;
         if cfg.columns == 0 {
             cfg.columns = 1;
         }
@@ -92,24 +89,24 @@ fn main() {
             cfg.lines = 1; /* C: -g sets lines=1 when unset (order-dependent) */
         }
     }
-    if let Some(l) = &args.lines {
-        cfg.lines = cli::atoi(l);
+    if let Some(l) = args.lines {
+        cfg.lines = l;
     }
-    if let Some(x) = &args.x_offset {
-        cfg.dmx = cli::atoi(x);
+    if let Some(x) = args.x_offset {
+        cfg.dmx = x;
     }
-    if let Some(x) = &args.right_x_offset {
+    if let Some(x) = args.right_x_offset {
         cfg.rightxoffset = true;
-        cfg.dmx = cli::atoi(x);
+        cfg.dmx = x;
     }
-    if let Some(y) = &args.y_offset {
-        cfg.dmy = cli::atoi(y);
+    if let Some(y) = args.y_offset {
+        cfg.dmy = y;
     }
-    if let Some(w) = &args.width {
-        cfg.dmw = cli::atoi(w);
+    if let Some(w) = args.width {
+        cfg.dmw = w;
     }
-    if let Some(m) = &args.monitor {
-        cfg.mon = cli::atoi(m);
+    if let Some(m) = args.monitor {
+        cfg.mon = m;
     }
     if let Some(p) = &args.prompt {
         cfg.prompt = Some(p.clone());
@@ -117,23 +114,21 @@ fn main() {
     if let Some(q) = &args.search_text {
         cfg.searchtext = Some(q.clone());
     }
-    if let Some(a) = &args.animation {
-        cfg.framecount = cli::atoi(a);
+    if let Some(a) = args.animation {
+        cfg.framecount = a;
     }
-    if let Some(bw) = &args.border_width {
-        cfg.border_width = cli::atoi(bw);
+    if let Some(bw) = args.border_width {
+        cfg.border_width = bw;
     }
-    if let Some(ps) = &args.preselect {
-        /* C strips one leading '-' from the value */
-        let v = ps.strip_prefix('-').unwrap_or(ps);
-        cfg.preselected = cli::atoi(v);
+    if let Some(ps) = args.preselect {
+        cfg.preselected = ps;
     }
-    if let Some(h) = &args.line_height {
+    if let Some(h) = args.line_height {
         /* C: only applied when !fullheight, then clamped to >= 8 */
         if !cfg.fullheight {
-            cfg.lineheight = cli::atoi(h).max(8);
+            cfg.lineheight = h.max(8);
         } else {
-            cfg.lineheight = cli::atoi(h);
+            cfg.lineheight = h;
         }
     }
     if let Some(w) = &args.embed {

@@ -23,7 +23,6 @@ pub struct Config {
     pub min_width: i32,
 
     pub instant: bool,
-    pub spaceconfirm: bool,
     pub fuzzy: bool,
     pub prematch: bool,
     pub smartcase: bool,
@@ -110,7 +109,6 @@ impl Default for Config {
             followcursor: false,
             min_width: 500,
             instant: false,
-            spaceconfirm: false,
             fuzzy: true,
             prematch: false,
             smartcase: false,

@@ -9,7 +9,7 @@ if [ -n "$2" ] || [ -z "$1" ]; then
 else
     if [ "$1" = "desktop" ]; then
         shift 1
-        i3-dmenu-desktop --dmenu='instantmenu -p desktop -lc "instantmenu_smartrun terminal" -rc "instantmenu_smartrun" -q "search apps" -l 10 -c -i -w -1 -h -1 -bw 4'
+        i3-dmenu-desktop --dmenu='instantmenu -p desktop --left-cmd "instantmenu_smartrun terminal" --right-cmd "instantmenu_smartrun" --search-text "search apps" -l 10 --centered -i --width -1 --line-height -1 --border-width 4'
         exit
     fi
     LIST="$HOME/.cache/instanttermmenuhist"
@@ -24,8 +24,8 @@ if [ -n "$2" ]; then
         tac "$LIST"
         instantmenu_path | sort -u
     } | perl -nE '$seen{$_}++ or print' |
-        instantmenu -rc "instantmenu_smartrun $RARGS" -lc "instantmenu_smartrun $LARGS" \
-            -p "${1}" -i -f -q "search apps" -l 10 -c -w -1 -h -1 -bw 4 -it "$2")
+        instantmenu --right-cmd "instantmenu_smartrun $RARGS" --left-cmd "instantmenu_smartrun $LARGS" \
+            -p "${1}" -i --fast --search-text "search apps" -l 10 --centered --width -1 --line-height -1 --border-width 4 --initial-text "$2")
 else
 
     # read history and path
@@ -33,8 +33,8 @@ else
         tac "$LIST"
         instantmenu_path | sort -u
     } | perl -nE '$seen{$_}++ or print' |
-        instantmenu -rc "instantmenu_smartrun $RARGS" -lc "instantmenu_smartrun $LARGS" \
-            -p "${1}" -i -f -q "search apps" -l 10 -c -w -1 -h -1 -bw 4)
+        instantmenu --right-cmd "instantmenu_smartrun $RARGS" --left-cmd "instantmenu_smartrun $LARGS" \
+            -p "${1}" -i --fast --search-text "search apps" -l 10 --centered --width -1 --line-height -1 --border-width 4)
 fi
 
 # check if the application doesn't exist (indicated by exit code 1 and short runtime)
