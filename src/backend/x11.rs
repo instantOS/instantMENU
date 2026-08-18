@@ -71,67 +71,9 @@ impl X11Backend {
             .ok_or("no screen")?;
         let root = screen.root;
 
-        /* set up XKB so keysyms/text match what the server keymap produces */
-        let xkb_ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-        let (mut major, mut minor, mut base_event, mut base_error) =
-            (0u16, 0u16, 0u8, 0u8);
-        if !xkbx11::setup_xkb_extension(
-            &conn,
-            xkbx11::MIN_MAJOR_XKB_VERSION,
-            xkbx11::MIN_MINOR_XKB_VERSION,
-            xkbx11::SetupXkbExtensionFlags::NoFlags,
-            &mut major,
-            &mut minor,
-            &mut base_event,
-            &mut base_error,
-        ) {
-            return Err("xkb setup failed".to_string());
-        }
-        let device = xkbx11::get_core_keyboard_device_id(&conn);
-        let xkb_keymap = xkbx11::keymap_new_from_device(
-            &xkb_ctx,
-            &conn,
-            device,
-            xkb::KEYMAP_COMPILE_NO_FLAGS,
-        );
-        let xkb_state = xkbx11::state_new_from_device(&xkb_keymap, &conn, device);
-
-        let atom = |name: &str| -> Result<u32, String> {
-            conn.intern_atom(false, name.as_bytes())
-                .map_err(|e| e.to_string())?
-                .reply()
-                .map(|r| r.atom)
-                .map_err(|e| e.to_string())
-        };
-        let atoms = Atoms {
-            wm_name: AtomEnum::WM_NAME.into(),
-            net_wm_name: atom("_NET_WM_NAME")?,
-            utf8_string: atom("UTF8_STRING")?,
-            clipboard: atom("CLIPBOARD")?,
-            wm_class: AtomEnum::WM_CLASS.into(),
-            string: AtomEnum::STRING.into(),
-        };
-
-        /* monitor list via Xinerama (like the C build with -DXINERAMA) */
-        let mut monitors = Vec::new();
-        if let Some(is_active) = xinerama::is_active(&conn).ok().and_then(|c| c.reply().ok()) {
-            if is_active.state != 0 {
-                if let Some(screens) =
-                    xinerama::query_screens(&conn).ok().and_then(|c| c.reply().ok())
-                {
-                    for (i, s) in screens.screen_info.iter().enumerate() {
-                        monitors.push(MonitorInfo {
-                            x: s.x_org as i32,
-                            y: s.y_org as i32,
-                            width: s.width as i32,
-                            height: s.height as i32,
-                            name: format!("monitor {i}"),
-                        });
-                    }
-                }
-            }
-        }
-
+        let (xkb_ctx, xkb_keymap, xkb_state) = xkb_setup(&conn)?;
+        let atoms = intern_atoms(&conn)?;
+        let monitors = query_monitors(&conn);
         let (root_w, root_h) =
             (screen.width_in_pixels as i32, screen.height_in_pixels as i32);
 
@@ -616,6 +558,72 @@ impl Backend for X11Backend {
     fn is_wayland(&self) -> bool {
         false
     }
+}
+
+/// Set up XKB so keysyms/text match what the server keymap produces.
+fn xkb_setup(conn: &XCBConnection) -> Result<(xkb::Context, xkb::Keymap, xkb::State), String> {
+    let xkb_ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+    let (mut major, mut minor, mut base_event, mut base_error) =
+        (0u16, 0u16, 0u8, 0u8);
+    if !xkbx11::setup_xkb_extension(
+        conn,
+        xkbx11::MIN_MAJOR_XKB_VERSION,
+        xkbx11::MIN_MINOR_XKB_VERSION,
+        xkbx11::SetupXkbExtensionFlags::NoFlags,
+        &mut major,
+        &mut minor,
+        &mut base_event,
+        &mut base_error,
+    ) {
+        return Err("xkb setup failed".to_string());
+    }
+    let device = xkbx11::get_core_keyboard_device_id(conn);
+    let xkb_keymap =
+        xkbx11::keymap_new_from_device(&xkb_ctx, conn, device, xkb::KEYMAP_COMPILE_NO_FLAGS);
+    let xkb_state = xkbx11::state_new_from_device(&xkb_keymap, conn, device);
+    Ok((xkb_ctx, xkb_keymap, xkb_state))
+}
+
+/// Intern the atoms the backend uses.
+fn intern_atoms(conn: &XCBConnection) -> Result<Atoms, String> {
+    let atom = |name: &str| -> Result<u32, String> {
+        conn.intern_atom(false, name.as_bytes())
+            .map_err(|e| e.to_string())?
+            .reply()
+            .map(|r| r.atom)
+            .map_err(|e| e.to_string())
+    };
+    Ok(Atoms {
+        wm_name: AtomEnum::WM_NAME.into(),
+        net_wm_name: atom("_NET_WM_NAME")?,
+        utf8_string: atom("UTF8_STRING")?,
+        clipboard: atom("CLIPBOARD")?,
+        wm_class: AtomEnum::WM_CLASS.into(),
+        string: AtomEnum::STRING.into(),
+    })
+}
+
+/// Monitor list via Xinerama (like the C build with -DXINERAMA).
+fn query_monitors(conn: &XCBConnection) -> Vec<MonitorInfo> {
+    let mut monitors = Vec::new();
+    if let Some(is_active) = xinerama::is_active(conn).ok().and_then(|c| c.reply().ok()) {
+        if is_active.state != 0 {
+            if let Some(screens) =
+                xinerama::query_screens(conn).ok().and_then(|c| c.reply().ok())
+            {
+                for (i, s) in screens.screen_info.iter().enumerate() {
+                    monitors.push(MonitorInfo {
+                        x: s.x_org as i32,
+                        y: s.y_org as i32,
+                        width: s.width as i32,
+                        height: s.height as i32,
+                        name: format!("monitor {i}"),
+                    });
+                }
+            }
+        }
+    }
+    monitors
 }
 
 fn intersect(x: i32, y: i32, w: i32, h: i32, mon: &MonitorInfo) -> i32 {

@@ -19,7 +19,68 @@ fn main() {
     }
 
     let mut cfg = Config::default();
+    apply_flags(&args, &mut cfg);
+    let (tempfont, colortemp) = apply_values(&args, &mut cfg);
 
+    /* open backend (Wayland preferred when WAYLAND_DISPLAY is set) */
+    let backend = backend::open(cfg.embed).unwrap_or_else(|e| {
+        eprintln!("instantmenu: {e}");
+        std::process::exit(1);
+    });
+
+    /* readxresources(): X resources are the base layer under the CLI */
+    apply_resources(backend.as_ref(), &mut cfg);
+
+    /* CLI font/colors override X resources */
+    if let Some(f) = tempfont {
+        cfg.fonts[0] = f;
+    }
+    for (scheme, col, value) in colortemp {
+        cfg.colors[scheme as usize][col] = value;
+    }
+
+    /* drw_fontset_create + lrpad = drw->fonts->h */
+    let renderer = Renderer::new(&cfg.fonts, &cfg.colors);
+
+    if cfg.fullheight || cfg.lineheight == -1 {
+        cfg.lineheight = (renderer.font_height as f32 * 2.5) as i32;
+    }
+
+    /* (C has a prompt/dmw adjustment here, guarded by mw which is still 0 —
+     * dead code, intentionally not ported) */
+
+    let mut menu = Menu::new(cfg, renderer, backend);
+
+    /* -it: seed the input before reading stdin, with rejectnomatch off */
+    if let Some(t) = args.initial_text.clone() {
+        menu.initial_text(&t);
+    }
+
+    /* fast && !isatty(0): grab before reading stdin so the menu is snappy on
+     * slow stdin producers */
+    let grab = menu.cfg.toast == 0 && !menu.cfg.nograb;
+    let fast = menu.cfg.fast && unsafe { libc::isatty(0) } == 0;
+    if fast {
+        if grab {
+            menu.backend.grab_keyboard();
+        }
+        menu.readstdin();
+    } else {
+        menu.readstdin();
+        if grab {
+            menu.backend.grab_keyboard();
+        }
+    }
+
+    /* negative -w: use the wider of |dmw| and the computed item width */
+    apply_negative_width(&mut menu);
+
+    menu.setup();
+    menu.run();
+}
+
+/// Boolean flags: applied before the value options they gate.
+fn apply_flags(args: &cli::Args, cfg: &mut Config) {
     /* boolean flags, port of the argument loop in main() */
     if args.bottom {
         cfg.topbar = false;
@@ -75,8 +136,11 @@ fn main() {
         cfg.managed = true;
     }
     cfg.fast = args.fast;
+}
 
-    /* value options */
+/// Value options, plus the temporary font/color overrides applied after X
+/// resources.
+fn apply_values(args: &cli::Args, cfg: &mut Config) -> (Option<String>, Vec<(Scheme, usize, String)>) {
     if let Some(v) = args.toast {
         cfg.toast = v;
     }
@@ -156,13 +220,11 @@ fn main() {
         colortemp.push((Scheme::Sel, COL_FG, c.clone()));
     }
 
-    /* open backend (Wayland preferred when WAYLAND_DISPLAY is set) */
-    let backend = backend::open(cfg.embed).unwrap_or_else(|e| {
-        eprintln!("instantmenu: {e}");
-        std::process::exit(1);
-    });
+    (tempfont, colortemp)
+}
 
-    /* readxresources(): X resources are the base layer under the CLI */
+/// Apply X resource "key -> value" pairs to the config.
+fn apply_resources(backend: &dyn backend::Backend, cfg: &mut Config) {
     for (key, value) in backend.resource_pairs() {
         if key == "font" {
             cfg.fonts[0] = value;
@@ -176,49 +238,10 @@ fn main() {
             }
         }
     }
+}
 
-    /* CLI font/colors override X resources */
-    if let Some(f) = tempfont {
-        cfg.fonts[0] = f;
-    }
-    for (scheme, col, value) in colortemp {
-        cfg.colors[scheme as usize][col] = value;
-    }
-
-    /* drw_fontset_create + lrpad = drw->fonts->h */
-    let renderer = Renderer::new(&cfg.fonts, &cfg.colors);
-
-    if cfg.fullheight || cfg.lineheight == -1 {
-        cfg.lineheight = (renderer.font_height as f32 * 2.5) as i32;
-    }
-
-    /* (C has a prompt/dmw adjustment here, guarded by mw which is still 0 —
-     * dead code, intentionally not ported) */
-
-    let mut menu = Menu::new(cfg, renderer, backend);
-
-    /* -it: seed the input before reading stdin, with rejectnomatch off */
-    if let Some(t) = args.initial_text.clone() {
-        menu.initial_text(&t);
-    }
-
-    /* fast && !isatty(0): grab before reading stdin so the menu is snappy on
-     * slow stdin producers */
-    let grab = menu.cfg.toast == 0 && !menu.cfg.nograb;
-    let fast = menu.cfg.fast && unsafe { libc::isatty(0) } == 0;
-    if fast {
-        if grab {
-            menu.backend.grab_keyboard();
-        }
-        menu.readstdin();
-    } else {
-        menu.readstdin();
-        if grab {
-            menu.backend.grab_keyboard();
-        }
-    }
-
-    /* negative -w: use the wider of |dmw| and the computed item width */
+/// negative `-w`: use the wider of |dmw| and the computed item width.
+fn apply_negative_width(menu: &mut Menu) {
     if menu.cfg.dmw <= -1 {
         let prompt_text = menu.cfg.prompt.clone();
         let promptw = match &prompt_text {
@@ -233,7 +256,4 @@ fn main() {
             menu.cfg.dmw = maxw;
         }
     }
-
-    menu.setup();
-    menu.run();
 }

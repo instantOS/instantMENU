@@ -349,6 +349,85 @@ impl WaylandBackend {
         }
         None
     }
+
+    /// xdg-shell managed window.
+    fn create_managed(
+        &mut self,
+        surface: &wl_surface::WlSurface,
+        class_hint: &str,
+    ) -> Result<(), String> {
+        let state = &mut self.state;
+        let wm_base = state.wm_base.as_ref().ok_or("no xdg_wm_base")?;
+        let xdg_surface = wm_base.get_xdg_surface(surface, &state.qh, ());
+        let toplevel = xdg_surface.get_toplevel(&state.qh, ());
+        toplevel.set_title(class_hint.to_string());
+        toplevel.set_app_id("instantmenu".to_string());
+        surface.commit();
+        state.surface = Some(surface.clone());
+        state.xdg_surface = Some(xdg_surface);
+        state.xdg_toplevel = Some(toplevel);
+        Ok(())
+    }
+
+    /// wlr-layer-shell surface anchored to the chosen output.
+    fn create_layer(
+        &mut self,
+        surface: &wl_surface::WlSurface,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        grab: bool,
+    ) -> Result<(), String> {
+        let state = &mut self.state;
+        let shell = state.layer_shell.as_ref().ok_or(
+            "compositor has no wlr-layer-shell (use -wm for managed windows)",
+        )?;
+        let out_idx = state.output_for_point(x, y);
+        let output = state.outputs.get(out_idx).map(|o| o.proxy.clone());
+        let layer_surface = shell.get_layer_surface(
+            surface,
+            output.as_ref(),
+            zwlr_layer_shell_v1::Layer::Top,
+            "instantmenu".to_string(),
+            &state.qh,
+            (),
+        );
+
+        /* translate the X11-style absolute geometry into an anchor and
+         * margins on the chosen output: anchor the edge the menu sits on,
+         * offset from the left; set_size is then honored for both axes */
+        let mon = state.outputs.get(out_idx).map(|o| o.info.clone()).unwrap_or(
+            MonitorInfo { x: 0, y: 0, width: w, height: h, name: String::new() },
+        );
+
+        let mut anchor = zwlr_layer_surface_v1::Anchor::Left;
+        let top;
+        let bottom;
+        if y + h / 2 >= mon.y + mon.height / 2 {
+            anchor |= zwlr_layer_surface_v1::Anchor::Bottom;
+            top = 0;
+            bottom = (mon.y + mon.height - (y + h)).max(0);
+        } else {
+            anchor |= zwlr_layer_surface_v1::Anchor::Top;
+            top = (y - mon.y).max(0);
+            bottom = 0;
+        }
+        let left = (x - mon.x).max(0);
+
+        layer_surface.set_anchor(anchor);
+        layer_surface.set_margin(top, 0, bottom, left);
+        layer_surface.set_keyboard_interactivity(if grab {
+            zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive
+        } else {
+            zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand
+        });
+        layer_surface.set_size(w.max(1) as u32, h.max(1) as u32);
+        surface.commit();
+        state.surface = Some(surface.clone());
+        state.layer_surface = Some(layer_surface);
+        Ok(())
+    }
 }
 
 impl Backend for WaylandBackend {
@@ -401,75 +480,20 @@ impl Backend for WaylandBackend {
         _bg: Color,
         _border_color: Color,
     ) -> Result<(), String> {
-        let state = &mut self.state;
-        state.width = w;
-        state.height = h;
+        self.state.width = w;
+        self.state.height = h;
 
-        let surface = state
+        let surface = self
+            .state
             .compositor
             .as_ref()
             .ok_or("compositor has no wl_compositor")?
-            .create_surface(&state.qh, ());
+            .create_surface(&self.state.qh, ());
 
         if managed {
-            let wm_base = state.wm_base.as_ref().ok_or("no xdg_wm_base")?;
-            let xdg_surface = wm_base.get_xdg_surface(&surface, &state.qh, ());
-            let toplevel = xdg_surface.get_toplevel(&state.qh, ());
-            toplevel.set_title(class_hint.to_string());
-            toplevel.set_app_id("instantmenu".to_string());
-            surface.commit();
-            state.surface = Some(surface);
-            state.xdg_surface = Some(xdg_surface);
-            state.xdg_toplevel = Some(toplevel);
-            Ok(())
+            self.create_managed(&surface, class_hint)
         } else {
-            let shell = state.layer_shell.as_ref().ok_or(
-                "compositor has no wlr-layer-shell (use -wm for managed windows)",
-            )?;
-            let out_idx = state.output_for_point(x, y);
-            let output = state.outputs.get(out_idx).map(|o| o.proxy.clone());
-            let layer_surface = shell.get_layer_surface(
-                &surface,
-                output.as_ref(),
-                zwlr_layer_shell_v1::Layer::Top,
-                "instantmenu".to_string(),
-                &state.qh,
-                (),
-            );
-
-            /* translate the X11-style absolute geometry into an anchor and
-             * margins on the chosen output: anchor the edge the menu sits on,
-             * offset from the left; set_size is then honored for both axes */
-            let mon = state.outputs.get(out_idx).map(|o| o.info.clone()).unwrap_or(
-                MonitorInfo { x: 0, y: 0, width: w, height: h, name: String::new() },
-            );
-
-            let mut anchor = zwlr_layer_surface_v1::Anchor::Left;
-            let top;
-            let bottom;
-            if y + h / 2 >= mon.y + mon.height / 2 {
-                anchor |= zwlr_layer_surface_v1::Anchor::Bottom;
-                top = 0;
-                bottom = (mon.y + mon.height - (y + h)).max(0);
-            } else {
-                anchor |= zwlr_layer_surface_v1::Anchor::Top;
-                top = (y - mon.y).max(0);
-                bottom = 0;
-            }
-            let left = (x - mon.x).max(0);
-
-            layer_surface.set_anchor(anchor);
-            layer_surface.set_margin(top, 0, bottom, left);
-            layer_surface.set_keyboard_interactivity(if grab {
-                zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive
-            } else {
-                zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand
-            });
-            layer_surface.set_size(w.max(1) as u32, h.max(1) as u32);
-            surface.commit();
-            state.surface = Some(surface);
-            state.layer_surface = Some(layer_surface);
-            Ok(())
+            self.create_layer(&surface, x, y, w, h, grab)
         }
     }
 
