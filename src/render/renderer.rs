@@ -7,7 +7,7 @@ use cosmic_text::{
     Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics, Shaping, SwashCache, Wrap,
 };
 
-use crate::enums::{COL_BG, COL_DETAIL, COL_FG};
+use crate::enums::{COLOR_BG, COLOR_DETAIL, COLOR_FG};
 
 use super::canvas::Canvas;
 use super::color::{scheme_from_strings, Color, SchemeColors};
@@ -25,7 +25,7 @@ pub struct Renderer {
     /// font height of the primary font (`drw->fonts->h` = ascent + descent).
     pub font_height: i32,
     /// sum of left and right padding (`lrpad`)
-    pub lrpad: i32,
+    pub horizontal_padding: i32,
     /// Color schemes.
     pub schemes: Vec<SchemeColors>,
     /// Currently set scheme (drw_setscheme).
@@ -50,7 +50,7 @@ impl Renderer {
             families.push(resolved);
         }
 
-        let font_height = primary_font_height(&mut font_system, &families, specs[0].px);
+        let font_height = primary_font_height(&mut font_system, &families, specs[0].pixel_size);
 
         let mut renderer = Renderer {
             schemes: scheme_strings.iter().map(scheme_from_strings).collect(),
@@ -59,7 +59,7 @@ impl Renderer {
             fonts: specs,
             families,
             font_height,
-            lrpad: font_height,
+            horizontal_padding: font_height,
             scheme: [Color::rgb(0, 0, 0); 3],
             width_cache: HashMap::new(),
         };
@@ -79,11 +79,11 @@ impl Renderer {
     /// drw_rect — filled rect in the current scheme; `invert` swaps fg/bg,
     /// `rounded` paints the bottom 4px strip with the detail color.
     pub fn rect(&mut self, canvas: &mut Canvas, x: i32, y: i32, w: i32, h: i32, filled: bool, invert: bool, rounded: bool) {
-        let color = if invert { self.scheme[COL_BG] } else { self.scheme[COL_FG] };
+        let color = if invert { self.scheme[COLOR_BG] } else { self.scheme[COLOR_FG] };
         if filled && h < 40 {
             if rounded {
                 self.fill_rect(canvas, x, y, w, h - 4, color);
-                self.fill_rect(canvas, x, y + h - 4, w, 4, self.scheme[COL_DETAIL]);
+                self.fill_rect(canvas, x, y + h - 4, w, 4, self.scheme[COLOR_DETAIL]);
             } else {
                 self.fill_rect(canvas, x, y, w, h, color);
             }
@@ -105,12 +105,12 @@ impl Renderer {
             // nothing to paint, like C drawing outside the window
             return;
         }
-        let px = [color.r(), color.g(), color.b(), color.a()];
+        let pixel = [color.r(), color.g(), color.b(), color.a()];
         for yy in y0..y1 {
             let row_start = (yy as usize * canvas.width as usize + x0 as usize) * 4;
             let row_end = row_start + (x1 - x0) as usize * 4;
             for off in (row_start..row_end).step_by(4) {
-                canvas.data[off..off + 4].copy_from_slice(&px);
+                canvas.data[off..off + 4].copy_from_slice(&pixel);
             }
         }
     }
@@ -120,8 +120,8 @@ impl Renderer {
         if text.is_empty() {
             return 0;
         }
-        let px = self.fonts[0].px;
-        let key = (text.to_string(), px.to_bits());
+        let pixel_size = self.fonts[0].pixel_size;
+        let key = (text.to_string(), pixel_size.to_bits());
         if let Some(w) = self.width_cache.get(&key) {
             return *w;
         }
@@ -143,8 +143,8 @@ impl Renderer {
     }
 
     fn make_buffer(&mut self, text: &str, max_width: Option<f32>) -> Buffer {
-        let px = self.fonts[0].px;
-        let metrics = Metrics::new(px, self.font_height as f32);
+        let pixel_size = self.fonts[0].pixel_size;
+        let metrics = Metrics::new(pixel_size, self.font_height as f32);
         let mut buffer = Buffer::new(&mut self.font_system, metrics);
         buffer.set_wrap(Wrap::None);
         if let Some(w) = max_width {
@@ -201,10 +201,11 @@ impl Renderer {
             .ceil() as i32
     }
 
-    /// drw_text — draw `text` at (x, y, w, h) with `lpad` padding. `invert`
-    /// swaps fg/bg, `rounded` paints a 4px detail strip at the bottom and
-    /// shifts the text up by 2px. Text that does not fit is truncated with an
-    /// ellipsis ("..."). Returns the x position after the drawn text.
+    /// drw_text — draw `text` at (x, y, w, h) with `left_padding` padding.
+    /// `invert` swaps fg/bg, `rounded` paints a 4px detail strip at the
+    /// bottom and shifts the text up by 2px. Text that does not fit is
+    /// truncated with an ellipsis ("..."). Returns the x position after the
+    /// drawn text.
     pub fn text(
         &mut self,
         canvas: &mut Canvas,
@@ -212,7 +213,7 @@ impl Renderer {
         y: i32,
         w: i32,
         h: i32,
-        lpad: i32,
+        left_padding: i32,
         text: &str,
         invert: bool,
         rounded: bool,
@@ -227,29 +228,29 @@ impl Renderer {
         }
 
         // background
-        let fill = if invert { self.scheme[COL_FG] } else { self.scheme[COL_BG] };
+        let fill = if invert { self.scheme[COLOR_FG] } else { self.scheme[COLOR_BG] };
         if rounded {
             self.fill_rect(canvas, x, y, w, h - 4, fill);
-            self.fill_rect(canvas, x, y + h - 4, w, 4, self.scheme[COL_DETAIL]);
+            self.fill_rect(canvas, x, y + h - 4, w, 4, self.scheme[COLOR_DETAIL]);
         } else {
             self.fill_rect(canvas, x, y, w, h, fill);
         }
-        if w < lpad {
+        if w < left_padding {
             return x + w;
         }
 
-        let color = if invert { self.scheme[COL_BG] } else { self.scheme[COL_FG] };
+        let color = if invert { self.scheme[COLOR_BG] } else { self.scheme[COLOR_FG] };
         let cosmic_color =
             CosmicColor::rgba(color.r(), color.g(), color.b(), color.a());
 
-        let avail = w - lpad;
+        let available = w - left_padding;
         let mut display_text = text;
         let ellipsis_width = self.text_width("...");
         let full_width = self.text_width(text);
         let mut drawn_width = full_width;
-        if full_width > avail {
+        if full_width > available {
             // find the longest prefix after which an ellipsis still fits
-            let max = (avail - ellipsis_width).max(0);
+            let max_text_width = (available - ellipsis_width).max(0);
             let chars: Vec<(usize, char)> = text.char_indices().collect();
             // binary search over char count
             let mut lo = 0usize;
@@ -257,7 +258,7 @@ impl Renderer {
             while lo < hi {
                 let mid = (lo + hi + 1) / 2;
                 let end = if mid < chars.len() { chars[mid].0 } else { text.len() };
-                if self.text_width(&text[..end]) <= max {
+                if self.text_width(&text[..end]) <= max_text_width {
                     lo = mid;
                 } else {
                     hi = mid - 1;
@@ -267,11 +268,11 @@ impl Renderer {
             display_text = &text[..end];
             drawn_width = self.text_width(display_text) + ellipsis_width;
             // draw ellipsis right after the truncated text
-            let ell_x = x + lpad + self.text_width(display_text);
-            self.draw_run(canvas, ell_x, y, h, "...", cosmic_color, rounded);
+            let ellipsis_x = x + left_padding + self.text_width(display_text);
+            self.draw_run(canvas, ellipsis_x, y, h, "...", cosmic_color, rounded);
         }
         if !display_text.is_empty() {
-            self.draw_run(canvas, x + lpad, y, h, display_text, cosmic_color, rounded);
+            self.draw_run(canvas, x + left_padding, y, h, display_text, cosmic_color, rounded);
         }
 
         // drw_text returns the advanced x plus remaining w, which is x + w for
@@ -290,8 +291,8 @@ impl Renderer {
         color: CosmicColor,
         rounded: bool,
     ) {
-        let px = self.fonts[0].px;
-        let metrics = Metrics::new(px, self.font_height as f32);
+        let pixel_size = self.fonts[0].pixel_size;
+        let metrics = Metrics::new(pixel_size, self.font_height as f32);
         let mut buffer = Buffer::new(&mut self.font_system, metrics);
         buffer.set_wrap(Wrap::None);
         buffer.set_size(None, Some(self.font_height as f32));

@@ -11,16 +11,16 @@ fn sym_eq(a: u32, b: u32) -> bool {
 }
 
 impl Menu {
-    /// selectnumber — Ctrl-1..9 select the n-th item and hit Return.
-    fn selectnumber(&mut self, number: usize, state: u32) {
-        self.sel = self.curr;
+    /// select_number — Ctrl-1..9 select the n-th item and hit Return.
+    fn select_number(&mut self, number: usize, state: u32) {
+        self.selected = self.current;
         for _ in 0..number {
-            if let Some(s) = self.sel {
+            if let Some(s) = self.selected {
                 if s + 1 < self.matches.len() {
-                    self.sel = Some(s + 1);
-                    if self.sel == self.next {
-                        self.curr = self.next;
-                        self.calcoffsets();
+                    self.selected = Some(s + 1);
+                    if self.selected == self.next {
+                        self.current = self.next;
+                        self.calc_offsets();
                     }
                 }
             }
@@ -29,24 +29,24 @@ impl Menu {
         self.handle_return(state);
     }
 
-    /// The Return key branch, shared with selectnumber and the Ctrl-j/m
+    /// The Return key branch, shared with select_number and the Ctrl-j/m
     /// remaps.
     fn handle_return(&mut self, state: u32) {
         // non-selectable comment
-        if let Some(text) = self.sel_text() {
+        if let Some(text) = self.selected_text() {
             if text.starts_with('>') {
                 return;
             }
         }
-        self.animatesel();
+        self.animate_selection();
 
-        // puts((sel && !(state & ShiftMask & (!rejectnomatch))) ? sel->text : text):
-        // with rejectnomatch off, shift+return prints the raw input instead
+        // puts((sel && !(state & ShiftMask & (!reject_no_match))) ? sel->text : text):
+        // with reject_no_match off, shift+return prints the raw input instead
         // of the selection.
-        let shift_suppresses = (state & SHIFT_MASK != 0) && !self.cfg.rejectnomatch;
-        let print_sel = self.sel_text().is_some() && !shift_suppresses;
-        let out = if print_sel {
-            self.sel_text().unwrap_or_default()
+        let shift_suppresses = (state & SHIFT_MASK != 0) && !self.cfg.reject_no_match;
+        let print_selection = self.selected_text().is_some() && !shift_suppresses;
+        let out = if print_selection {
+            self.selected_text().unwrap_or_default()
         } else {
             self.text.clone()
         };
@@ -54,15 +54,15 @@ impl Menu {
         if state & CONTROL_MASK == 0 {
             self.finish(0);
         }
-        if let Some(pos) = self.sel {
-            self.items[self.matches[pos]].out = true;
+        if let Some(pos) = self.selected {
+            self.items[self.matches[pos]].already_output = true;
         }
     }
 
-    /// keyrelease — alt-tab release handling.
-    pub(super) fn keyrelease(&mut self, sym: u32, state: u32) {
+    /// key_release — alt-tab release handling.
+    pub(super) fn key_release(&mut self, sym: u32, state: u32) {
         let _ = sym;
-        if !self.cfg.alttab {
+        if !self.cfg.alt_tab {
             return;
         }
         if self.tabbed {
@@ -74,12 +74,12 @@ impl Menu {
             if state & SHIFT_MASK != 0 {
                 return;
             }
-            if let Some(text) = self.sel_text() {
+            if let Some(text) = self.selected_text() {
                 if text.starts_with('>') {
                     return;
                 }
             }
-            let out = match self.sel_text() {
+            let out = match self.selected_text() {
                 Some(t) => t,
                 None => self.text.clone(),
             };
@@ -87,14 +87,14 @@ impl Menu {
             if state & CONTROL_MASK == 0 {
                 self.finish(0);
             }
-            if let Some(pos) = self.sel {
-                self.items[self.matches[pos]].out = true;
+            if let Some(pos) = self.selected {
+                self.items[self.matches[pos]].already_output = true;
             }
         }
     }
 
-    /// keypress — remap modifier prefixes, then run the unmodified key switch.
-    pub(super) fn keypress(&mut self, sym: u32, state: u32, buf: &str) {
+    /// key_press — remap modifier prefixes, then run the unmodified key switch.
+    pub(super) fn key_press(&mut self, sym: u32, state: u32, buf: &str) {
         let mut sym = sym;
         let mut state = state;
 
@@ -118,7 +118,7 @@ impl Menu {
         }
 
         if self.main_key(sym, state, buf) {
-            self.drawmenu();
+            self.draw_menu();
         }
     }
 
@@ -154,7 +154,7 @@ impl Menu {
             s if sym_eq(s, ks::KEY_v) => {
                 /* paste clipboard */
                 self.backend.request_selection(state & SHIFT_MASK != 0);
-                self.drawmenu();
+                self.draw_menu();
                 return None;
             }
             s if sym_eq(s, ks::KEY_k) => {
@@ -176,21 +176,21 @@ impl Menu {
                 return None;
             }
             s if sym_eq(s, ks::KEY_Left) || sym_eq(s, ks::KEY_KP_Left) => {
-                self.movewordedge(-1);
-                self.drawmenu();
+                self.move_word_edge(-1);
+                self.draw_menu();
                 return None;
             }
             s if sym_eq(s, ks::KEY_Right) || sym_eq(s, ks::KEY_KP_Right) => {
-                self.movewordedge(1);
-                self.drawmenu();
+                self.move_word_edge(1);
+                self.draw_menu();
                 return None;
             }
             s if sym_eq(s, ks::KEY_Return) || sym_eq(s, ks::KEY_KP_Enter) => {
                 // fall through to the main switch with Return
             }
             s if (ks::KEY_1..=ks::KEY_9).contains(&s) => {
-                self.selectnumber((s - ks::KEY_1) as usize, state);
-                self.drawmenu();
+                self.select_number((s - ks::KEY_1) as usize, state);
+                self.draw_menu();
                 return None;
             }
             s if sym_eq(s, ks::KEY_bracketleft) => {
@@ -203,30 +203,30 @@ impl Menu {
 
     /// delete the word to the left of the cursor (Ctrl-w).
     fn delete_word(&mut self) {
-        while self.cursor > 0 && self.is_delimiter(self.nextrune(-1)) {
-            let nr = self.nextrune(-1);
-            self.insert(None, nr as i32 - self.cursor as i32);
+        while self.cursor > 0 && self.is_delimiter(self.next_rune(-1)) {
+            let next_rune_pos = self.next_rune(-1);
+            self.insert(None, next_rune_pos as i32 - self.cursor as i32);
         }
-        while self.cursor > 0 && !self.is_delimiter(self.nextrune(-1)) {
-            let nr = self.nextrune(-1);
-            self.insert(None, nr as i32 - self.cursor as i32);
+        while self.cursor > 0 && !self.is_delimiter(self.next_rune(-1)) {
+            let next_rune_pos = self.next_rune(-1);
+            self.insert(None, next_rune_pos as i32 - self.cursor as i32);
         }
     }
 
     /// Shift-prefixed keys (alt-tab wrap-around selection).
     fn shift_key(&mut self) {
-        if self.cfg.alttab {
-            if let Some(s) = self.sel {
+        if self.cfg.alt_tab {
+            if let Some(s) = self.selected {
                 if s == 0 {
                     // wrap to the last item
-                    self.sel = Some(self.matches.len() - 1);
-                    self.calcoffsets();
+                    self.selected = Some(self.matches.len() - 1);
+                    self.calc_offsets();
                 } else if s > 0 {
-                    let ns = s - 1;
-                    self.sel = Some(ns);
-                    if Some(ns + 1) == self.curr {
-                        self.curr = Some(self.prev);
-                        self.calcoffsets();
+                    let next_selection = s - 1;
+                    self.selected = Some(next_selection);
+                    if Some(next_selection + 1) == self.current {
+                        self.current = Some(self.prev);
+                        self.calc_offsets();
                     }
                 }
             }
@@ -240,13 +240,13 @@ impl Menu {
         match sym {
             s if sym_eq(s, ks::KEY_F4) => self.finish(1),
             s if sym_eq(s, ks::KEY_b) => {
-                self.movewordedge(-1);
-                self.drawmenu();
+                self.move_word_edge(-1);
+                self.draw_menu();
                 return None;
             }
             s if sym_eq(s, ks::KEY_f) => {
-                self.movewordedge(1);
-                self.drawmenu();
+                self.move_word_edge(1);
+                self.draw_menu();
                 return None;
             }
             s if sym_eq(s, ks::KEY_g) => sym = ks::KEY_Home,
@@ -256,26 +256,26 @@ impl Menu {
             s if sym_eq(s, ks::KEY_k) => sym = ks::KEY_Prior,
             s if sym_eq(s, ks::KEY_l) => sym = ks::KEY_Down,
             s if sym_eq(s, ks::KEY_space) => {
-                if self.cfg.alttab {
+                if self.cfg.alt_tab {
                     self.tabbed = false;
-                    self.cfg.alttab = false;
+                    self.cfg.alt_tab = false;
                 }
             }
             s if sym_eq(s, ks::KEY_Tab) => {
                 self.tabbed = true;
 
-                if let Some(s) = self.sel {
+                if let Some(s) = self.selected {
                     let last = self.matches.len().saturating_sub(1);
                     if s == last {
-                        self.sel = Some(0);
-                        self.curr = Some(0);
-                        self.calcoffsets();
+                        self.selected = Some(0);
+                        self.current = Some(0);
+                        self.calc_offsets();
                     } else if s + 1 < self.matches.len() {
-                        let ns = s + 1;
-                        self.sel = Some(ns);
-                        if Some(ns) == self.next {
-                            self.curr = self.next;
-                            self.calcoffsets();
+                        let next_selection = s + 1;
+                        self.selected = Some(next_selection);
+                        if Some(next_selection) == self.next {
+                            self.current = self.next;
+                            self.calc_offsets();
                         }
                     }
                 }
@@ -299,20 +299,20 @@ impl Menu {
             if self.cursor >= self.text.len() {
                 return Some(false);
             }
-            self.cursor = self.nextrune(1);
+            self.cursor = self.next_rune(1);
             // fallthrough to BackSpace
             if self.cursor == 0 {
                 return Some(false);
             }
-            let nr = self.nextrune(-1);
-            self.insert(None, nr as i32 - self.cursor as i32);
+            let next_rune_pos = self.next_rune(-1);
+            self.insert(None, next_rune_pos as i32 - self.cursor as i32);
             Some(true)
         } else if sym_eq(sym, ks::KEY_BackSpace) {
             if self.cursor == 0 {
                 return Some(false);
             }
-            let nr = self.nextrune(-1);
-            self.insert(None, nr as i32 - self.cursor as i32);
+            let next_rune_pos = self.next_rune(-1);
+            self.insert(None, next_rune_pos as i32 - self.cursor as i32);
             Some(true)
         } else if sym_eq(sym, ks::KEY_End) || sym_eq(sym, ks::KEY_KP_End) {
             if self.cursor < self.text.len() {
@@ -320,19 +320,23 @@ impl Menu {
             } else if self.next.is_some() {
                 self.jump_to_end();
             }
-            self.sel = if self.matches.is_empty() { None } else { Some(self.matches.len() - 1) };
+            self.selected = if self.matches.is_empty() {
+                None
+            } else {
+                Some(self.matches.len() - 1)
+            };
             Some(true)
         } else if sym_eq(sym, ks::KEY_Escape) {
             self.finish(1);
         } else if sym_eq(sym, ks::KEY_Home) || sym_eq(sym, ks::KEY_KP_Home) {
-            if self.sel.is_none() && self.matches.is_empty() {
+            if self.selected.is_none() && self.matches.is_empty() {
                 self.cursor = 0;
-            } else if self.sel == Some(0) {
+            } else if self.selected == Some(0) {
                 self.cursor = 0;
             } else {
-                self.sel = Some(0);
-                self.curr = Some(0);
-                self.calcoffsets();
+                self.selected = Some(0);
+                self.current = Some(0);
+                self.calc_offsets();
             }
             Some(true)
         } else {
@@ -343,18 +347,18 @@ impl Menu {
     /// jump to end of list and position items in reverse (End key).
     fn jump_to_end(&mut self) {
         let last = self.matches.len().saturating_sub(1);
-        self.curr = Some(last);
-        self.calcoffsets();
-        self.curr = Some(self.prev);
-        self.calcoffsets();
+        self.current = Some(last);
+        self.calc_offsets();
+        self.current = Some(self.prev);
+        self.calc_offsets();
         loop {
             if self.next.is_none() {
                 break;
             }
-            match self.curr {
+            match self.current {
                 Some(c) if c + 1 <= last => {
-                    self.curr = Some(c + 1);
-                    self.calcoffsets();
+                    self.current = Some(c + 1);
+                    self.calc_offsets();
                 }
                 _ => break,
             }
@@ -377,16 +381,16 @@ impl Menu {
             self.nav_up();
         } else if sym_eq(sym, ks::KEY_Next) || sym_eq(sym, ks::KEY_KP_Next) {
             let Some(next) = self.next else { return false };
-            self.sel = Some(next);
-            self.curr = Some(next);
-            self.calcoffsets();
+            self.selected = Some(next);
+            self.current = Some(next);
+            self.calc_offsets();
         } else if sym_eq(sym, ks::KEY_Prior) || sym_eq(sym, ks::KEY_KP_Prior) {
-            if self.curr.is_none() {
+            if self.current.is_none() {
                 return false;
             }
-            self.sel = Some(self.prev);
-            self.curr = Some(self.prev);
-            self.calcoffsets();
+            self.selected = Some(self.prev);
+            self.current = Some(self.prev);
+            self.calc_offsets();
         } else if sym_eq(sym, ks::KEY_Return) || sym_eq(sym, ks::KEY_KP_Enter) {
             self.handle_return(state);
         } else if sym_eq(sym, ks::KEY_Right) || sym_eq(sym, ks::KEY_KP_Right) {
@@ -394,11 +398,11 @@ impl Menu {
         } else if sym_eq(sym, ks::KEY_Down) || sym_eq(sym, ks::KEY_KP_Down) {
             self.nav_down();
         } else if sym_eq(sym, ks::KEY_Tab) {
-            if !self.cfg.alttab {
-                let Some(s) = self.sel else { return false };
-                let sel_text = self.items[self.matches[s]].text.clone();
-                let take = sel_text.len().min(TEXT_MAX);
-                self.text = sel_text[..take].to_string();
+            if !self.cfg.alt_tab {
+                let Some(s) = self.selected else { return false };
+                let selected_text = self.items[self.matches[s]].text.clone();
+                let take = selected_text.len().min(TEXT_MAX);
+                self.text = selected_text[..take].to_string();
                 self.cursor = take;
                 self.do_match();
             } else {
@@ -419,33 +423,33 @@ impl Menu {
     /// command. Returns whether to redraw.
     fn move_left(&mut self, state: u32) -> bool {
         if self.cfg.columns > 1 {
-            let Some(s) = self.sel else { return false };
-            let mut tmpsel = s;
+            let Some(s) = self.selected else { return false };
+            let mut temp_selection = s;
             let mut offscreen = false;
             for _ in 0..self.cfg.lines {
-                if tmpsel == 0 {
+                if temp_selection == 0 {
                     return false;
                 }
-                if Some(tmpsel) == self.curr {
+                if Some(temp_selection) == self.current {
                     offscreen = true;
                 }
-                tmpsel -= 1;
+                temp_selection -= 1;
             }
-            self.sel = Some(tmpsel);
+            self.selected = Some(temp_selection);
             if offscreen {
-                self.curr = Some(self.prev);
-                self.calcoffsets();
+                self.current = Some(self.prev);
+                self.calc_offsets();
             }
         } else {
             if (state & (SHIFT_MASK | MOD4_MASK) != 0)
-                && (self.cfg.leftcmd.is_some() || self.cfg.rightcmd.is_some())
+                && (self.cfg.left_command.is_some() || self.cfg.right_command.is_some())
             {
-                self.cmdtrigger(0);
+                self.trigger_command(0);
             } else {
                 if self.cursor > 0
-                    && (self.sel.is_none() || self.sel == Some(0) || self.cfg.lines > 0)
+                    && (self.selected.is_none() || self.selected == Some(0) || self.cfg.lines > 0)
                 {
-                    self.cursor = self.nextrune(-1);
+                    self.cursor = self.next_rune(-1);
                 } else if self.cfg.lines > 0 {
                     return false;
                 } else {
@@ -461,30 +465,30 @@ impl Menu {
     /// command. Returns whether to redraw.
     fn move_right(&mut self, state: u32) -> bool {
         if self.cfg.columns > 1 {
-            let Some(s) = self.sel else { return false };
-            let mut tmpsel = s;
+            let Some(s) = self.selected else { return false };
+            let mut temp_selection = s;
             let mut offscreen = false;
             for _ in 0..self.cfg.lines {
-                if tmpsel + 1 >= self.matches.len() {
+                if temp_selection + 1 >= self.matches.len() {
                     return false;
                 }
-                tmpsel += 1;
-                if Some(tmpsel) == self.next {
+                temp_selection += 1;
+                if Some(temp_selection) == self.next {
                     offscreen = true;
                 }
             }
-            self.sel = Some(tmpsel);
+            self.selected = Some(temp_selection);
             if offscreen {
-                self.curr = self.next;
-                self.calcoffsets();
+                self.current = self.next;
+                self.calc_offsets();
             }
         } else {
             if (state & (SHIFT_MASK | MOD4_MASK) != 0)
-                && (self.cfg.rightcmd.is_some() || self.cfg.leftcmd.is_some())
+                && (self.cfg.right_command.is_some() || self.cfg.left_command.is_some())
             {
-                self.cmdtrigger(1);
+                self.trigger_command(1);
             } else if self.cursor < self.text.len() {
-                self.cursor = self.nextrune(1);
+                self.cursor = self.next_rune(1);
             } else if self.cfg.lines > 0 {
                 return false;
             } else {
@@ -497,27 +501,27 @@ impl Menu {
 
     /// Up navigation shared by XK_Up and the XK_Left fallthrough.
     fn nav_up(&mut self) {
-        if let Some(s) = self.sel {
+        if let Some(s) = self.selected {
             if s > 0 {
-                let ns = s - 1;
-                if Some(ns + 1) == self.curr {
-                    self.curr = Some(self.prev);
-                    self.calcoffsets();
+                let next_selection = s - 1;
+                if Some(next_selection + 1) == self.current {
+                    self.current = Some(self.prev);
+                    self.calc_offsets();
                 }
-                self.sel = Some(ns);
+                self.selected = Some(next_selection);
             }
         }
     }
 
     /// Down navigation shared by XK_Down and the XK_Right fallthrough.
     fn nav_down(&mut self) {
-        if let Some(s) = self.sel {
+        if let Some(s) = self.selected {
             if s + 1 < self.matches.len() {
-                let ns = s + 1;
-                self.sel = Some(ns);
-                if Some(ns) == self.next {
-                    self.curr = self.next;
-                    self.calcoffsets();
+                let next_selection = s + 1;
+                self.selected = Some(next_selection);
+                if Some(next_selection) == self.next {
+                    self.current = self.next;
+                    self.calc_offsets();
                 }
             }
         }

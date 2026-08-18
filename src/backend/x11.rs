@@ -21,32 +21,32 @@ use crate::render::{Canvas, Color};
 const XKB_OFFSET: u32 = 8;
 
 pub struct X11Backend {
-    conn: XCBConnection,
-    screen_num: usize,
+    connection: XCBConnection,
+    screen_number: usize,
     root: Window,
-    pub win: Window,
+    pub window: Window,
     parent: Window,
     pub embed: Option<Window>,
-    gc: Option<u32>,
+    graphics_context: Option<u32>,
     created: bool,
     managed: bool,
 
     /* keyboard (ctx/keymap keep the C-level keymap alive for the state; only
      * the state is read from) */
     #[allow(dead_code)]
-    xkb_ctx: xkb::Context,
+    xkb_context: xkb::Context,
     #[allow(dead_code)]
     xkb_keymap: xkb::Keymap,
     xkb_state: xkb::State,
 
     monitors: Vec<MonitorInfo>,
-    root_w: i32,
-    root_h: i32,
+    root_width: i32,
+    root_height: i32,
 
     atoms: Atoms,
 
     /* put_image scratch (BGRA swap buffer) */
-    blit_buf: Vec<u8>,
+    blit_buffer: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -61,45 +61,45 @@ struct Atoms {
 
 impl X11Backend {
     pub fn new(embed: Option<u32>) -> Result<X11Backend, String> {
-        let (conn, screen_num) =
+        let (connection, screen_number) =
             XCBConnection::connect(None).map_err(|e| format!("cannot open display: {e}"))?;
-        let screen = conn
+        let screen = connection
             .setup()
             .roots
-            .get(screen_num)
+            .get(screen_number)
             .cloned()
             .ok_or("no screen")?;
         let root = screen.root;
 
-        let (xkb_ctx, xkb_keymap, xkb_state) = xkb_setup(&conn)?;
-        let atoms = intern_atoms(&conn)?;
-        let monitors = query_monitors(&conn);
-        let (root_w, root_h) =
+        let (xkb_context, xkb_keymap, xkb_state) = xkb_setup(&connection)?;
+        let atoms = intern_atoms(&connection)?;
+        let monitors = query_monitors(&connection);
+        let (root_width, root_height) =
             (screen.width_in_pixels as i32, screen.height_in_pixels as i32);
 
         Ok(X11Backend {
-            conn,
-            screen_num,
+            connection,
+            screen_number,
             root,
-            win: 0,
+            window: 0,
             parent: embed.unwrap_or(root),
             embed,
-            gc: None,
+            graphics_context: None,
             created: false,
             managed: false,
-            xkb_ctx,
+            xkb_context,
             xkb_keymap,
             xkb_state,
             monitors,
-            root_w,
-            root_h,
+            root_width,
+            root_height,
             atoms,
-            blit_buf: Vec::new(),
+            blit_buffer: Vec::new(),
         })
     }
 
     fn screen(&self) -> x11rb::protocol::xproto::Screen {
-        self.conn.setup().roots[self.screen_num].clone()
+        self.connection.setup().roots[self.screen_number].clone()
     }
 
     /// keysym + utf8 text for a raw X11 keycode, keeping the xkb state fresh.
@@ -115,7 +115,7 @@ impl X11Backend {
     }
 
     fn flush(&self) {
-        let _ = self.conn.flush();
+        let _ = self.connection.flush();
     }
 
     /// The grab loop from grabfocus(): 100 tries, managed windows rename
@@ -126,13 +126,13 @@ impl X11Backend {
         }
         for _ in 0..100 {
             let focused = self
-                .conn
+                .connection
                 .get_input_focus()
                 .ok()
                 .and_then(|c| c.reply().ok())
                 .map(|r| r.focus)
                 .unwrap_or(0);
-            if focused == self.win {
+            if focused == self.window {
                 return;
             }
             if self.managed {
@@ -140,9 +140,9 @@ impl X11Backend {
                     self.set_title(title);
                 }
             } else {
-                let _ = self.conn.set_input_focus(
+                let _ = self.connection.set_input_focus(
                     InputFocus::PARENT,
-                    self.win,
+                    self.window,
                     x11rb::CURRENT_TIME,
                 );
             }
@@ -162,7 +162,7 @@ impl Backend for X11Backend {
     /// Read the RESOURCE_MANAGER property of the root window and return
     /// "key -> value" pairs (a small Xrm stand-in).
     fn resource_pairs(&self) -> Vec<(String, String)> {
-        let Ok(reply) = self.conn.get_property(
+        let Ok(reply) = self.connection.get_property(
             false,
             self.root,
             AtomEnum::RESOURCE_MANAGER,
@@ -204,37 +204,42 @@ impl Backend for X11Backend {
     }
 
     fn root_size(&self) -> (i32, i32) {
-        (self.root_w, self.root_h)
+        (self.root_width, self.root_height)
     }
 
     fn pointer_position(&self) -> Option<(i32, i32)> {
-        let reply = self.conn.query_pointer(self.root).ok()?.reply().ok()?;
+        let reply = self.connection.query_pointer(self.root).ok()?.reply().ok()?;
         Some((reply.root_x as i32, reply.root_y as i32))
     }
 
     fn focused_monitor(&self) -> Option<usize> {
         /* find the top-level window containing the current input focus */
-        let reply = self.conn.get_input_focus().ok()?.reply().ok()?;
-        let mut w = reply.focus;
-        if w == self.root || w == 0 || w == 1 {
+        let reply = self.connection.get_input_focus().ok()?.reply().ok()?;
+        let mut window = reply.focus;
+        if window == self.root || window == 0 || window == 1 {
             return None; // PointerRoot(1)/None(0)
         }
-        let mut pw = w;
-        while w != self.root && w != pw {
-            let tree = self.conn.query_tree(w).ok()?.reply().ok()?;
-            pw = w;
-            w = tree.parent;
+        let mut parent_window = window;
+        while window != self.root && window != parent_window {
+            let tree = self.connection.query_tree(window).ok()?.reply().ok()?;
+            parent_window = window;
+            window = tree.parent;
         }
-        let attrs = self.conn.get_geometry(pw).ok()?.reply().ok()?;
+        let attrs = self
+            .connection
+            .get_geometry(parent_window)
+            .ok()?
+            .reply()
+            .ok()?;
         let mut best = 0usize;
         let mut area = 0;
-        for (idx, mon) in self.monitors.iter().enumerate() {
+        for (idx, monitor) in self.monitors.iter().enumerate() {
             let a = intersect(
                 attrs.x as i32,
                 attrs.y as i32,
                 attrs.width as i32,
                 attrs.height as i32,
-                mon,
+                monitor,
             );
             if a > area {
                 area = a;
@@ -249,7 +254,12 @@ impl Backend for X11Backend {
     }
 
     fn embed_parent_size(&self) -> Option<(i32, i32)> {
-        let geo = self.conn.get_geometry(self.parent).ok()?.reply().ok()?;
+        let geo = self
+            .connection
+            .get_geometry(self.parent)
+            .ok()?
+            .reply()
+            .ok()?;
         Some((geo.width as i32, geo.height as i32))
     }
 
@@ -267,7 +277,7 @@ impl Backend for X11Backend {
         border_color: Color,
     ) -> Result<(), String> {
         let screen = self.screen();
-        let win = self.conn.generate_id().map_err(|e| e.to_string())?;
+        let window = self.connection.generate_id().map_err(|e| e.to_string())?;
         let attrs = CreateWindowAux::new()
             .override_redirect(u32::from(!managed))
             .background_pixel(x11_pixel(bg))
@@ -280,10 +290,10 @@ impl Backend for X11Backend {
                     | EventMask::BUTTON_PRESS
                     | EventMask::POINTER_MOTION,
             );
-        self.conn
+        self.connection
             .create_window(
                 screen.root_depth,
-                win,
+                window,
                 self.parent,
                 x as i16,
                 y as i16,
@@ -302,9 +312,9 @@ impl Backend for X11Backend {
         class_bytes.push(0);
         class_bytes.extend_from_slice(class_hint.as_bytes());
         class_bytes.push(0);
-        let _ = self.conn.change_property(
+        let _ = self.connection.change_property(
             PropMode::REPLACE,
-            win,
+            window,
             self.atoms.wm_class,
             self.atoms.string,
             8,
@@ -312,7 +322,7 @@ impl Backend for X11Backend {
             &class_bytes,
         );
 
-        self.win = win;
+        self.window = window;
         self.created = true;
         self.managed = managed;
         self.flush();
@@ -321,28 +331,30 @@ impl Backend for X11Backend {
 
     fn map_window(&mut self) {
         if self.created {
-            let _ = self.conn.map_window(self.win);
+            let _ = self.connection.map_window(self.window);
             self.flush();
         }
     }
 
     fn embed_setup(&mut self, x: i32, y: i32) {
         let Some(parent) = self.embed else { return };
-        let win = self.win;
-        let _ = self.conn.reparent_window(win, parent, x as i16, y as i16);
-        let _ = self.conn.change_window_attributes(
+        let window = self.window;
+        let _ = self
+            .connection
+            .reparent_window(window, parent, x as i16, y as i16);
+        let _ = self.connection.change_window_attributes(
             parent,
             &ChangeWindowAttributesAux::new()
                 .event_mask(EventMask::FOCUS_CHANGE | EventMask::SUBSTRUCTURE_NOTIFY),
         );
         /* select FocusChangeMask on all children of the parent */
-        if let Ok(reply) = self.conn.query_tree(parent) {
+        if let Ok(reply) = self.connection.query_tree(parent) {
             if let Ok(tree) = reply.reply() {
                 for child in tree.children {
-                    if child == win {
+                    if child == window {
                         continue;
                     }
-                    let _ = self.conn.change_window_attributes(
+                    let _ = self.connection.change_window_attributes(
                         child,
                         &ChangeWindowAttributesAux::new().event_mask(EventMask::FOCUS_CHANGE),
                     );
@@ -361,7 +373,7 @@ impl Backend for X11Backend {
         /* XGrabKeyboard(owner_events=true, root) retried 1000x like the C code */
         for _ in 0..1000 {
             let ok = self
-                .conn
+                .connection
                 .grab_keyboard(
                     true,
                     self.root,
@@ -388,19 +400,19 @@ impl Backend for X11Backend {
     }
 
     fn set_title(&mut self, title: &str) {
-        let win = self.win;
-        let _ = self.conn.change_property(
+        let window = self.window;
+        let _ = self.connection.change_property(
             PropMode::REPLACE,
-            win,
+            window,
             self.atoms.wm_name,
             self.atoms.string,
             8,
             title.len() as u32,
             title.as_bytes(),
         );
-        let _ = self.conn.change_property(
+        let _ = self.connection.change_property(
             PropMode::REPLACE,
-            win,
+            window,
             self.atoms.net_wm_name,
             self.atoms.utf8_string,
             8,
@@ -416,41 +428,43 @@ impl Backend for X11Backend {
         }
         let screen = self.screen();
 
-        let w = canvas.width.max(0) as usize;
-        let h = canvas.height.max(0) as usize;
-        if w == 0 || h == 0 {
+        let width = canvas.width.max(0) as usize;
+        let height = canvas.height.max(0) as usize;
+        if width == 0 || height == 0 {
             return;
         }
         /* RGBA canvas -> BGRA ZPixmap rows (32bpp data into the root depth) */
-        self.blit_buf.resize(w * h * 4, 0);
-        for i in 0..w * h {
+        self.blit_buffer.resize(width * height * 4, 0);
+        for i in 0..width * height {
             let src = &canvas.data[i * 4..i * 4 + 4];
-            self.blit_buf[i * 4] = src[2];
-            self.blit_buf[i * 4 + 1] = src[1];
-            self.blit_buf[i * 4 + 2] = src[0];
-            self.blit_buf[i * 4 + 3] = src[3];
+            self.blit_buffer[i * 4] = src[2];
+            self.blit_buffer[i * 4 + 1] = src[1];
+            self.blit_buffer[i * 4 + 2] = src[0];
+            self.blit_buffer[i * 4 + 3] = src[3];
         }
 
-        if self.gc.is_none() {
-            if let Ok(gcid) = self.conn.generate_id() {
-                let _ = self
-                    .conn
-                    .create_gc(gcid, self.win, &CreateGCAux::new().graphics_exposures(0));
-                self.gc = Some(gcid);
+        if self.graphics_context.is_none() {
+            if let Ok(gcid) = self.connection.generate_id() {
+                let _ = self.connection.create_gc(
+                    gcid,
+                    self.window,
+                    &CreateGCAux::new().graphics_exposures(0),
+                );
+                self.graphics_context = Some(gcid);
             }
         }
-        if let Some(gc) = self.gc {
-            let _ = self.conn.put_image(
+        if let Some(gc) = self.graphics_context {
+            let _ = self.connection.put_image(
                 x11rb::protocol::xproto::ImageFormat::Z_PIXMAP,
-                self.win,
+                self.window,
                 gc,
-                w as u16,
-                h as u16,
+                width as u16,
+                height as u16,
                 0,
                 0,
                 0,
                 screen.root_depth,
-                &self.blit_buf,
+                &self.blit_buffer,
             );
         }
         self.flush();
@@ -458,8 +472,8 @@ impl Backend for X11Backend {
 
     fn raise(&mut self) {
         if self.created {
-            let _ = self.conn.configure_window(
-                self.win,
+            let _ = self.connection.configure_window(
+                self.window,
                 &ConfigureWindowAux::new()
                     .stack_mode(x11rb::protocol::xproto::StackMode::ABOVE),
             );
@@ -469,7 +483,7 @@ impl Backend for X11Backend {
 
     fn next_event(&mut self) -> Option<BackendEvent> {
         loop {
-            let ev = match self.conn.wait_for_event() {
+            let ev = match self.connection.wait_for_event() {
                 Ok(ev) => ev,
                 Err(_) => return None,
             };
@@ -503,7 +517,7 @@ impl Backend for X11Backend {
                     }
                 }
                 Event::FocusIn(f) => {
-                    if f.event != self.win {
+                    if f.event != self.window {
                         return Some(BackendEvent::FocusInOther);
                     }
                 }
@@ -513,15 +527,15 @@ impl Backend for X11Backend {
                     }
                 }
                 Event::DestroyNotify(d) => {
-                    if d.window == self.win {
+                    if d.window == self.window {
                         return Some(BackendEvent::Destroyed);
                     }
                 }
                 Event::SelectionNotify(s) => {
                     if s.property != x11rb::NONE {
-                        if let Ok(reply) = self.conn.get_property(
+                        if let Ok(reply) = self.connection.get_property(
                             true,
-                            self.win,
+                            self.window,
                             s.property,
                             AtomEnum::ANY,
                             0,
@@ -545,8 +559,8 @@ impl Backend for X11Backend {
         } else {
             AtomEnum::PRIMARY.into()
         };
-        let _ = self.conn.convert_selection(
-            self.win,
+        let _ = self.connection.convert_selection(
+            self.window,
             selection,
             self.atoms.utf8_string,
             self.atoms.utf8_string,
@@ -561,12 +575,14 @@ impl Backend for X11Backend {
 }
 
 /// Set up XKB so keysyms/text match what the server keymap produces.
-fn xkb_setup(conn: &XCBConnection) -> Result<(xkb::Context, xkb::Keymap, xkb::State), String> {
-    let xkb_ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+fn xkb_setup(
+    connection: &XCBConnection,
+) -> Result<(xkb::Context, xkb::Keymap, xkb::State), String> {
+    let xkb_context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
     let (mut major, mut minor, mut base_event, mut base_error) =
         (0u16, 0u16, 0u8, 0u8);
     if !xkbx11::setup_xkb_extension(
-        conn,
+        connection,
         xkbx11::MIN_MAJOR_XKB_VERSION,
         xkbx11::MIN_MINOR_XKB_VERSION,
         xkbx11::SetupXkbExtensionFlags::NoFlags,
@@ -577,17 +593,22 @@ fn xkb_setup(conn: &XCBConnection) -> Result<(xkb::Context, xkb::Keymap, xkb::St
     ) {
         return Err("xkb setup failed".to_string());
     }
-    let device = xkbx11::get_core_keyboard_device_id(conn);
-    let xkb_keymap =
-        xkbx11::keymap_new_from_device(&xkb_ctx, conn, device, xkb::KEYMAP_COMPILE_NO_FLAGS);
-    let xkb_state = xkbx11::state_new_from_device(&xkb_keymap, conn, device);
-    Ok((xkb_ctx, xkb_keymap, xkb_state))
+    let device = xkbx11::get_core_keyboard_device_id(connection);
+    let xkb_keymap = xkbx11::keymap_new_from_device(
+        &xkb_context,
+        connection,
+        device,
+        xkb::KEYMAP_COMPILE_NO_FLAGS,
+    );
+    let xkb_state = xkbx11::state_new_from_device(&xkb_keymap, connection, device);
+    Ok((xkb_context, xkb_keymap, xkb_state))
 }
 
 /// Intern the atoms the backend uses.
-fn intern_atoms(conn: &XCBConnection) -> Result<Atoms, String> {
+fn intern_atoms(connection: &XCBConnection) -> Result<Atoms, String> {
     let atom = |name: &str| -> Result<u32, String> {
-        conn.intern_atom(false, name.as_bytes())
+        connection
+            .intern_atom(false, name.as_bytes())
             .map_err(|e| e.to_string())?
             .reply()
             .map(|r| r.atom)
@@ -604,12 +625,12 @@ fn intern_atoms(conn: &XCBConnection) -> Result<Atoms, String> {
 }
 
 /// Monitor list via Xinerama (like the C build with -DXINERAMA).
-fn query_monitors(conn: &XCBConnection) -> Vec<MonitorInfo> {
+fn query_monitors(connection: &XCBConnection) -> Vec<MonitorInfo> {
     let mut monitors = Vec::new();
-    if let Some(is_active) = xinerama::is_active(conn).ok().and_then(|c| c.reply().ok()) {
+    if let Some(is_active) = xinerama::is_active(connection).ok().and_then(|c| c.reply().ok()) {
         if is_active.state != 0 {
             if let Some(screens) =
-                xinerama::query_screens(conn).ok().and_then(|c| c.reply().ok())
+                xinerama::query_screens(connection).ok().and_then(|c| c.reply().ok())
             {
                 for (i, s) in screens.screen_info.iter().enumerate() {
                     monitors.push(MonitorInfo {
@@ -626,12 +647,12 @@ fn query_monitors(conn: &XCBConnection) -> Vec<MonitorInfo> {
     monitors
 }
 
-fn intersect(x: i32, y: i32, w: i32, h: i32, mon: &MonitorInfo) -> i32 {
-    (0.max((x + w).min(mon.x + mon.width) - x.max(mon.x)))
-        * (0.max((y + h).min(mon.y + mon.height) - y.max(mon.y)))
+fn intersect(x: i32, y: i32, w: i32, h: i32, monitor: &MonitorInfo) -> i32 {
+    (0.max((x + w).min(monitor.x + monitor.width) - x.max(monitor.x)))
+        * (0.max((y + h).min(monitor.y + monitor.height) - y.max(monitor.y)))
 }
 
 /// X11 pixel value for a 24-bit depth: RGB in the top three bytes.
-fn x11_pixel(c: Color) -> u32 {
-    ((c.r() as u32) << 16) | ((c.g() as u32) << 8) | c.b() as u32
+fn x11_pixel(color: Color) -> u32 {
+    ((color.r() as u32) << 16) | ((color.g() as u32) << 8) | color.b() as u32
 }

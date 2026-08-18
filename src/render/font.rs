@@ -7,12 +7,12 @@ use cosmic_text::FontSystem;
 pub struct FontSpec {
     pub family: String,
     /// Pixel size (already converted from points for `size=`).
-    pub px: f32,
+    pub pixel_size: f32,
 }
 
 pub fn parse_font_name(name: &str) -> FontSpec {
     let mut family = name.to_string();
-    let mut px: f32 = 0.0;
+    let mut pixel_size: f32 = 0.0;
     for (i, part) in name.split(':').enumerate() {
         if i == 0 {
             family = part.to_string();
@@ -20,19 +20,19 @@ pub fn parse_font_name(name: &str) -> FontSpec {
         }
         if let Some(value) = part.strip_prefix("pixelsize=") {
             if let Ok(v) = value.parse::<f32>() {
-                px = v;
+                pixel_size = v;
             }
         } else if let Some(value) = part.strip_prefix("size=") {
             if let Ok(v) = value.parse::<f32>() {
                 // Xft converts points to pixels via dpi (96 by default).
-                px = (v * 96.0 / 72.0).round();
+                pixel_size = (v * 96.0 / 72.0).round();
             }
         }
     }
-    if px <= 0.0 {
-        px = 12.0 * 96.0 / 72.0;
+    if pixel_size <= 0.0 {
+        pixel_size = 12.0 * 96.0 / 72.0;
     }
-    FontSpec { family, px }
+    FontSpec { family, pixel_size }
 }
 
 /// Resolve an Xft-style family name to a family present in the font database
@@ -82,11 +82,15 @@ fn normalized_family(family: &str) -> String {
         .collect()
 }
 
-/// Height (ascent + descent) of the primary font at `px`, matching Xft's
-/// `font->h = ascent + descent`.
-pub(super) fn primary_font_height(font_system: &mut FontSystem, families: &[String], px: f32) -> i32 {
+/// Height (ascent + descent) of the primary font at `pixel_size`, matching
+/// Xft's `font->h = ascent + descent`.
+pub(super) fn primary_font_height(
+    font_system: &mut FontSystem,
+    families: &[String],
+    pixel_size: f32,
+) -> i32 {
     let db = font_system.db();
-    let mut height = (px * 1.2).ceil() as i32;
+    let mut height = (pixel_size * 1.2).ceil() as i32;
     for family in families {
         let query = fontdb::Query {
             families: &[fontdb::Family::Name(family)],
@@ -102,7 +106,7 @@ pub(super) fn primary_font_height(font_system: &mut FontSystem, families: &[Stri
                     let upem = face.units_per_em().max(1) as f32;
                     let ascent = face.ascender() as f32;
                     let descent = face.descender() as f32; // negative
-                    ((ascent - descent) / upem * px).round() as i32
+                    ((ascent - descent) / upem * pixel_size).round() as i32
                 })
             })
             .unwrap_or(0);

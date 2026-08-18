@@ -34,9 +34,9 @@ pub struct Menu {
     pub items: Vec<Item>,
     /// Ordered item indices of the current matches (the C linked list).
     pub matches: Vec<usize>,
-    /// sel/curr positions inside `matches`.
-    pub sel: Option<usize>,
-    pub curr: Option<usize>,
+    /// selected/current positions inside `matches`.
+    pub selected: Option<usize>,
+    pub current: Option<usize>,
     /// first position of the next page, None on the last page.
     pub next: Option<usize>,
     /// first position of the previous page.
@@ -47,20 +47,20 @@ pub struct Menu {
     pub cursor: usize,
 
     /* geometry */
-    pub bh: i32,
-    pub mw: i32,
-    pub mh: i32,
+    pub bar_height: i32,
+    pub menu_width: i32,
+    pub menu_height: i32,
     pub x: i32,
     pub y: i32,
-    pub inputw: i32,
-    pub promptw: i32,
+    pub input_width: i32,
+    pub prompt_width: i32,
 
     /* state */
     pub numbers: String,
-    pub tempnumer: bool,
-    pub sely: i32,
+    pub show_numbers: bool,
+    pub selected_y: i32,
     pub tabbed: bool,
-    /// dynamic prompt in commented mode (`prompt = sel->text + 1`)
+    /// dynamic prompt in commented mode (`prompt = selected->text + 1`)
     pub comment_prompt: Option<String>,
 
     /* case-insensitive matching (the fstrncmp/fstrstr function pointers) */
@@ -72,8 +72,8 @@ pub struct Menu {
 #[derive(Debug, Clone)]
 pub struct Item {
     pub text: String,
-    pub stext: String,
-    pub out: bool,
+    pub display_text: String,
+    pub already_output: bool,
     pub distance: f64,
 }
 
@@ -81,7 +81,7 @@ impl Menu {
     pub fn new(cfg: Config, renderer: Renderer, backend: Box<dyn Backend>) -> Self {
         // Port of `-i`/`-s` switching fstrncmp/fstrstr (smartcase starts out
         // insensitive and turns sensitive on uppercase input).
-        let insensitive = cfg.smartcase || cfg.insensitive;
+        let insensitive = cfg.smart_case || cfg.insensitive;
         let canvas = Canvas::new(1, 1);
         Menu {
             cfg,
@@ -90,22 +90,22 @@ impl Menu {
             canvas,
             items: Vec::new(),
             matches: Vec::new(),
-            sel: None,
-            curr: None,
+            selected: None,
+            current: None,
             next: None,
             prev: 0,
             text: String::new(),
             cursor: 0,
-            bh: 0,
-            mw: 0,
-            mh: 0,
+            bar_height: 0,
+            menu_width: 0,
+            menu_height: 0,
             x: 0,
             y: 0,
-            inputw: 0,
-            promptw: 0,
+            input_width: 0,
+            prompt_width: 0,
             numbers: String::new(),
-            tempnumer: false,
-            sely: 0,
+            show_numbers: false,
+            selected_y: 0,
             tabbed: false,
             comment_prompt: None,
             insensitive,
@@ -119,32 +119,33 @@ impl Menu {
         self.items[self.matches[pos]].text.clone()
     }
 
-    fn sel_text(&self) -> Option<String> {
-        self.sel.map(|pos| self.items[self.matches[pos]].text.clone())
+    fn selected_text(&self) -> Option<String> {
+        self.selected
+            .map(|pos| self.items[self.matches[pos]].text.clone())
     }
 
     /// TEXTW macro
-    pub fn textw(&mut self, s: &str) -> i32 {
+    pub fn text_width(&mut self, s: &str) -> i32 {
         if self.cfg.commented {
-            self.bh
+            self.bar_height
         } else {
-            self.renderer.text_width(s) + self.renderer.lrpad
+            self.renderer.text_width(s) + self.renderer.horizontal_padding
         }
     }
 
     /// textw_clamp — width of `s` clamped to `n`. The C version takes
     /// `unsigned n`: 0 yields 0, negatives wrap to "unclamped".
-    fn textw_clamp(&mut self, s: &str, n: i32) -> i32 {
+    fn text_width_clamp(&mut self, s: &str, n: i32) -> i32 {
         if self.cfg.commented {
-            return self.bh;
+            return self.bar_height;
         }
         if n == 0 {
             return 0;
         }
         if n < 0 {
-            return self.textw(s);
+            return self.text_width(s);
         }
-        (self.renderer.text_width_clamp(s, n) + self.renderer.lrpad).min(n)
+        (self.renderer.text_width_clamp(s, n) + self.renderer.horizontal_padding).min(n)
     }
 
     /// The effective prompt (static `-p` value, or the dynamic commented-mode
@@ -161,11 +162,11 @@ impl Menu {
     }
 
     /// max_textw — widest item text.
-    pub fn max_textw(&mut self) -> i32 {
+    pub fn max_text_width(&mut self) -> i32 {
         let texts: Vec<String> = self.items.iter().map(|i| i.text.clone()).collect();
         let mut len = 0;
         for text in &texts {
-            len = len.max(self.textw(text));
+            len = len.max(self.text_width(text));
         }
         len
     }

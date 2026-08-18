@@ -54,15 +54,15 @@ impl Menu {
         }
 
         if self.cfg.fuzzy {
-            self.fuzzymatch();
+            self.fuzzy_match();
             return;
         }
 
         // separate input text into tokens to be matched individually
         // (strtok collapses runs of spaces)
-        let tokv: Vec<&str> = self.text.split(' ').filter(|t| !t.is_empty()).collect();
-        let tokc = tokv.len();
-        let len = if tokc > 0 { tokv[0].len() } else { 0 };
+        let tokens: Vec<&str> = self.text.split(' ').filter(|t| !t.is_empty()).collect();
+        let token_count = tokens.len();
+        let len = if token_count > 0 { tokens[0].len() } else { 0 };
 
         let mut exact: Vec<usize> = Vec::new();
         let mut prefix: Vec<usize> = Vec::new();
@@ -71,13 +71,13 @@ impl Menu {
         let textsize = self.text.len() + 1;
 
         for (i, item) in self.items.iter().enumerate() {
-            if !tokv.iter().all(|tok| self.contains(&item.text, tok)) {
+            if !tokens.iter().all(|tok| self.contains(&item.text, tok)) {
                 continue; // not all tokens match
             }
             /* exact matches go first, then prefixes, then substrings */
-            if tokc == 0 || self.eq_n(text_bytes, item.text.as_bytes(), textsize) {
+            if token_count == 0 || self.eq_n(text_bytes, item.text.as_bytes(), textsize) {
                 exact.push(i);
-            } else if self.eq_n(tokv[0].as_bytes(), item.text.as_bytes(), len) {
+            } else if self.eq_n(tokens[0].as_bytes(), item.text.as_bytes(), len) {
                 prefix.push(i);
             } else if !self.cfg.exact {
                 substr.push(i);
@@ -88,8 +88,8 @@ impl Menu {
         self.matches.extend(prefix);
         self.matches.extend(substr);
 
-        self.curr = if self.matches.is_empty() { None } else { Some(0) };
-        self.sel = self.curr;
+        self.current = if self.matches.is_empty() { None } else { Some(0) };
+        self.selected = self.current;
 
         if self.cfg.instant && self.matches.len() == 1 && !had_substr {
             let text = self.items[self.matches[0]].text.clone();
@@ -97,10 +97,10 @@ impl Menu {
             self.finish(0);
         }
 
-        self.calcoffsets();
+        self.calc_offsets();
     }
 
-    fn fuzzymatch(&mut self) {
+    fn fuzzy_match(&mut self) {
         /* bang - we have so much memory */
         let mut matched: Vec<usize> = Vec::new();
         let text_bytes = self.text.as_bytes().to_vec();
@@ -109,42 +109,42 @@ impl Menu {
         /* walk through all items */
         for (idx, item) in self.items.iter_mut().enumerate() {
             if text_len > 0 {
-                let itext = item.text.as_bytes();
-                let mut pidx = 0usize; /* pointer */
-                let mut sidx: i32 = -1; /* start of match */
-                let mut eidx: i32 = -1; /* end of match */
+                let item_text = item.text.as_bytes();
+                let mut pattern_index = 0usize; /* pointer */
+                let mut match_start: i32 = -1; /* start of match */
+                let mut match_end: i32 = -1; /* end of match */
                 let mut i = 0usize;
                 /* walk through item text */
-                while i < itext.len() {
-                    let c = itext[i];
+                while i < item_text.len() {
+                    let c = item_text[i];
                     /* fuzzy match pattern (single byte compare, like
-                     * fstrncmp(&text[pidx], &c, 1)) */
-                    let equal = pidx < text_len
+                     * fstrncmp(&text[pattern_index], &c, 1)) */
+                    let equal = pattern_index < text_len
                         && if self.insensitive {
-                            text_bytes[pidx].eq_ignore_ascii_case(&c)
+                            text_bytes[pattern_index].eq_ignore_ascii_case(&c)
                         } else {
-                            text_bytes[pidx] == c
+                            text_bytes[pattern_index] == c
                         };
                     if equal {
-                        if sidx == -1 {
-                            sidx = i as i32;
+                        if match_start == -1 {
+                            match_start = i as i32;
                         }
-                        pidx += 1;
-                        if pidx == text_len {
-                            eidx = i as i32;
+                        pattern_index += 1;
+                        if pattern_index == text_len {
+                            match_end = i as i32;
                             break;
                         }
                     }
                     i += 1;
                 }
                 /* build list of matches */
-                if eidx != -1 {
+                if match_end != -1 {
                     /* compute distance:
-                     * add penalty if match starts late (log(sidx+2))
+                     * add penalty if match starts late (log(match_start+2))
                      * add penalty for a long match without many matching
                      * characters */
                     item.distance =
-                        ((sidx + 2) as f64).ln() + (eidx - sidx) as f64 - text_len as f64;
+                        ((match_start + 2) as f64).ln() + (match_end - match_start) as f64 - text_len as f64;
                     matched.push(idx);
                 }
             } else {
@@ -161,8 +161,8 @@ impl Menu {
         });
 
         self.matches = matched;
-        self.curr = if self.matches.is_empty() { None } else { Some(0) };
-        self.sel = self.curr;
+        self.current = if self.matches.is_empty() { None } else { Some(0) };
+        self.selected = self.current;
 
         if self.cfg.instant && self.matches.len() == 1 {
             let text = self.items[self.matches[0]].text.clone();
@@ -170,28 +170,28 @@ impl Menu {
             self.finish(0);
         }
 
-        self.calcoffsets();
+        self.calc_offsets();
     }
 
     /// calcoffsets — which items begin the next and previous pages.
-    pub(super) fn calcoffsets(&mut self) {
+    pub(super) fn calc_offsets(&mut self) {
         let n = if self.cfg.lines > 0 {
-            self.cfg.lines * self.cfg.columns * self.bh
+            self.cfg.lines * self.cfg.columns * self.bar_height
         } else {
-            let langle = self.textw("<");
-            let rangle = self.textw(">");
-            self.mw - (self.promptw + self.inputw + langle + rangle)
+            let langle = self.text_width("<");
+            let rangle = self.text_width(">");
+            self.menu_width - (self.prompt_width + self.input_width + langle + rangle)
         };
 
         /* calculate which items will begin the next page */
-        let mut pos = self.curr;
+        let mut pos = self.current;
         let mut i: i32 = 0;
         while let Some(p) = pos {
             let item_text = self.item_text(p);
             i += if self.cfg.lines > 0 {
-                self.bh
+                self.bar_height
             } else {
-                self.textw_clamp(&item_text, n)
+                self.text_width_clamp(&item_text, n)
             };
             if i > n {
                 break;
@@ -205,14 +205,14 @@ impl Menu {
         self.next = pos;
 
         /* and the previous page */
-        let mut prev = self.curr.unwrap_or(0);
+        let mut prev = self.current.unwrap_or(0);
         let mut i: i32 = 0;
         while prev > 0 {
             let item_text = self.item_text(prev - 1);
             i += if self.cfg.lines > 0 {
-                self.bh
+                self.bar_height
             } else {
-                self.textw_clamp(&item_text, n)
+                self.text_width_clamp(&item_text, n)
             };
             if i > n {
                 break;
