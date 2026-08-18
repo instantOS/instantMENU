@@ -191,6 +191,55 @@ pub fn parse() -> Args {
     Args::parse()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn smartrun_invocation_parses() {
+        /* the argv instantmenu_smartrun passes (see instantmenu_smartrun) */
+        let argv = [
+            "instantmenu",
+            "--right-cmd", "instantmenu_smartrun terminal",
+            "--left-cmd", "instantmenu_smartrun desktop",
+            "-p", "desktop", "-i", "--fast", "--search-text", "search apps",
+            "-l", "10", "--centered", "--width", "-1",
+            "--line-height", "-1", "--border-width", "4",
+        ];
+        assert!(Args::try_parse_from(argv).is_ok());
+    }
+
+    #[test]
+    fn legacy_multichar_spellings_rejected() {
+        /* the old single-dash multi-char spellings are gone; they must not
+         * silently parse (e.g. -rc as -r -c with a stray positional) */
+        for bad in [["-rc", "x"], ["-bw", "4"], ["-wm", "x"], ["-fn", "font"]] {
+            assert!(Args::try_parse_from(bad).is_err(), "{bad:?} should be rejected");
+        }
+    }
+
+    #[test]
+    fn negative_numbers_accepted() {
+        let a = Args::try_parse_from(["instantmenu", "-w", "-1", "--preselect", "-2"]).unwrap();
+        assert_eq!(a.width, Some(-1));
+        assert_eq!(a.preselect, Some(-2));
+    }
+
+    #[test]
+    fn garbage_numbers_rejected() {
+        assert!(Args::try_parse_from(["instantmenu", "--lines", "banana"]).is_err());
+    }
+
+    #[test]
+    fn strtol0_c_semantics() {
+        assert_eq!(strtol0("0x2a"), 42);
+        assert_eq!(strtol0("0Xff"), 255);
+        assert_eq!(strtol0("42"), 42);
+        assert_eq!(strtol0("-1"), u32::MAX); /* wrapped, like C */
+        assert_eq!(strtol0("abc"), 0);
+    }
+}
+
 /// C `strtol(s, NULL, 0)`: 0x-prefixed hex, else decimal.
 pub fn strtol0(s: &str) -> u32 {
     let t = s.trim_start();

@@ -292,6 +292,11 @@ impl Renderer {
         let y0 = y.max(0);
         let x1 = (x + w).min(canvas.width);
         let y1 = (y + h).min(canvas.height);
+        if x0 >= x1 || y0 >= y1 {
+            // fully off-canvas (e.g. the ">" arrow in a very narrow menu):
+            // nothing to paint, like C drawing outside the window
+            return;
+        }
         let px = [color.r(), color.g(), color.b(), color.a()];
         for yy in y0..y1 {
             let row_start = (yy as usize * canvas.width as usize + x0 as usize) * 4;
