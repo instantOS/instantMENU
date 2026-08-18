@@ -11,3 +11,4 @@ itest
 itest.o
 tags
 .nvimlog
+/target
