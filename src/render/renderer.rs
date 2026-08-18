@@ -31,8 +31,18 @@ pub struct Renderer {
     /// Currently set scheme (drw_setscheme).
     pub scheme: SchemeColors,
 
-    // text width cache
-    width_cache: HashMap<(String, u32), i32>,
+    /// Background already covering the current frame.
+    frame_background: Option<Color>,
+
+    // Shaped text is reusable for both measurement and drawing. Keeping the
+    // Buffer avoids shaping every visible label once for width and again for
+    // rasterization on every redraw.
+    layout_cache: HashMap<String, TextLayout>,
+}
+
+struct TextLayout {
+    width: i32,
+    buffer: Buffer,
 }
 
 impl Renderer {
@@ -61,7 +71,8 @@ impl Renderer {
             font_height,
             lrpad: font_height,
             scheme: [Color::rgb(0, 0, 0); 3],
-            width_cache: HashMap::new(),
+            frame_background: None,
+            layout_cache: HashMap::new(),
         };
         renderer.scheme = renderer.schemes[0];
         renderer
@@ -76,10 +87,37 @@ impl Renderer {
         self.schemes[index]
     }
 
+    /// Start a fully repainted frame. Text cells using the same plain
+    /// background can subsequently skip their redundant rectangle fill.
+    pub fn clear(&mut self, canvas: &mut Canvas, color: Color) {
+        canvas.fill_rect(
+            0,
+            0,
+            canvas.width,
+            canvas.height,
+            [color.r(), color.g(), color.b(), color.a()],
+        );
+        self.frame_background = Some(color);
+    }
+
     /// drw_rect — filled rect in the current scheme; `invert` swaps fg/bg,
     /// `rounded` paints the bottom 4px strip with the detail color.
-    pub fn rect(&mut self, canvas: &mut Canvas, x: i32, y: i32, w: i32, h: i32, filled: bool, invert: bool, rounded: bool) {
-        let color = if invert { self.scheme[COL_BG] } else { self.scheme[COL_FG] };
+    pub fn rect(
+        &mut self,
+        canvas: &mut Canvas,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        filled: bool,
+        invert: bool,
+        rounded: bool,
+    ) {
+        let color = if invert {
+            self.scheme[COL_BG]
+        } else {
+            self.scheme[COL_FG]
+        };
         if filled && h < 40 {
             if rounded {
                 self.fill_rect(canvas, x, y, w, h - 4, color);
@@ -93,26 +131,8 @@ impl Renderer {
     }
 
     fn fill_rect(&self, canvas: &mut Canvas, x: i32, y: i32, w: i32, h: i32, color: Color) {
-        if w <= 0 || h <= 0 {
-            return;
-        }
-        let x0 = x.max(0);
-        let y0 = y.max(0);
-        let x1 = (x + w).min(canvas.width);
-        let y1 = (y + h).min(canvas.height);
-        if x0 >= x1 || y0 >= y1 {
-            // fully off-canvas (e.g. the ">" arrow in a very narrow menu):
-            // nothing to paint, like C drawing outside the window
-            return;
-        }
         let px = [color.r(), color.g(), color.b(), color.a()];
-        for yy in y0..y1 {
-            let row_start = (yy as usize * canvas.width as usize + x0 as usize) * 4;
-            let row_end = row_start + (x1 - x0) as usize * 4;
-            for off in (row_start..row_end).step_by(4) {
-                canvas.data[off..off + 4].copy_from_slice(&px);
-            }
-        }
+        canvas.fill_rect(x, y, w, h, px);
     }
 
     /// `drw_fontset_getwidth` — width of `text` (without lrpad).
@@ -120,17 +140,16 @@ impl Renderer {
         if text.is_empty() {
             return 0;
         }
-        let px = self.fonts[0].px;
-        let key = (text.to_string(), px.to_bits());
-        if let Some(w) = self.width_cache.get(&key) {
-            return *w;
+        if let Some(layout) = self.layout_cache.get(text) {
+            return layout.width;
         }
         let buffer = self.make_buffer(text, None);
-        let width = self.shape_width(buffer);
-        if self.width_cache.len() > 8192 {
-            self.width_cache.clear();
+        let width = Self::buffer_width(&buffer);
+        if self.layout_cache.len() >= 1024 {
+            self.layout_cache.clear();
         }
-        self.width_cache.insert(key, width);
+        self.layout_cache
+            .insert(text.to_owned(), TextLayout { width, buffer });
         width
     }
 
@@ -176,7 +195,10 @@ impl Renderer {
                     CharClass::Emoji => &emoji,
                     CharClass::Normal => &primary,
                 };
-                spans.push((&text[start..index], Attrs::new().family(Family::Name(family))));
+                spans.push((
+                    &text[start..index],
+                    Attrs::new().family(Family::Name(family)),
+                ));
                 start = index;
                 current = class;
             }
@@ -192,8 +214,7 @@ impl Renderer {
         buffer.set_rich_text(spans, &default_attrs, Shaping::Basic, None);
     }
 
-    fn shape_width(&mut self, mut buffer: Buffer) -> i32 {
-        buffer.shape_until_scroll(&mut self.font_system, false);
+    fn buffer_width(buffer: &Buffer) -> i32 {
         buffer
             .layout_runs()
             .map(|run| run.line_w)
@@ -227,20 +248,27 @@ impl Renderer {
         }
 
         // background
-        let fill = if invert { self.scheme[COL_FG] } else { self.scheme[COL_BG] };
+        let fill = if invert {
+            self.scheme[COL_FG]
+        } else {
+            self.scheme[COL_BG]
+        };
         if rounded {
             self.fill_rect(canvas, x, y, w, h - 4, fill);
             self.fill_rect(canvas, x, y + h - 4, w, 4, self.scheme[COL_DETAIL]);
-        } else {
+        } else if self.frame_background != Some(fill) {
             self.fill_rect(canvas, x, y, w, h, fill);
         }
         if w < lpad {
             return x + w;
         }
 
-        let color = if invert { self.scheme[COL_BG] } else { self.scheme[COL_FG] };
-        let cosmic_color =
-            CosmicColor::rgba(color.r(), color.g(), color.b(), color.a());
+        let color = if invert {
+            self.scheme[COL_BG]
+        } else {
+            self.scheme[COL_FG]
+        };
+        let cosmic_color = CosmicColor::rgba(color.r(), color.g(), color.b(), color.a());
 
         let avail = w - lpad;
         let mut display_text = text;
@@ -256,14 +284,22 @@ impl Renderer {
             let mut hi = chars.len();
             while lo < hi {
                 let mid = (lo + hi + 1) / 2;
-                let end = if mid < chars.len() { chars[mid].0 } else { text.len() };
+                let end = if mid < chars.len() {
+                    chars[mid].0
+                } else {
+                    text.len()
+                };
                 if self.text_width(&text[..end]) <= max {
                     lo = mid;
                 } else {
                     hi = mid - 1;
                 }
             }
-            let end = if lo < chars.len() { chars[lo].0 } else { text.len() };
+            let end = if lo < chars.len() {
+                chars[lo].0
+            } else {
+                text.len()
+            };
             display_text = &text[..end];
             drawn_width = self.text_width(display_text) + ellipsis_width;
             // draw ellipsis right after the truncated text
@@ -290,13 +326,13 @@ impl Renderer {
         color: CosmicColor,
         rounded: bool,
     ) {
-        let px = self.fonts[0].px;
-        let metrics = Metrics::new(px, self.font_height as f32);
-        let mut buffer = Buffer::new(&mut self.font_system, metrics);
-        buffer.set_wrap(Wrap::None);
-        buffer.set_size(None, Some(self.font_height as f32));
-        self.set_buffer_text(&mut buffer, text);
-        buffer.shape_until_scroll(&mut self.font_system, false);
+        let mut layout = self.layout_cache.remove(text).unwrap_or_else(|| {
+            let buffer = self.make_buffer(text, None);
+            TextLayout {
+                width: Self::buffer_width(&buffer),
+                buffer,
+            }
+        });
 
         let width = canvas.width;
         let height = canvas.height;
@@ -305,7 +341,7 @@ impl Renderer {
         // at ascent within font_height rows.
         let y_off = y + (h - self.font_height) / 2 - if rounded { 2 } else { 0 };
 
-        buffer.draw(
+        layout.buffer.draw(
             &mut self.font_system,
             &mut self.swash_cache,
             color,
@@ -319,6 +355,10 @@ impl Renderer {
                 canvas.blend_pixel(cx, cy, px_color);
             },
         );
+        if self.layout_cache.len() >= 1024 {
+            self.layout_cache.clear();
+        }
+        self.layout_cache.insert(text.to_owned(), layout);
     }
 }
 
@@ -334,7 +374,10 @@ fn char_class(ch: Option<char>) -> CharClass {
         Some(c) if matches!(c as u32, 0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD) => {
             CharClass::Icon
         }
-        Some(c) if (c as u32) >= 0x1F000 || matches!(c as u32, 0x2600..=0x27BF | 0x2190..=0x21FF | 0x2B00..=0x2BFF) => {
+        Some(c)
+            if (c as u32) >= 0x1F000
+                || matches!(c as u32, 0x2600..=0x27BF | 0x2190..=0x21FF | 0x2B00..=0x2BFF) =>
+        {
             CharClass::Emoji
         }
         _ => CharClass::Normal,

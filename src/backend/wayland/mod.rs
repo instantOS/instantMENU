@@ -13,8 +13,8 @@ use std::os::fd::{AsRawFd, BorrowedFd};
 use std::os::unix::io::RawFd;
 
 use wayland_client::protocol::{
-    wl_buffer, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer,
-    wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_shm_pool, wl_surface,
+    wl_buffer, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer, wl_keyboard,
+    wl_output, wl_pointer, wl_seat, wl_shm, wl_shm_pool, wl_surface,
 };
 use wayland_client::{Connection, EventQueue, QueueHandle};
 use wayland_protocols::wp::primary_selection::zv1::client::{
@@ -22,14 +22,12 @@ use wayland_protocols::wp::primary_selection::zv1::client::{
     zwp_primary_selection_offer_v1,
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
-use wayland_protocols_wlr::layer_shell::v1::client::{
-    zwlr_layer_shell_v1, zwlr_layer_surface_v1,
-};
+use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 use xkbcommon::xkb;
 
-use selection::pump_offer;
 use super::{Backend, BackendEvent, MonitorInfo};
 use crate::render::{Canvas, Color};
+use selection::pump_offer;
 
 /// xkb keycode = evdev keycode + 8; wayland delivers evdev keycodes.
 const XKB_OFFSET: u32 = 8;
@@ -77,7 +75,11 @@ struct OfferTracker {
 
 impl OfferTracker {
     fn new() -> Self {
-        OfferTracker { mimes: Vec::new(), read_fd: None, pending: Vec::new() }
+        OfferTracker {
+            mimes: Vec::new(),
+            read_fd: None,
+            pending: Vec::new(),
+        }
     }
 
     fn best_mime(&self) -> Option<String> {
@@ -132,8 +134,10 @@ pub struct EventState {
 
     /* selection offers */
     clipboard_offer: Option<(wl_data_offer::WlDataOffer, OfferTracker)>,
-    primary_offer:
-        Option<(zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1, OfferTracker)>,
+    primary_offer: Option<(
+        zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1,
+        OfferTracker,
+    )>,
 
     /* events out */
     events: VecDeque<BackendEvent>,
@@ -190,9 +194,9 @@ impl EventState {
         0
     }
 
-    fn draw(&mut self, rgba: &[u8], w: i32, h: i32) {
+    fn draw(&mut self, bgra: &[u8], w: i32, h: i32) {
         if !self.configured || self.surface.is_none() {
-            self.pending_frame = Some((rgba.to_vec(), w, h));
+            self.pending_frame = Some((bgra.to_vec(), w, h));
             return;
         }
         let width = w.max(1);
@@ -232,24 +236,20 @@ impl EventState {
                     &self.qh,
                     (),
                 );
-                pool.slots.push(ShmSlot { buffer, offset, released: false });
+                pool.slots.push(ShmSlot {
+                    buffer,
+                    offset,
+                    released: false,
+                });
                 pool.slots.len() - 1
             }
         };
         let offset = pool.slots[idx].offset;
 
-        /* copy RGBA -> BGRA (wl_shm ARGB8888 is little-endian xBGRA in memory
-         * on LE hosts) */
+        /* The canvas already matches little-endian wl_shm ARGB8888 (BGRA). */
         unsafe {
             let dst = pool.mem.add(offset);
-            let n = width as usize * height as usize;
-            for i in 0..n {
-                let s = &rgba[i * 4..i * 4 + 4];
-                *dst.add(i * 4) = s[2];
-                *dst.add(i * 4 + 1) = s[1];
-                *dst.add(i * 4 + 2) = s[0];
-                *dst.add(i * 4 + 3) = s[3];
-            }
+            std::ptr::copy_nonoverlapping(bgra.as_ptr(), dst, needed);
         }
         let buffer = pool.slots[idx].buffer.clone();
         if let Some(surface) = &self.surface {
@@ -320,8 +320,7 @@ impl Drop for EventState {
 
 impl WaylandBackend {
     pub fn new() -> Result<WaylandBackend, String> {
-        let conn =
-            Connection::connect_to_env().map_err(|e| format!("cannot connect: {e}"))?;
+        let conn = Connection::connect_to_env().map_err(|e| format!("cannot connect: {e}"))?;
         let mut queue: EventQueue<EventState> = conn.new_event_queue();
         let qh = queue.handle();
         let mut state = EventState::new(qh.clone());
@@ -380,9 +379,10 @@ impl WaylandBackend {
         grab: bool,
     ) -> Result<(), String> {
         let state = &mut self.state;
-        let shell = state.layer_shell.as_ref().ok_or(
-            "compositor has no wlr-layer-shell (use -wm for managed windows)",
-        )?;
+        let shell = state
+            .layer_shell
+            .as_ref()
+            .ok_or("compositor has no wlr-layer-shell (use -wm for managed windows)")?;
         let out_idx = state.output_for_point(x, y);
         let output = state.outputs.get(out_idx).map(|o| o.proxy.clone());
         let layer_surface = shell.get_layer_surface(
@@ -397,9 +397,17 @@ impl WaylandBackend {
         /* translate the X11-style absolute geometry into an anchor and
          * margins on the chosen output: anchor the edge the menu sits on,
          * offset from the left; set_size is then honored for both axes */
-        let mon = state.outputs.get(out_idx).map(|o| o.info.clone()).unwrap_or(
-            MonitorInfo { x: 0, y: 0, width: w, height: h, name: String::new() },
-        );
+        let mon = state
+            .outputs
+            .get(out_idx)
+            .map(|o| o.info.clone())
+            .unwrap_or(MonitorInfo {
+                x: 0,
+                y: 0,
+                width: w,
+                height: h,
+                name: String::new(),
+            });
 
         let mut anchor = zwlr_layer_surface_v1::Anchor::Left;
         let top;
@@ -567,12 +575,20 @@ impl Backend for WaylandBackend {
             }
             if let Some((_, tracker)) = &self.state.clipboard_offer {
                 if let Some(fd) = tracker.read_fd {
-                    fds.push(libc::pollfd { fd, events: libc::POLLIN, revents: 0 });
+                    fds.push(libc::pollfd {
+                        fd,
+                        events: libc::POLLIN,
+                        revents: 0,
+                    });
                 }
             }
             if let Some((_, tracker)) = &self.state.primary_offer {
                 if let Some(fd) = tracker.read_fd {
-                    fds.push(libc::pollfd { fd, events: libc::POLLIN, revents: 0 });
+                    fds.push(libc::pollfd {
+                        fd,
+                        events: libc::POLLIN,
+                        revents: 0,
+                    });
                 }
             }
             loop {
@@ -604,9 +620,15 @@ impl Backend for WaylandBackend {
 
     fn request_selection(&mut self, clipboard: bool) {
         let mime = if clipboard {
-            self.state.clipboard_offer.as_ref().and_then(|(_, t)| t.best_mime())
+            self.state
+                .clipboard_offer
+                .as_ref()
+                .and_then(|(_, t)| t.best_mime())
         } else {
-            self.state.primary_offer.as_ref().and_then(|(_, t)| t.best_mime())
+            self.state
+                .primary_offer
+                .as_ref()
+                .and_then(|(_, t)| t.best_mime())
         };
         let Some(mime) = mime else { return };
 
@@ -642,7 +664,10 @@ impl Backend for WaylandBackend {
         };
         if !sent {
             /* no offer, or a transfer is already in flight */
-            unsafe { libc::close(fds[0]); libc::close(fds[1]) };
+            unsafe {
+                libc::close(fds[0]);
+                libc::close(fds[1])
+            };
         }
         /* flush so the compositor actually receives the request and writes
          * to the pipe (next_event() polls it only after this) */

@@ -72,9 +72,7 @@ pub struct Menu {
 #[derive(Debug, Clone)]
 pub struct Item {
     pub text: String,
-    pub stext: String,
     pub out: bool,
-    pub distance: f64,
 }
 
 impl Menu {
@@ -120,7 +118,8 @@ impl Menu {
     }
 
     fn sel_text(&self) -> Option<String> {
-        self.sel.map(|pos| self.items[self.matches[pos]].text.clone())
+        self.sel
+            .map(|pos| self.items[self.matches[pos]].text.clone())
     }
 
     /// TEXTW macro
@@ -162,10 +161,18 @@ impl Menu {
 
     /// max_textw — widest item text.
     pub fn max_textw(&mut self) -> i32 {
-        let texts: Vec<String> = self.items.iter().map(|i| i.text.clone()).collect();
+        // Borrowing through `self.textw` would require cloning every item.
+        // Split the borrows explicitly instead.
+        let commented = self.cfg.commented;
+        let lrpad = self.renderer.lrpad;
         let mut len = 0;
-        for text in &texts {
-            len = len.max(self.textw(text));
+        for item in &self.items {
+            let width = if commented {
+                self.bh
+            } else {
+                self.renderer.text_width(&item.text) + lrpad
+            };
+            len = len.max(width);
         }
         len
     }

@@ -12,7 +12,7 @@ use x11rb::protocol::xproto::{
 use x11rb::protocol::Event;
 use x11rb::xcb_ffi::XCBConnection;
 use xkbcommon::xkb::x11 as xkbx11;
-use xkbcommon::xkb::{self, Keycode, KeyDirection};
+use xkbcommon::xkb::{self, KeyDirection, Keycode};
 
 use super::{Backend, BackendEvent, MonitorInfo};
 use crate::render::{Canvas, Color};
@@ -44,9 +44,6 @@ pub struct X11Backend {
     root_h: i32,
 
     atoms: Atoms,
-
-    /* put_image scratch (BGRA swap buffer) */
-    blit_buf: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -74,8 +71,10 @@ impl X11Backend {
         let (xkb_ctx, xkb_keymap, xkb_state) = xkb_setup(&conn)?;
         let atoms = intern_atoms(&conn)?;
         let monitors = query_monitors(&conn);
-        let (root_w, root_h) =
-            (screen.width_in_pixels as i32, screen.height_in_pixels as i32);
+        let (root_w, root_h) = (
+            screen.width_in_pixels as i32,
+            screen.height_in_pixels as i32,
+        );
 
         Ok(X11Backend {
             conn,
@@ -94,7 +93,6 @@ impl X11Backend {
             root_w,
             root_h,
             atoms,
-            blit_buf: Vec::new(),
         })
     }
 
@@ -107,7 +105,11 @@ impl X11Backend {
         let code = Keycode::new(keycode as u32 + XKB_OFFSET);
         self.xkb_state.update_key(
             code,
-            if pressed { KeyDirection::Down } else { KeyDirection::Up },
+            if pressed {
+                KeyDirection::Down
+            } else {
+                KeyDirection::Up
+            },
         );
         let sym = self.xkb_state.key_get_one_sym(code).raw();
         let text = self.xkb_state.key_get_utf8(code);
@@ -140,11 +142,9 @@ impl X11Backend {
                     self.set_title(title);
                 }
             } else {
-                let _ = self.conn.set_input_focus(
-                    InputFocus::PARENT,
-                    self.win,
-                    x11rb::CURRENT_TIME,
-                );
+                let _ =
+                    self.conn
+                        .set_input_focus(InputFocus::PARENT, self.win, x11rb::CURRENT_TIME);
             }
             self.flush();
             std::thread::sleep(Duration::from_millis(10));
@@ -421,21 +421,11 @@ impl Backend for X11Backend {
         if w == 0 || h == 0 {
             return;
         }
-        /* RGBA canvas -> BGRA ZPixmap rows (32bpp data into the root depth) */
-        self.blit_buf.resize(w * h * 4, 0);
-        for i in 0..w * h {
-            let src = &canvas.data[i * 4..i * 4 + 4];
-            self.blit_buf[i * 4] = src[2];
-            self.blit_buf[i * 4 + 1] = src[1];
-            self.blit_buf[i * 4 + 2] = src[0];
-            self.blit_buf[i * 4 + 3] = src[3];
-        }
-
         if self.gc.is_none() {
             if let Ok(gcid) = self.conn.generate_id() {
-                let _ = self
-                    .conn
-                    .create_gc(gcid, self.win, &CreateGCAux::new().graphics_exposures(0));
+                let _ =
+                    self.conn
+                        .create_gc(gcid, self.win, &CreateGCAux::new().graphics_exposures(0));
                 self.gc = Some(gcid);
             }
         }
@@ -450,7 +440,7 @@ impl Backend for X11Backend {
                 0,
                 0,
                 screen.root_depth,
-                &self.blit_buf,
+                &canvas.data,
             );
         }
         self.flush();
@@ -460,8 +450,7 @@ impl Backend for X11Backend {
         if self.created {
             let _ = self.conn.configure_window(
                 self.win,
-                &ConfigureWindowAux::new()
-                    .stack_mode(x11rb::protocol::xproto::StackMode::ABOVE),
+                &ConfigureWindowAux::new().stack_mode(x11rb::protocol::xproto::StackMode::ABOVE),
             );
             self.flush();
         }
@@ -476,11 +465,18 @@ impl Backend for X11Backend {
             match ev {
                 Event::KeyPress(k) => {
                     let (sym, text) = self.lookup_key(k.detail, true);
-                    return Some(BackendEvent::KeyPress { sym, state: k.state.bits() as u32, text });
+                    return Some(BackendEvent::KeyPress {
+                        sym,
+                        state: k.state.bits() as u32,
+                        text,
+                    });
                 }
                 Event::KeyRelease(k) => {
                     let (sym, _) = self.lookup_key(k.detail, false);
-                    return Some(BackendEvent::KeyRelease { sym, state: k.state.bits() as u32 });
+                    return Some(BackendEvent::KeyRelease {
+                        sym,
+                        state: k.state.bits() as u32,
+                    });
                 }
                 Event::ButtonPress(b) => {
                     return Some(BackendEvent::ButtonPress {
@@ -563,8 +559,7 @@ impl Backend for X11Backend {
 /// Set up XKB so keysyms/text match what the server keymap produces.
 fn xkb_setup(conn: &XCBConnection) -> Result<(xkb::Context, xkb::Keymap, xkb::State), String> {
     let xkb_ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-    let (mut major, mut minor, mut base_event, mut base_error) =
-        (0u16, 0u16, 0u8, 0u8);
+    let (mut major, mut minor, mut base_event, mut base_error) = (0u16, 0u16, 0u8, 0u8);
     if !xkbx11::setup_xkb_extension(
         conn,
         xkbx11::MIN_MAJOR_XKB_VERSION,
@@ -608,8 +603,9 @@ fn query_monitors(conn: &XCBConnection) -> Vec<MonitorInfo> {
     let mut monitors = Vec::new();
     if let Some(is_active) = xinerama::is_active(conn).ok().and_then(|c| c.reply().ok()) {
         if is_active.state != 0 {
-            if let Some(screens) =
-                xinerama::query_screens(conn).ok().and_then(|c| c.reply().ok())
+            if let Some(screens) = xinerama::query_screens(conn)
+                .ok()
+                .and_then(|c| c.reply().ok())
             {
                 for (i, s) in screens.screen_info.iter().enumerate() {
                     monitors.push(MonitorInfo {

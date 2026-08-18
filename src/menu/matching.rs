@@ -30,11 +30,14 @@ impl Menu {
         if needle.is_empty() {
             return true;
         }
-        if self.insensitive {
-            haystack.to_lowercase().contains(&needle.to_lowercase())
-        } else {
-            haystack.contains(needle)
-        }
+        let needle = needle.as_bytes();
+        haystack.as_bytes().windows(needle.len()).any(|candidate| {
+            if self.insensitive {
+                candidate.eq_ignore_ascii_case(needle)
+            } else {
+                candidate == needle
+            }
+        })
     }
 
     pub(super) fn do_match(&mut self) {
@@ -88,7 +91,11 @@ impl Menu {
         self.matches.extend(prefix);
         self.matches.extend(substr);
 
-        self.curr = if self.matches.is_empty() { None } else { Some(0) };
+        self.curr = if self.matches.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
         self.sel = self.curr;
 
         if self.cfg.instant && self.matches.len() == 1 && !had_substr {
@@ -101,67 +108,71 @@ impl Menu {
     }
 
     fn fuzzymatch(&mut self) {
-        /* bang - we have so much memory */
-        let mut matched: Vec<usize> = Vec::new();
-        let text_bytes = self.text.as_bytes().to_vec();
+        let text_bytes = self.text.as_bytes();
         let text_len = text_bytes.len();
 
+        // All items have equal fuzzy distance for an empty query, so sorting
+        // them is pure O(n log n) startup work.
+        if text_len == 0 {
+            self.matches.clear();
+            self.matches.extend(0..self.items.len());
+            self.curr = (!self.matches.is_empty()).then_some(0);
+            self.sel = self.curr;
+            self.calcoffsets();
+            return;
+        }
+
         /* walk through all items */
-        for (idx, item) in self.items.iter_mut().enumerate() {
-            if text_len > 0 {
-                let itext = item.text.as_bytes();
-                let mut pidx = 0usize; /* pointer */
-                let mut sidx: i32 = -1; /* start of match */
-                let mut eidx: i32 = -1; /* end of match */
-                let mut i = 0usize;
-                /* walk through item text */
-                while i < itext.len() {
-                    let c = itext[i];
-                    /* fuzzy match pattern (single byte compare, like
-                     * fstrncmp(&text[pidx], &c, 1)) */
-                    let equal = pidx < text_len
-                        && if self.insensitive {
-                            text_bytes[pidx].eq_ignore_ascii_case(&c)
-                        } else {
-                            text_bytes[pidx] == c
-                        };
-                    if equal {
-                        if sidx == -1 {
-                            sidx = i as i32;
-                        }
-                        pidx += 1;
-                        if pidx == text_len {
-                            eidx = i as i32;
-                            break;
-                        }
+        let mut scored: Vec<(usize, f64)> = Vec::new();
+        for (idx, item) in self.items.iter().enumerate() {
+            let itext = item.text.as_bytes();
+            let mut pidx = 0usize; /* pointer */
+            let mut sidx: i32 = -1; /* start of match */
+            let mut eidx: i32 = -1; /* end of match */
+            let mut i = 0usize;
+            /* walk through item text */
+            while i < itext.len() {
+                let c = itext[i];
+                /* fuzzy match pattern (single byte compare, like
+                 * fstrncmp(&text[pidx], &c, 1)) */
+                let equal = pidx < text_len
+                    && if self.insensitive {
+                        text_bytes[pidx].eq_ignore_ascii_case(&c)
+                    } else {
+                        text_bytes[pidx] == c
+                    };
+                if equal {
+                    if sidx == -1 {
+                        sidx = i as i32;
                     }
-                    i += 1;
+                    pidx += 1;
+                    if pidx == text_len {
+                        eidx = i as i32;
+                        break;
+                    }
                 }
-                /* build list of matches */
-                if eidx != -1 {
-                    /* compute distance:
-                     * add penalty if match starts late (log(sidx+2))
-                     * add penalty for a long match without many matching
-                     * characters */
-                    item.distance =
-                        ((sidx + 2) as f64).ln() + (eidx - sidx) as f64 - text_len as f64;
-                    matched.push(idx);
-                }
-            } else {
-                matched.push(idx);
+                i += 1;
+            }
+            /* build list of matches */
+            if eidx != -1 {
+                /* compute distance:
+                 * add penalty if match starts late (log(sidx+2))
+                 * add penalty for a long match without many matching
+                 * characters */
+                let distance = ((sidx + 2) as f64).ln() + (eidx - sidx) as f64 - text_len as f64;
+                scored.push((idx, distance));
             }
         }
 
         /* sort matches according to distance */
-        matched.sort_by(|&a, &b| {
-            self.items[a]
-                .distance
-                .partial_cmp(&self.items[b].distance)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-        self.matches = matched;
-        self.curr = if self.matches.is_empty() { None } else { Some(0) };
+        scored.sort_by(|a, b| a.1.total_cmp(&b.1));
+        self.matches.clear();
+        self.matches.extend(scored.into_iter().map(|(idx, _)| idx));
+        self.curr = if self.matches.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
         self.sel = self.curr;
 
         if self.cfg.instant && self.matches.len() == 1 {
@@ -187,10 +198,10 @@ impl Menu {
         let mut pos = self.curr;
         let mut i: i32 = 0;
         while let Some(p) = pos {
-            let item_text = self.item_text(p);
             i += if self.cfg.lines > 0 {
                 self.bh
             } else {
+                let item_text = self.item_text(p);
                 self.textw_clamp(&item_text, n)
             };
             if i > n {
@@ -208,10 +219,10 @@ impl Menu {
         let mut prev = self.curr.unwrap_or(0);
         let mut i: i32 = 0;
         while prev > 0 {
-            let item_text = self.item_text(prev - 1);
             i += if self.cfg.lines > 0 {
                 self.bh
             } else {
+                let item_text = self.item_text(prev - 1);
                 self.textw_clamp(&item_text, n)
             };
             if i > n {

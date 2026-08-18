@@ -203,13 +203,31 @@ impl Menu {
 
     /// delete the word to the left of the cursor (Ctrl-w).
     fn delete_word(&mut self) {
-        while self.cursor > 0 && self.is_delimiter(self.nextrune(-1)) {
-            let nr = self.nextrune(-1);
-            self.insert(None, nr as i32 - self.cursor as i32);
+        let mut target = self.cursor;
+        while target > 0 {
+            let previous = self.text[..target]
+                .char_indices()
+                .next_back()
+                .map(|(index, _)| index)
+                .unwrap_or(0);
+            if !self.is_delimiter(previous) {
+                break;
+            }
+            target = previous;
         }
-        while self.cursor > 0 && !self.is_delimiter(self.nextrune(-1)) {
-            let nr = self.nextrune(-1);
-            self.insert(None, nr as i32 - self.cursor as i32);
+        while target > 0 {
+            let previous = self.text[..target]
+                .char_indices()
+                .next_back()
+                .map(|(index, _)| index)
+                .unwrap_or(0);
+            if self.is_delimiter(previous) {
+                break;
+            }
+            target = previous;
+        }
+        if target != self.cursor {
+            self.insert(None, target as i32 - self.cursor as i32);
         }
     }
 
@@ -320,7 +338,11 @@ impl Menu {
             } else if self.next.is_some() {
                 self.jump_to_end();
             }
-            self.sel = if self.matches.is_empty() { None } else { Some(self.matches.len() - 1) };
+            self.sel = if self.matches.is_empty() {
+                None
+            } else {
+                Some(self.matches.len() - 1)
+            };
             Some(true)
         } else if sym_eq(sym, ks::KEY_Escape) {
             self.finish(1);
@@ -352,7 +374,7 @@ impl Menu {
                 break;
             }
             match self.curr {
-                Some(c) if c + 1 <= last => {
+                Some(c) if c < last => {
                     self.curr = Some(c + 1);
                     self.calcoffsets();
                 }
