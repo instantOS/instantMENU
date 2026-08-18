@@ -27,6 +27,8 @@ pub struct Config {
     pub fuzzy: bool,
     pub prematch: bool,
     pub smartcase: bool,
+    /* -i option; case-insensitive item matching */
+    pub insensitive: bool,
     pub exact: bool,
     pub sely: i32,
     pub animated: bool,
@@ -112,6 +114,7 @@ impl Default for Config {
             fuzzy: true,
             prematch: false,
             smartcase: false,
+            insensitive: false,
             exact: false,
             sely: 0,
             animated: false,

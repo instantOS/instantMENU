@@ -66,6 +66,9 @@ pub trait Backend {
     fn pointer_position(&self) -> Option<(i32, i32)>;
     /// Monitor index of the focused window, if known (X11 only).
     fn focused_monitor(&self) -> Option<usize>;
+    /// Size of the embedding parent window (`-W`), or the root window when
+    /// not embedding. None when there is no parent to query.
+    fn embed_parent_size(&self) -> Option<(i32, i32)>;
 
     /// Create the menu window (XCreateWindow in setup()).
     fn create_window(
@@ -93,6 +96,8 @@ pub trait Backend {
 
     /// Blit the canvas to the window (`drw_map`).
     fn present(&mut self, canvas: &Canvas);
+    /// Raise the window (XRaiseWindow on VisibilityNotify).
+    fn raise(&mut self);
     /// Block for the next event, None when the connection died.
     fn next_event(&mut self) -> Option<BackendEvent>;
     /// Ask for the selection/clipboard contents (XConvertSelection).

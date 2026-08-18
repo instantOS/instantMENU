@@ -3,10 +3,10 @@
 //! The structure mirrors the C file function by function so behaviour can be
 //! audited against `old_c_codebase/instantmenu.c`.
 
-use std::io::{BufRead, Write};
+use std::io::Write;
 use std::time::Duration;
 
-use xkbcommon::keysyms as ks;
+use xkbcommon::xkb::keysyms as ks;
 
 use crate::backend::{
     Backend, BackendEvent, CONTROL_MASK, MOD1_MASK, MOD4_MASK, SHIFT_MASK,
@@ -132,13 +132,19 @@ impl Menu {
         }
     }
 
-    /// textw_clamp
+    /// textw_clamp — width of `s` clamped to `n`. The C version takes
+    /// `unsigned n`: 0 yields 0, negatives wrap to "unclamped".
     fn textw_clamp(&mut self, s: &str, n: i32) -> i32 {
         if self.cfg.commented {
-            self.bh
-        } else {
-            self.renderer.text_width_clamp(s, n) + self.renderer.lrpad
+            return self.bh;
         }
+        if n == 0 {
+            return 0;
+        }
+        if n < 0 {
+            return self.textw(s);
+        }
+        (self.renderer.text_width_clamp(s, n) + self.renderer.lrpad).min(n)
     }
 
     /// The effective prompt (static `-p` value, or the dynamic commented-mode
@@ -157,20 +163,25 @@ impl Menu {
     /* ── matching (port of match/fuzzymatch/appenditem) ────────────────── */
 
     /// fstrncmp(a, b, n) == 0, honoring the case-insensitivity switch.
+    /// Byte-wise strncmp emulation: compares up to n bytes, treating the end
+    /// of a slice as the C NUL terminator.
     fn eq_n(&self, a: &[u8], b: &[u8], n: usize) -> bool {
-        if a.len() < n || b.len() < n {
-            // strncmp stops at the first NUL; shorter strings never compare
-            // equal over n bytes (callers always pass n <= len+1).
-            if a.len() == b.len() && a.len() < n {
-                return a == b;
+        for i in 0..n {
+            let ca = a.get(i).copied().unwrap_or(0);
+            let cb = b.get(i).copied().unwrap_or(0);
+            let (ca, cb) = if self.insensitive {
+                (ca.to_ascii_lowercase(), cb.to_ascii_lowercase())
+            } else {
+                (ca, cb)
+            };
+            if ca != cb {
+                return false;
             }
-            return false;
+            if ca == 0 {
+                return true; // both terminated
+            }
         }
-        if self.insensitive {
-            a[..n].eq_ignore_ascii_case(&b[..n])
-        } else {
-            a[..n] == b[..n]
-        }
+        true
     }
 
     /// fstrstr, honoring the case switch.
@@ -924,7 +935,7 @@ impl Menu {
                     self.mw,
                     h as i32,
                     true,
-                    false,
+                    true,
                     false,
                 );
             }
@@ -932,7 +943,7 @@ impl Menu {
             let top_h = ease_out_quint(t) * self.sely as f64;
             let top_y = (self.sely + 4) as f64 - ease_out_quint(t) * (self.sely + 4) as f64;
             self.renderer
-                .rect(&mut self.canvas, 0, top_y as i32, self.mw, top_h as i32, true, false, false);
+                .rect(&mut self.canvas, 0, top_y as i32, self.mw, top_h as i32, true, true, false);
             self.present();
             std::thread::sleep(Duration::from_micros(19000));
         }
@@ -953,7 +964,7 @@ impl Menu {
             let rw = w1 as f64 + (w2 - w1) as f64 * f;
             let rh = h1 as f64 + (h2 - h1) as f64 * f;
             self.renderer
-                .rect(&mut self.canvas, rx as i32, ry as i32, rw as i32, rh as i32, true, false, false);
+                .rect(&mut self.canvas, rx as i32, ry as i32, rw as i32, rh as i32, true, true, false);
             self.present();
             std::thread::sleep(Duration::from_micros(19000));
         }
@@ -1036,11 +1047,11 @@ impl Menu {
         }
         self.animatesel();
 
-        // puts((sel && !(state & ShiftMask & (!rejectnomatch))) ? sel->text : text)
-        let print_sel = match self.sel_text() {
-            Some(sel_text) => !(self.cfg.rejectnomatch && (state & SHIFT_MASK != 0)),
-            None => false,
-        };
+        // puts((sel && !(state & ShiftMask & (!rejectnomatch))) ? sel->text : text):
+        // with rejectnomatch off, shift+return prints the raw input instead
+        // of the selection.
+        let shift_suppresses = (state & SHIFT_MASK != 0) && !self.cfg.rejectnomatch;
+        let print_sel = self.sel_text().is_some() && !shift_suppresses;
         let out = if print_sel {
             self.sel_text().unwrap_or_default()
         } else {
@@ -1096,45 +1107,45 @@ impl Menu {
 
         if state & CONTROL_MASK != 0 {
             match sym {
-                s if sym_eq(s, ks::XKB_KEY_a) => sym = ks::XKB_KEY_Home,
-                s if sym_eq(s, ks::XKB_KEY_b) => sym = ks::XKB_KEY_Left,
-                s if sym_eq(s, ks::XKB_KEY_c) => sym = ks::XKB_KEY_Escape,
-                s if sym_eq(s, ks::XKB_KEY_d) => sym = ks::XKB_KEY_Delete,
-                s if sym_eq(s, ks::XKB_KEY_e) => sym = ks::XKB_KEY_End,
-                s if sym_eq(s, ks::XKB_KEY_f) => sym = ks::XKB_KEY_Right,
-                s if sym_eq(s, ks::XKB_KEY_g) => sym = ks::XKB_KEY_Escape,
-                s if sym_eq(s, ks::XKB_KEY_h) => sym = ks::XKB_KEY_BackSpace,
-                s if sym_eq(s, ks::XKB_KEY_i) => sym = ks::XKB_KEY_Tab,
-                s if sym_eq(s, ks::XKB_KEY_j)
-                    || sym_eq(s, ks::XKB_KEY_J)
-                    || sym_eq(s, ks::XKB_KEY_m)
-                    || sym_eq(s, ks::XKB_KEY_M) =>
+                s if sym_eq(s, ks::KEY_a) => sym = ks::KEY_Home,
+                s if sym_eq(s, ks::KEY_b) => sym = ks::KEY_Left,
+                s if sym_eq(s, ks::KEY_c) => sym = ks::KEY_Escape,
+                s if sym_eq(s, ks::KEY_d) => sym = ks::KEY_Delete,
+                s if sym_eq(s, ks::KEY_e) => sym = ks::KEY_End,
+                s if sym_eq(s, ks::KEY_f) => sym = ks::KEY_Right,
+                s if sym_eq(s, ks::KEY_g) => sym = ks::KEY_Escape,
+                s if sym_eq(s, ks::KEY_h) => sym = ks::KEY_BackSpace,
+                s if sym_eq(s, ks::KEY_i) => sym = ks::KEY_Tab,
+                s if sym_eq(s, ks::KEY_j)
+                    || sym_eq(s, ks::KEY_J)
+                    || sym_eq(s, ks::KEY_m)
+                    || sym_eq(s, ks::KEY_M) =>
                 {
-                    sym = ks::XKB_KEY_Return;
+                    sym = ks::KEY_Return;
                     state &= !CONTROL_MASK;
                 }
-                s if sym_eq(s, ks::XKB_KEY_n) => sym = ks::XKB_KEY_Down,
-                s if sym_eq(s, ks::XKB_KEY_p) => sym = ks::XKB_KEY_Up,
-                s if sym_eq(s, ks::XKB_KEY_s) => {
+                s if sym_eq(s, ks::KEY_n) => sym = ks::KEY_Down,
+                s if sym_eq(s, ks::KEY_p) => sym = ks::KEY_Up,
+                s if sym_eq(s, ks::KEY_s) => {
                     self.insert(Some(".*"), 2);
                 }
-                s if sym_eq(s, ks::XKB_KEY_v) => {
+                s if sym_eq(s, ks::KEY_v) => {
                     /* paste clipboard */
                     self.backend.request_selection(state & SHIFT_MASK != 0);
                     self.drawmenu();
                     return;
                 }
-                s if sym_eq(s, ks::XKB_KEY_k) => {
+                s if sym_eq(s, ks::KEY_k) => {
                     /* delete right */
                     self.text.truncate(self.cursor);
                     self.do_match();
                 }
-                s if sym_eq(s, ks::XKB_KEY_u) => {
+                s if sym_eq(s, ks::KEY_u) => {
                     /* delete left */
                     let cursor = self.cursor as i32;
                     self.insert(None, -cursor);
                 }
-                s if sym_eq(s, ks::XKB_KEY_w) => {
+                s if sym_eq(s, ks::KEY_w) => {
                     /* delete word */
                     while self.cursor > 0 && self.is_delimiter(self.nextrune(-1)) {
                         let nr = self.nextrune(-1);
@@ -1145,70 +1156,70 @@ impl Menu {
                         self.insert(None, nr as i32 - self.cursor as i32);
                     }
                 }
-                s if sym_eq(s, ks::XKB_KEY_y) || sym_eq(s, ks::XKB_KEY_Y) => {
+                s if sym_eq(s, ks::KEY_y) || sym_eq(s, ks::KEY_Y) => {
                     /* paste selection */
                     self.backend.request_selection(state & SHIFT_MASK != 0);
                     return;
                 }
-                s if sym_eq(s, ks::XKB_KEY_Left) || sym_eq(s, ks::XKB_KEY_KP_Left) => {
+                s if sym_eq(s, ks::KEY_Left) || sym_eq(s, ks::KEY_KP_Left) => {
                     self.movewordedge(-1);
                     self.drawmenu();
                     return;
                 }
-                s if sym_eq(s, ks::XKB_KEY_Right) || sym_eq(s, ks::XKB_KEY_KP_Right) => {
+                s if sym_eq(s, ks::KEY_Right) || sym_eq(s, ks::KEY_KP_Right) => {
                     self.movewordedge(1);
                     self.drawmenu();
                     return;
                 }
-                s if sym_eq(s, ks::XKB_KEY_Return) || sym_eq(s, ks::XKB_KEY_KP_Enter) => {
+                s if sym_eq(s, ks::KEY_Return) || sym_eq(s, ks::KEY_KP_Enter) => {
                     // fall through to the main switch with Return
                 }
-                s if sym_eq(s, ks::XKB_KEY_1) => {
+                s if sym_eq(s, ks::KEY_1) => {
                     self.selectnumber(0, state);
                     self.drawmenu();
                     return;
                 }
-                s if sym_eq(s, ks::XKB_KEY_2) => {
+                s if sym_eq(s, ks::KEY_2) => {
                     self.selectnumber(1, state);
                     self.drawmenu();
                     return;
                 }
-                s if sym_eq(s, ks::XKB_KEY_3) => {
+                s if sym_eq(s, ks::KEY_3) => {
                     self.selectnumber(2, state);
                     self.drawmenu();
                     return;
                 }
-                s if sym_eq(s, ks::XKB_KEY_4) => {
+                s if sym_eq(s, ks::KEY_4) => {
                     self.selectnumber(3, state);
                     self.drawmenu();
                     return;
                 }
-                s if sym_eq(s, ks::XKB_KEY_5) => {
+                s if sym_eq(s, ks::KEY_5) => {
                     self.selectnumber(4, state);
                     self.drawmenu();
                     return;
                 }
-                s if sym_eq(s, ks::XKB_KEY_6) => {
+                s if sym_eq(s, ks::KEY_6) => {
                     self.selectnumber(5, state);
                     self.drawmenu();
                     return;
                 }
-                s if sym_eq(s, ks::XKB_KEY_7) => {
+                s if sym_eq(s, ks::KEY_7) => {
                     self.selectnumber(6, state);
                     self.drawmenu();
                     return;
                 }
-                s if sym_eq(s, ks::XKB_KEY_8) => {
+                s if sym_eq(s, ks::KEY_8) => {
                     self.selectnumber(7, state);
                     self.drawmenu();
                     return;
                 }
-                s if sym_eq(s, ks::XKB_KEY_9) => {
+                s if sym_eq(s, ks::KEY_9) => {
                     self.selectnumber(8, state);
                     self.drawmenu();
                     return;
                 }
-                s if sym_eq(s, ks::XKB_KEY_bracketleft) => {
+                s if sym_eq(s, ks::KEY_bracketleft) => {
                     self.finish(1);
                 }
                 _ => return,
@@ -1232,30 +1243,30 @@ impl Menu {
             }
         } else if state & MOD1_MASK != 0 {
             match sym {
-                s if sym_eq(s, ks::XKB_KEY_F4) => self.finish(1),
-                s if sym_eq(s, ks::XKB_KEY_b) => {
+                s if sym_eq(s, ks::KEY_F4) => self.finish(1),
+                s if sym_eq(s, ks::KEY_b) => {
                     self.movewordedge(-1);
                     self.drawmenu();
                     return;
                 }
-                s if sym_eq(s, ks::XKB_KEY_f) => {
+                s if sym_eq(s, ks::KEY_f) => {
                     self.movewordedge(1);
                     self.drawmenu();
                     return;
                 }
-                s if sym_eq(s, ks::XKB_KEY_g) => sym = ks::XKB_KEY_Home,
-                s if sym_eq(s, ks::XKB_KEY_G) => sym = ks::XKB_KEY_End,
-                s if sym_eq(s, ks::XKB_KEY_h) => sym = ks::XKB_KEY_Up,
-                s if sym_eq(s, ks::XKB_KEY_j) => sym = ks::XKB_KEY_Next,
-                s if sym_eq(s, ks::XKB_KEY_k) => sym = ks::XKB_KEY_Prior,
-                s if sym_eq(s, ks::XKB_KEY_l) => sym = ks::XKB_KEY_Down,
-                s if sym_eq(s, ks::XKB_KEY_space) => {
+                s if sym_eq(s, ks::KEY_g) => sym = ks::KEY_Home,
+                s if sym_eq(s, ks::KEY_G) => sym = ks::KEY_End,
+                s if sym_eq(s, ks::KEY_h) => sym = ks::KEY_Up,
+                s if sym_eq(s, ks::KEY_j) => sym = ks::KEY_Next,
+                s if sym_eq(s, ks::KEY_k) => sym = ks::KEY_Prior,
+                s if sym_eq(s, ks::KEY_l) => sym = ks::KEY_Down,
+                s if sym_eq(s, ks::KEY_space) => {
                     if self.cfg.alttab {
                         self.tabbed = false;
                         self.cfg.alttab = false;
                     }
                 }
-                s if sym_eq(s, ks::XKB_KEY_Tab) => {
+                s if sym_eq(s, ks::KEY_Tab) => {
                     self.tabbed = true;
 
                     if let Some(s) = self.sel {
@@ -1277,13 +1288,13 @@ impl Menu {
                 _ => return,
             }
         } else if state & MOD4_MASK != 0 {
-            if sym_eq(sym, ks::XKB_KEY_q) {
+            if sym_eq(sym, ks::KEY_q) {
                 self.finish(1);
             }
         }
 
         /* main switch */
-        if sym_eq(sym, ks::XKB_KEY_Delete) || sym_eq(sym, ks::XKB_KEY_KP_Delete) {
+        if sym_eq(sym, ks::KEY_Delete) || sym_eq(sym, ks::KEY_KP_Delete) {
             if self.cursor >= self.text.len() {
                 return;
             }
@@ -1294,13 +1305,13 @@ impl Menu {
             }
             let nr = self.nextrune(-1);
             self.insert(None, nr as i32 - self.cursor as i32);
-        } else if sym_eq(sym, ks::XKB_KEY_BackSpace) {
+        } else if sym_eq(sym, ks::KEY_BackSpace) {
             if self.cursor == 0 {
                 return;
             }
             let nr = self.nextrune(-1);
             self.insert(None, nr as i32 - self.cursor as i32);
-        } else if sym_eq(sym, ks::XKB_KEY_End) || sym_eq(sym, ks::XKB_KEY_KP_End) {
+        } else if sym_eq(sym, ks::KEY_End) || sym_eq(sym, ks::KEY_KP_End) {
             if self.cursor < self.text.len() {
                 self.cursor = self.text.len();
             } else if self.next.is_some() {
@@ -1324,9 +1335,9 @@ impl Menu {
                 }
             }
             self.sel = if self.matches.is_empty() { None } else { Some(self.matches.len() - 1) };
-        } else if sym_eq(sym, ks::XKB_KEY_Escape) {
+        } else if sym_eq(sym, ks::KEY_Escape) {
             self.finish(1);
-        } else if sym_eq(sym, ks::XKB_KEY_Home) || sym_eq(sym, ks::XKB_KEY_KP_Home) {
+        } else if sym_eq(sym, ks::KEY_Home) || sym_eq(sym, ks::KEY_KP_Home) {
             if self.sel.is_none() && self.matches.is_empty() {
                 self.cursor = 0;
             } else if self.sel == Some(0) {
@@ -1336,7 +1347,7 @@ impl Menu {
                 self.curr = Some(0);
                 self.calcoffsets();
             }
-        } else if sym_eq(sym, ks::XKB_KEY_Left) || sym_eq(sym, ks::XKB_KEY_KP_Left) {
+        } else if sym_eq(sym, ks::KEY_Left) || sym_eq(sym, ks::KEY_KP_Left) {
             if self.cfg.columns > 1 {
                 let Some(s) = self.sel else { return };
                 let mut tmpsel = s;
@@ -1373,23 +1384,23 @@ impl Menu {
                     }
                 }
             }
-        } else if sym_eq(sym, ks::XKB_KEY_Up) || sym_eq(sym, ks::XKB_KEY_KP_Up) {
+        } else if sym_eq(sym, ks::KEY_Up) || sym_eq(sym, ks::KEY_KP_Up) {
             self.nav_up();
-        } else if sym_eq(sym, ks::XKB_KEY_Next) || sym_eq(sym, ks::XKB_KEY_KP_Next) {
+        } else if sym_eq(sym, ks::KEY_Next) || sym_eq(sym, ks::KEY_KP_Next) {
             let Some(next) = self.next else { return };
             self.sel = Some(next);
             self.curr = Some(next);
             self.calcoffsets();
-        } else if sym_eq(sym, ks::XKB_KEY_Prior) || sym_eq(sym, ks::XKB_KEY_KP_Prior) {
+        } else if sym_eq(sym, ks::KEY_Prior) || sym_eq(sym, ks::KEY_KP_Prior) {
             if self.curr.is_none() {
                 return;
             }
             self.sel = Some(self.prev);
             self.curr = Some(self.prev);
             self.calcoffsets();
-        } else if sym_eq(sym, ks::XKB_KEY_Return) || sym_eq(sym, ks::XKB_KEY_KP_Enter) {
+        } else if sym_eq(sym, ks::KEY_Return) || sym_eq(sym, ks::KEY_KP_Enter) {
             self.handle_return(state);
-        } else if sym_eq(sym, ks::XKB_KEY_Right) || sym_eq(sym, ks::XKB_KEY_KP_Right) {
+        } else if sym_eq(sym, ks::KEY_Right) || sym_eq(sym, ks::KEY_KP_Right) {
             if self.cfg.columns > 1 {
                 let Some(s) = self.sel else { return };
                 let mut tmpsel = s;
@@ -1422,9 +1433,9 @@ impl Menu {
                     self.nav_down();
                 }
             }
-        } else if sym_eq(sym, ks::XKB_KEY_Down) || sym_eq(sym, ks::XKB_KEY_KP_Down) {
+        } else if sym_eq(sym, ks::KEY_Down) || sym_eq(sym, ks::KEY_KP_Down) {
             self.nav_down();
-        } else if sym_eq(sym, ks::XKB_KEY_Tab) {
+        } else if sym_eq(sym, ks::KEY_Tab) {
             if !self.cfg.alttab {
                 let Some(s) = self.sel else { return };
                 let sel_text = self.items[self.matches[s]].text.clone();
@@ -1752,7 +1763,9 @@ impl Menu {
 
     /* ── stdin ─────────────────────────────────────────────────────────── */
 
-    /// readstdin
+    /// readstdin — getline-per-line semantics: split on '\n' (a final chunk
+    /// without trailing newline is still an item), then strip ONE trailing
+    /// '\n' or '\t' byte and cut at the first NUL like strdup would.
     pub fn readstdin(&mut self) {
         if self.cfg.passwd || self.cfg.inputonly {
             self.inputw = 0;
@@ -1761,16 +1774,29 @@ impl Menu {
         }
 
         /* read each line from stdin and add it to the item list */
-        let stdin = std::io::stdin();
+        let mut input = Vec::new();
+        if std::io::stdin().read_to_end(&mut input).is_err() {
+            /* keep whatever we got, like getline erroring mid-way */
+        }
         let mut count: i32 = 0;
-        for line in stdin.lock().lines() {
-            let Ok(mut line) = line else { break };
-            if let Some(nul) = line.find('\0') {
-                line.truncate(nul);
+        let mut pieces: Vec<&[u8]> = input.split(|&b| b == b'\n').collect();
+        // the piece after a trailing '\n' (or of empty input) is EOF, not a line
+        if input.is_empty() || input.last() == Some(&b'\n') {
+            pieces.pop();
+        }
+        for raw in pieces {
+            let mut line: Vec<u8> = raw.to_vec();
+            if line.last() == Some(&b'\t') {
+                line.pop(); // only the last byte, like the C code
             }
-            while line.ends_with('\n') || line.ends_with('\t') {
-                line.pop();
-            }
+            let cut = line.iter().position(|b| *b == 0).unwrap_or(line.len());
+            line.truncate(cut);
+            let Ok(line) = String::from_utf8(line) else {
+                /* C strdup keeps invalid bytes; items are drawn as text so
+                 * drop-lossy lines are the closest safe equivalent */
+                count += 1;
+                continue;
+            };
             self.items.push(Item {
                 text: line.clone(),
                 stext: line,
@@ -1788,6 +1814,16 @@ impl Menu {
             self.cfg.columns =
                 (i / self.cfg.lines + (i % self.cfg.lines != 0) as i32).min(columns);
         }
+    }
+
+    /// `-it` — initial input text, applied with rejectnomatch temporarily
+    /// disabled (port of the insert() call in the argv loop; items are empty
+    /// at that point, so this only seeds text/cursor/smartcase).
+    pub fn initial_text(&mut self, s: &str) {
+        let tmp = self.cfg.rejectnomatch;
+        self.cfg.rejectnomatch = false;
+        self.insert(Some(s), s.len() as i32);
+        self.cfg.rejectnomatch = tmp;
     }
 
     /// max_textw — widest item text.
@@ -1878,10 +1914,11 @@ impl Menu {
                 if self.cfg.dmw != 0 {
                     self.mw = self.cfg.dmw;
                 } else {
-                    let maxw = self
-                        .max_textw()
+                    // MIN(MAX(max_textw() + promptw, min_width), wa.width);
+                    // `wa` still holds the root attributes here in the C code.
+                    let maxw = (self.max_textw() + self.promptw)
                         .max(self.cfg.min_width)
-                        .min(mon.width);
+                        .min(root_w);
                     self.mw = maxw;
                 }
                 if let Some((px, py)) = self.backend.pointer_position() {
@@ -1963,7 +2000,9 @@ impl Menu {
                 self.finish(1);
             };
             if self.cfg.centered {
-                let maxw = self.max_textw().max(self.cfg.min_width).min(wa_w);
+                let maxw = (self.max_textw() + self.promptw)
+                    .max(self.cfg.min_width)
+                    .min(wa_w);
                 self.mw = maxw;
                 x = (wa_w - self.mw) / 2;
                 y = (wa_h - self.mh) / 2;
@@ -1978,7 +2017,9 @@ impl Menu {
                         y -= self.mh;
                     }
                 }
-                let maxw = self.max_textw().max(self.cfg.min_width).min(wa_w);
+                let maxw = (self.max_textw() + self.promptw)
+                    .max(self.cfg.min_width)
+                    .min(wa_w);
                 self.mw = maxw;
             } else {
                 x = self.cfg.dmx;
@@ -1999,21 +2040,21 @@ impl Menu {
         self.do_match();
 
         if self.cfg.prematch && !self.matches.is_empty() && !self.text.is_empty() {
-            let tmpmatch = self.sel;
+            // remember the item that was the first match for the pretyped text
+            let tmpmatch_item = self.matches[0];
             let cursor = self.cursor as i32;
             self.insert(None, -cursor);
-            self.sel = tmpmatch;
-            if self.next.is_some() {
-                let last = self.matches.len().saturating_sub(1);
-                let mut pos = self.next.unwrap();
+            // sel = that item (find its position in the rebuilt match list)
+            self.sel = self.matches.iter().position(|&it| it == tmpmatch_item);
+            if let Some(next_pos) = self.next {
+                let mut pos = next_pos;
                 while pos + 1 < self.matches.len() {
-                    if Some(pos) == self.sel {
+                    if self.matches[pos] == tmpmatch_item {
                         self.curr = self.sel;
                         break;
                     }
                     pos += 1;
                 }
-                let _ = last;
             }
             self.calcoffsets();
             self.cfg.prematch = false;
