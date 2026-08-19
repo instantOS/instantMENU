@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use super::transition::Transition;
 use super::Menu;
-use crate::enums::{ExitStatus, Scheme, Side};
+use crate::enums::{ColorRole, ExitStatus, Scheme, Side};
 use crate::geom::Rect;
 
 /// easeOutQuint
@@ -22,39 +22,38 @@ impl Menu {
         if !self.cfg.animated || self.cfg.frame_count == 0 {
             return;
         }
-        self.renderer.set_scheme(Scheme::Selected);
         let frame_count = self.cfg.frame_count;
         let menu_width = self.layout.menu_width;
+        let menu_height = self.layout.menu_height;
+        let line_height = self.cfg.line_height;
+        let selected_y = self.selected_y;
+
         for time in 0..frame_count {
             let t = time as f64 / frame_count as f64;
+            let mut p = self.painter();
+            p.set_scheme(Scheme::Selected);
+
             // bottom animation
-            if self.selected_y + self.cfg.line_height < self.layout.menu_height - 10 {
+            if selected_y + line_height < menu_height - 10 {
                 let h = ease_out_quint(t)
-                    * (self.layout.menu_height - (self.cfg.line_height - 4) - self.selected_y)
-                        as f64;
-                self.renderer.rect(
-                    &mut self.canvas,
+                    * (menu_height - (line_height - 4) - selected_y) as f64;
+                p.fill_rect(
                     Rect::new(
                         0,
-                        self.selected_y + (self.cfg.line_height - 4),
+                        selected_y + (line_height - 4),
                         menu_width,
                         h as i32,
                     ),
-                    true,
-                    true,
-                    false,
+                    ColorRole::Background,
                 );
             }
             // top animation
-            let top_height = ease_out_quint(t) * self.selected_y as f64;
+            let top_height = ease_out_quint(t) * selected_y as f64;
             let top_y =
-                (self.selected_y + 4) as f64 - ease_out_quint(t) * (self.selected_y + 4) as f64;
-            self.renderer.rect(
-                &mut self.canvas,
+                (selected_y + 4) as f64 - ease_out_quint(t) * (selected_y + 4) as f64;
+            p.fill_rect(
                 Rect::new(0, top_y as i32, menu_width, top_height as i32),
-                true,
-                true,
-                false,
+                ColorRole::Background,
             );
             self.backend.present(&self.canvas);
             std::thread::sleep(Duration::from_micros(19000));
@@ -69,12 +68,12 @@ impl Menu {
         if self.cfg.frame_count == 0 {
             return;
         }
-        self.renderer.set_scheme(Scheme::Selected);
         let frame_count = self.cfg.frame_count;
         for time in 0..frame_count {
             let f = ease_out_quint(time as f64 / frame_count as f64);
-            self.renderer
-                .rect(&mut self.canvas, from.lerp(to, f), true, true, false);
+            let mut p = self.painter();
+            p.set_scheme(Scheme::Selected);
+            p.fill_rect(from.lerp(to, f), ColorRole::Background);
             self.backend.present(&self.canvas);
             std::thread::sleep(Duration::from_micros(19000));
         }

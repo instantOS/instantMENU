@@ -13,7 +13,7 @@ use super::transition::Transition;
 use super::Menu;
 use crate::backend::{BackendEvent, MouseButton, CONTROL_MASK};
 use crate::config::SlideSettings;
-use crate::enums::{ExitStatus, Scheme};
+use crate::enums::{ColorRole, ExitStatus, Scheme};
 use crate::geom::{Point, Rect};
 use xkbcommon::xkb::keysyms as ks;
 
@@ -285,19 +285,7 @@ impl Menu {
         let value = slider.value;
         let ratio = slider.ratio();
 
-        let normal = self.renderer.color_scheme(Scheme::Normal);
-        self.renderer.set_scheme(Scheme::Normal);
-        self.renderer.clear(&mut self.canvas, normal.bg);
-
         let fill = (ratio * width as f64).round() as i32;
-        self.renderer.set_scheme(Scheme::Selected);
-        self.renderer.rect(
-            &mut self.canvas,
-            Rect::new(0, 0, fill, height),
-            true,
-            false,
-            true,
-        );
 
         let label = match self.prompt() {
             Some(p) if !p.is_empty() => format!("{p}  {value}"),
@@ -305,23 +293,20 @@ impl Menu {
         };
         let lpad = self.renderer.horizontal_padding / 2;
         let label_width = self.text_width(&label) + self.renderer.horizontal_padding;
-        // normal-scheme box so the label stays readable over the fill
-        self.renderer.set_scheme(Scheme::Normal);
-        self.renderer.rect(
-            &mut self.canvas,
-            Rect::new(0, 0, label_width, height),
-            true,
-            true,
-            false,
-        );
-        self.renderer.text(
-            &mut self.canvas,
-            Rect::new(0, 0, label_width, height),
-            lpad,
-            &label,
-            false,
-            false,
-        );
+
+        let mut p = self.painter();
+        p.set_scheme(Scheme::Normal);
+        let normal_bg = p.scheme().bg;
+        p.clear(normal_bg);
+
+        // Selected-scheme progress fill with bottom detail accent strip
+        p.set_scheme(Scheme::Selected);
+        p.fill_accented_rect(Rect::new(0, 0, fill, height));
+
+        // Normal-scheme box so the label stays readable over the fill
+        p.set_scheme(Scheme::Normal);
+        p.fill_rect(Rect::new(0, 0, label_width, height), ColorRole::Background);
+        p.draw_text(Rect::new(0, 0, label_width, height), lpad, &label);
 
         self.backend.present(&self.canvas);
     }

@@ -12,7 +12,7 @@ use crate::backend::{
     SHIFT_MASK,
 };
 use crate::config::{Config, SlideSettings};
-use crate::enums::ExitStatus;
+use crate::enums::{ExitStatus, Scheme};
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color, Renderer};
 use std::collections::{HashSet, VecDeque};
@@ -965,8 +965,42 @@ fn slide_run_loop() {
 fn slide_draw_dispatches() {
     let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
     menu.draw_menu();
-    // nothing panicked and a frame was presented; the value box shows min/max
+    // nothing panicked and a frame was presented
     assert!(!menu.canvas.data.is_empty());
+}
+
+/// The fill paints the selected scheme's *background* (blue), not its fg
+/// (black) — regression test for an inverted `rect` flag that rendered the
+/// bar black with only the bottom accent strip blue.
+#[test]
+fn slide_paints_the_fill_with_the_selected_background() {
+    let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
+    menu.layout.menu_width = 600;
+    menu.layout.menu_height = 30; // below 40px: the accent strip branch
+    menu.canvas.resize(Size::new(600, 30));
+    menu.draw_slide(); // value 50 → the left 300px are the fill
+
+    let selected = menu.renderer.color_scheme(Scheme::Selected);
+    let normal = menu.renderer.color_scheme(Scheme::Normal);
+    let bgra = |c: Color| {
+        let [r, g, b, a] = c.channels();
+        [b, g, r, a]
+    };
+    let pixel = |m: &Menu, x: usize, y: usize| -> [u8; 4] {
+        m.canvas.data[(y * m.canvas.width as usize + x) * 4..][..4]
+            .try_into()
+            .unwrap()
+    };
+
+    // inside the fill (past the label box), above the bottom strip
+    assert_eq!(pixel(&menu, 250, 10), bgra(selected.bg));
+    // right of the fill: the cleared normal background
+    assert_eq!(pixel(&menu, 400, 10), bgra(normal.bg));
+    // the bottom 4px of the fill are the detail strip — and only of the fill
+    assert_eq!(pixel(&menu, 250, 28), bgra(selected.detail));
+    assert_eq!(pixel(&menu, 400, 28), bgra(normal.bg));
+    // the label box keeps the normal background over the fill
+    assert_eq!(pixel(&menu, 2, 10), bgra(normal.bg));
 }
 
 /// Slide mode does not read items from stdin even when some are provided.

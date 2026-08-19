@@ -28,7 +28,7 @@ use crate::backend::{Backend, CONTROL_MASK, SHIFT_MASK};
 use crate::config::Config;
 use crate::enums::{ExitStatus, ItemCategory};
 use crate::geom::Rect;
-use crate::render::{Canvas, Renderer};
+use crate::render::{Canvas, Painter, Renderer};
 
 use layout::Layout;
 use matcher::{MatchResult, Matcher};
@@ -262,6 +262,11 @@ impl Menu {
     /// held) — shared by Ctrl-v/Ctrl-y and middle-click paste.
     pub(in crate::menu) fn request_paste(&mut self, state: u32) {
         self.backend.request_selection(state & SHIFT_MASK != 0);
+    }
+
+    /// Create a [`Painter`] drawing context over `self.renderer` and `self.canvas`.
+    pub(in crate::menu) fn painter(&mut self) -> Painter<'_> {
+        self.renderer.painter(&mut self.canvas)
     }
 
     /* ── text measurement (the TEXTW macro) ───────────────────────────── */

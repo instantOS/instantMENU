@@ -8,9 +8,11 @@ mod canvas;
 mod color;
 mod font;
 mod fontconfig;
+mod painter;
 mod renderer;
 
 pub use canvas::Canvas;
 pub use color::{parse_color, scheme_from_strings, Color, SchemeColors, SchemeStrings};
 pub use font::{parse_font_name, FontSpec};
+pub use painter::{Painter, ACCENT_MAX_HEIGHT, ACCENT_STRIP_HEIGHT, ACCENT_TEXT_Y_OFFSET};
 pub use renderer::Renderer;

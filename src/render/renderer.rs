@@ -14,6 +14,7 @@ use super::canvas::Canvas;
 use super::color::{scheme_from_strings, Color, SchemeColors, SchemeStrings};
 use super::font::{parse_font_name, primary_font_height, resolve_family, FontSpec};
 use super::fontconfig;
+use super::painter::{Painter, ACCENT_STRIP_HEIGHT, ACCENT_TEXT_Y_OFFSET};
 
 /// The shared drawing context: fontset + color schemes + canvas, port of
 /// `Drw` plus the scheme state of instantmenu.c.
@@ -105,35 +106,13 @@ impl Renderer {
         self.frame_background = Some(color);
     }
 
-    /// drw_rect — filled rect in the current scheme; `invert` swaps fg/bg,
-    /// `accent` paints the bottom 4px strip with the detail color.
-    pub fn rect(
-        &mut self,
-        canvas: &mut Canvas,
-        rect: Rect,
-        filled: bool,
-        invert: bool,
-        accent: bool,
-    ) {
-        let color = if invert {
-            self.scheme.bg
-        } else {
-            self.scheme.fg
-        };
-        if filled && rect.h < 40 {
-            if accent {
-                self.fill_rect(canvas, rect, color);
-                let strip = Rect::new(rect.x, rect.bottom() - 4, rect.w, 4);
-                self.fill_rect(canvas, strip, self.scheme.detail);
-            } else {
-                self.fill_rect(canvas, rect, color);
-            }
-        } else {
-            self.fill_rect(canvas, rect, color);
-        }
+    /// Create a [`Painter`] drawing context bundling this renderer and the given canvas.
+    pub fn painter<'a>(&'a mut self, canvas: &'a mut Canvas) -> Painter<'a> {
+        Painter::new(self, canvas)
     }
 
-    fn fill_rect(&self, canvas: &mut Canvas, rect: Rect, color: Color) {
+    /// Fill a rectangle with a color directly into the canvas.
+    pub fn fill_rect(&self, canvas: &mut Canvas, rect: Rect, color: Color) {
         canvas.fill_rect(rect, color.channels());
     }
 
@@ -225,11 +204,11 @@ impl Renderer {
     }
 
     /// drw_text — draw `text` in `cell` with `left_padding` padding.
-    /// `invert` swaps fg/bg, `accent` paints a 4px detail strip at the
-    /// bottom and shifts the text up by 2px. Text that does not fit is
+    /// `invert` swaps fg/bg, `accent` paints a detail strip at the
+    /// bottom and shifts the text up by [`ACCENT_TEXT_Y_OFFSET`]. Text that does not fit is
     /// truncated with an ellipsis ("..."). Returns the x position after the
     /// drawn text.
-    pub fn text(
+    pub fn draw_text(
         &mut self,
         canvas: &mut Canvas,
         cell: Rect,
@@ -255,8 +234,16 @@ impl Renderer {
             self.scheme.bg
         };
         if accent {
-            self.fill_rect(canvas, Rect::new(x, y, w, h - 4), fill);
-            self.fill_rect(canvas, Rect::new(x, y + h - 4, w, 4), self.scheme.detail);
+            self.fill_rect(
+                canvas,
+                Rect::new(x, y, w, h - ACCENT_STRIP_HEIGHT),
+                fill,
+            );
+            self.fill_rect(
+                canvas,
+                Rect::new(x, y + h - ACCENT_STRIP_HEIGHT, w, ACCENT_STRIP_HEIGHT),
+                self.scheme.detail,
+            );
         } else if self.frame_background != Some(fill) {
             self.fill_rect(canvas, cell, fill);
         }
@@ -348,7 +335,12 @@ impl Renderer {
         // vertical centering like drw_text:
         // ty = y + (h - usedfont->h)/2 + ascent, here the buffer baseline sits
         // at ascent within font_height rows.
-        let y_off = y + (h - self.font_height) / 2 - if accent { 2 } else { 0 };
+        let y_off = y + (h - self.font_height) / 2
+            - if accent {
+                ACCENT_TEXT_Y_OFFSET
+            } else {
+                0
+            };
 
         layout.buffer.draw(
             &mut self.font_system,
