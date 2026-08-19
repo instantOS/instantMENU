@@ -7,6 +7,7 @@
 
 use clap::Parser;
 
+use crate::backend::BackendChoice;
 use crate::config::{MatchMode, Position};
 
 #[derive(Parser, Debug)]
@@ -16,6 +17,10 @@ use crate::config::{MatchMode, Position};
     version = crate::config::VERSION,
 )]
 pub struct Args {
+    /// Backend to use: auto, x11 or wayland.
+    #[arg(long, value_enum, value_name = "BACKEND", default_value = "auto")]
+    pub backend: BackendChoice,
+
     /// Where the menu appears on screen: top, bottom or centered.
     #[arg(
         long,
@@ -220,6 +225,22 @@ pub struct Args {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backend_choice_parses() {
+        use crate::backend::BackendChoice;
+
+        let a = Args::try_parse_from(["instantmenu"]).unwrap();
+        assert_eq!(a.backend, BackendChoice::Auto);
+        let a = Args::try_parse_from(["instantmenu", "--backend", "x11"]).unwrap();
+        assert_eq!(a.backend, BackendChoice::X11);
+        let a = Args::try_parse_from(["instantmenu", "--backend", "wayland"]).unwrap();
+        assert_eq!(a.backend, BackendChoice::Wayland);
+        let a = Args::try_parse_from(["instantmenu", "--backend", "auto"]).unwrap();
+        assert_eq!(a.backend, BackendChoice::Auto);
+        assert!(Args::try_parse_from(["instantmenu", "--backend", "xorg"]).is_err());
+        assert!(Args::try_parse_from(["instantmenu", "--backend"]).is_err());
+    }
 
     #[test]
     fn smartrun_invocation_parses() {

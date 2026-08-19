@@ -4,8 +4,21 @@
 pub mod wayland;
 pub mod x11;
 
+use clap::ValueEnum;
+
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
+
+/// Backend selection for `--backend`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum BackendChoice {
+    /// Auto-detect: Wayland when WAYLAND_DISPLAY is set, else X11.
+    Auto,
+    /// X11 (runs on Xwayland when started from a Wayland session).
+    X11,
+    /// Wayland (layer-shell / xdg-shell).
+    Wayland,
+}
 
 /// A monitor, port of `XineramaScreenInfo` usage in instantmenu.c.
 #[derive(Debug, Clone)]
@@ -139,15 +152,24 @@ pub const MOD5_MASK: u32 = 1 << 7;
 /// Offset added to X11/evdev keycodes to get an xkb keycode.
 pub const XKB_OFFSET: u32 = 8;
 
-/// Open the backend: Wayland when WAYLAND_DISPLAY is set, else X11.
+/// Open the backend. `choice` is the `--backend` selection: `Auto` prefers
+/// Wayland when WAYLAND_DISPLAY is set and falls back to X11; `X11` and
+/// `Wayland` honor the explicit choice and error out instead of falling back.
 /// `embed` is the `-W` window id (X11 only; ignored on Wayland).
-pub fn open(embed: Option<u32>) -> Result<Box<dyn Backend>, String> {
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        match wayland::WaylandBackend::new() {
-            Ok(b) => return Ok(Box::new(b)),
-            Err(e) => eprintln!("instantmenu: wayland connection failed ({e}), trying X11"),
+pub fn open(embed: Option<u32>, choice: BackendChoice) -> Result<Box<dyn Backend>, String> {
+    match choice {
+        BackendChoice::X11 => Ok(Box::new(x11::X11Backend::new(embed)?)),
+        BackendChoice::Wayland => Ok(Box::new(wayland::WaylandBackend::new()?)),
+        BackendChoice::Auto => {
+            if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+                match wayland::WaylandBackend::new() {
+                    Ok(b) => return Ok(Box::new(b)),
+                    Err(e) => {
+                        eprintln!("instantmenu: wayland connection failed ({e}), trying X11")
+                    }
+                }
+            }
+            Ok(Box::new(x11::X11Backend::new(embed)?))
         }
     }
-    let x11 = x11::X11Backend::new(embed)?;
-    Ok(Box::new(x11))
 }
