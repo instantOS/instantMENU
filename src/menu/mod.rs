@@ -25,10 +25,11 @@ use crate::render::{Canvas, Renderer};
 /// sizeof text in the C version (BUFSIZ) minus the terminator.
 const TEXT_MAX: usize = 8192 - 1;
 
-/// FontAwesome glyphs drawn in the left/right command cells (U+F0A0 / U+F0A1
-/// in the C version).
-const LEFT_GLYPH: &str = "\u{f0a0}";
-const RIGHT_GLYPH: &str = "\u{f0a1}";
+/// FontAwesome glyphs drawn in the left/right command cells. The C version
+/// used U+F0A0/U+F0A1, which are `fa-hdd-o` and `fa-bullhorn` (not arrows);
+/// use the actual arrow codepoints `fa-arrow-left`/`fa-arrow-right`.
+const LEFT_GLYPH: &str = "\u{f060}";
+const RIGHT_GLYPH: &str = "\u{f061}";
 
 pub struct Menu {
     pub cfg: Config,

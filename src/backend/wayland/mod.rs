@@ -122,6 +122,11 @@ pub struct EventState {
     configured: bool,
     width: i32,
     height: i32,
+    /// border drawn around the menu content (`--border-width`); X11 gets this
+    /// from the server, but Wayland surfaces have no border, so it is painted
+    /// into the buffer here.
+    border_width: i32,
+    border_color: Color,
     /// canvas copy drawn once the first Configure arrives
     pending_frame: Option<(Vec<u8>, i32, i32)>,
 
@@ -164,6 +169,8 @@ impl EventState {
             configured: false,
             width: 0,
             height: 0,
+            border_width: 0,
+            border_color: Color::rgb(0, 0, 0),
             pending_frame: None,
             pool: None,
             clipboard_offer: None,
@@ -192,8 +199,11 @@ impl EventState {
             self.pending_frame = Some((bgra.to_vec(), w, h));
             return;
         }
-        let width = w.max(1);
-        let height = h.max(1);
+        let content_w = w.max(1) as usize;
+        let content_h = h.max(1) as usize;
+        let border = self.border_width.max(0) as usize;
+        let width = (content_w + 2 * border) as i32;
+        let height = (content_h + 2 * border) as i32;
         let stride = width as usize * 4;
         let needed = stride * height as usize;
 
@@ -235,10 +245,34 @@ impl EventState {
         };
         let offset = pool.slots[idx].offset;
 
-        /* Canvas already matches little-endian wl_shm ARGB8888 (BGRA). */
+        /* Canvas already matches little-endian wl_shm ARGB8888 (BGRA). When a
+         * border width is set, fill the frame with the border color and copy
+         * the content into the inset region — Wayland surfaces have no
+         * server-side border like X11 windows do. */
         unsafe {
             let dst = pool.memory.add(offset);
-            std::ptr::copy_nonoverlapping(bgra.as_ptr(), dst, needed);
+            if border == 0 {
+                std::ptr::copy_nonoverlapping(bgra.as_ptr(), dst, needed);
+            } else {
+                let border_bgra = [
+                    self.border_color.b(),
+                    self.border_color.g(),
+                    self.border_color.r(),
+                    self.border_color.a(),
+                ];
+                let pixels = (stride * height as usize) / 4;
+                let mut cursor = dst;
+                for _ in 0..pixels {
+                    std::ptr::copy_nonoverlapping(border_bgra.as_ptr(), cursor, 4);
+                    cursor = cursor.add(4);
+                }
+                let content_stride = content_w * 4;
+                for row in 0..content_h {
+                    let src = bgra.as_ptr().add(row * content_stride);
+                    let dst_row = dst.add((row + border) * stride + border * 4);
+                    std::ptr::copy_nonoverlapping(src, dst_row, content_stride);
+                }
+            }
         }
         let buffer = pool.slots[idx].buffer.clone();
         if let Some(surface) = &self.surface {
@@ -339,6 +373,18 @@ impl WaylandBackend {
         None
     }
 
+    /// Read and dispatch any events already available on the Wayland socket
+    /// without blocking. The animation loop blocks between frames without
+    /// dispatching, so `present` pumps the socket itself to process
+    /// `wl_buffer.release` and let the next frame reuse a buffer.
+    fn pump_pending(&mut self) {
+        if let Some(guard) = self.queue.prepare_read() {
+            // Non-blocking: `read` returns `WouldBlock` when nothing is buffered.
+            let _ = guard.read();
+        }
+        let _ = self.queue.dispatch_pending(&mut self.state);
+    }
+
     /// xdg-shell managed window.
     fn create_managed(
         &mut self,
@@ -358,7 +404,8 @@ impl WaylandBackend {
         Ok(())
     }
 
-    /// wlr-layer-shell surface anchored to the chosen output.
+    /// wlr-layer-shell surface anchored to the chosen output. `w`/`h` are the
+    /// full surface size (menu content plus any `--border-width`).
     fn create_layer(
         &mut self,
         surface: &wl_surface::WlSurface,
@@ -449,15 +496,18 @@ impl Backend for WaylandBackend {
         y: i32,
         w: i32,
         h: i32,
-        _border_width: i32,
+        border_width: i32,
         managed: bool,
         grab: bool,
         class_hint: &str,
         _bg: Color,
-        _border_color: Color,
+        border_color: Color,
     ) -> Result<(), String> {
-        self.state.width = w;
-        self.state.height = h;
+        let border_width = border_width.max(0);
+        self.state.width = w + 2 * border_width;
+        self.state.height = h + 2 * border_width;
+        self.state.border_width = border_width;
+        self.state.border_color = border_color;
 
         let surface = self
             .state
@@ -469,7 +519,14 @@ impl Backend for WaylandBackend {
         if managed {
             self.create_managed(&surface, class_hint)
         } else {
-            self.create_layer(&surface, x, y, w, h, grab)
+            self.create_layer(
+                &surface,
+                x,
+                y,
+                w + 2 * border_width,
+                h + 2 * border_width,
+                grab,
+            )
         }
     }
 
@@ -486,6 +543,7 @@ impl Backend for WaylandBackend {
     }
 
     fn present(&mut self, canvas: &Canvas) {
+        self.pump_pending();
         self.state.draw(&canvas.data, canvas.width, canvas.height);
         let _ = self.connection.flush();
     }
