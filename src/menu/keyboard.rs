@@ -390,6 +390,8 @@ impl Menu {
             }
             self.tabbed = true;
             Transition::Redraw
+        } else if sym == ks::KEY_space && self.cfg.space_confirm {
+            self.handle_return(state).at_least_redraw()
         } else {
             // insert: composed string from the input method
             if let Some(first) = buf.bytes().next() {

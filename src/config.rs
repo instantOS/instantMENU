@@ -39,6 +39,8 @@ pub struct Config {
     pub min_width: i32,
 
     pub instant: bool,
+    /* --space-confirm option; confirm selection with the space key */
+    pub space_confirm: bool,
     /* --match-mode option; item matching algorithm */
     pub match_mode: MatchMode,
     pub pre_match: bool,
@@ -56,8 +58,8 @@ pub struct Config {
 
     /* -p option; prompt to the left of input field */
     pub prompt: Option<String>,
-    /* -q option; placeholder inside the input field */
-    pub search_text: Option<String>,
+    /* --placeholder option; placeholder inside the input field */
+    pub placeholder: Option<String>,
     /* -lc option; command run on shift+left / left arrow cell */
     pub left_command: Option<String>,
     /* -rc option; command run on shift+right */
@@ -125,6 +127,7 @@ impl Default for Config {
             follow_cursor: false,
             min_width: 500,
             instant: false,
+            space_confirm: false,
             match_mode: MatchMode::Fuzzy,
             pre_match: false,
             smart_case: false,
@@ -139,7 +142,7 @@ impl Default for Config {
                 "JoyPixels:pixelsize=20:antialias=true:autohint=true".to_string(),
             ],
             prompt: None,
-            search_text: None,
+            placeholder: None,
             left_command: None,
             right_command: None,
             colors: [

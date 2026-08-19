@@ -326,7 +326,7 @@ impl Menu {
         if managed {
             let title = self
                 .cfg
-                .search_text
+                .placeholder
                 .clone()
                 .unwrap_or_else(|| "menu".to_string());
             self.backend.set_title(&title);

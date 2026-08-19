@@ -13,13 +13,9 @@ use crate::config::{MatchMode, Position};
 #[command(
     name = "instantmenu",
     about = "A dynamic menu for X11 and Wayland (instantMENU, Rust port)",
-    disable_version_flag = true,
+    version = crate::config::VERSION,
 )]
 pub struct Args {
-    /// Print version information and exit.
-    #[arg(long, short = 'v')]
-    pub version: bool,
-
     /// Where the menu appears on screen: top, bottom or centered.
     #[arg(long, value_enum, value_name = "POSITION", conflicts_with = "follow_cursor")]
     pub position: Option<Position>,
@@ -35,7 +31,6 @@ pub struct Args {
     /// Toast mode that times out after a while (tenths of seconds).
     #[arg(
         long,
-        short = 'T',
         value_name = "TENTHS",
         allow_hyphen_values = true,
         value_parser = clap::value_parser!(i32).range(0..)
@@ -47,11 +42,11 @@ pub struct Args {
     pub commented: bool,
 
     /// Place the menu at the mouse position.
-    #[arg(long, short = 'C', conflicts_with = "position")]
+    #[arg(long, conflicts_with = "position")]
     pub follow_cursor: bool,
 
     /// Input only (no item list).
-    #[arg(long, short = 'I')]
+    #[arg(long)]
     pub input_only: bool,
 
     /// Enable smart case matching.
@@ -66,8 +61,12 @@ pub struct Args {
     #[arg(long)]
     pub pre_match: bool,
 
+    /// Confirm the selection with the space key.
+    #[arg(long)]
+    pub space_confirm: bool,
+
     /// Make instantmenu take the full screen height.
-    #[arg(long, short = 'H')]
+    #[arg(long)]
     pub full_height: bool,
 
     /// Case-insensitive item matching.
@@ -79,19 +78,19 @@ pub struct Args {
     pub instant: bool,
 
     /// Display input as dots.
-    #[arg(long, short = 'P')]
+    #[arg(long)]
     pub password: bool,
 
     /// Use a monospace font (Fira Code Nerd Font:pixelsize=15).
-    #[arg(long, short = 'M', conflicts_with = "font")]
+    #[arg(long, conflicts_with = "font")]
     pub monospace: bool,
 
     /// Don't grab the keyboard.
-    #[arg(long, short = 'G')]
+    #[arg(long)]
     pub no_grab: bool,
 
     /// Alt-tab behaviour.
-    #[arg(long, short = 'A')]
+    #[arg(long)]
     pub alt_tab: bool,
 
     /// Display as a managed wm window.
@@ -100,11 +99,11 @@ pub struct Args {
 
     /// Execute this command on shift + right arrow.
     #[arg(long, value_name = "CMD")]
-    pub right_cmd: Option<String>,
+    pub right_command: Option<String>,
 
     /// Add a click target left of the input field running CMD.
     #[arg(long, value_name = "CMD")]
-    pub left_cmd: Option<String>,
+    pub left_command: Option<String>,
 
     /// Number of columns in grid mode (0 means 1; enables lines if unset).
     #[arg(long, short = 'g', value_name = "N", value_parser = clap::value_parser!(i32).range(0..))]
@@ -156,8 +155,8 @@ pub struct Args {
     pub prompt: Option<String>,
 
     /// Placeholder inside the input field.
-    #[arg(long, short = 'q', value_name = "TEXT")]
-    pub search_text: Option<String>,
+    #[arg(long, value_name = "TEXT")]
+    pub placeholder: Option<String>,
 
     /// Font or font set (overrides the X resource and default).
     #[arg(long, value_name = "FONT", conflicts_with = "monospace")]
@@ -193,7 +192,7 @@ pub struct Args {
     pub selected_fg: Option<String>,
 
     /// Embedding window id (X11 only).
-    #[arg(long, short = 'W', value_name = "ID", value_parser = parse_window_id)]
+    #[arg(long, value_name = "ID", value_parser = parse_window_id)]
     pub embed: Option<u32>,
 
     /// Border width.
@@ -222,9 +221,9 @@ mod tests {
         /* the argv instantmenu_smartrun passes (see instantmenu_smartrun) */
         let argv = [
             "instantmenu",
-            "--right-cmd", "instantmenu_smartrun terminal",
-            "--left-cmd", "instantmenu_smartrun desktop",
-            "-p", "desktop", "-i", "--fast", "--search-text", "search apps",
+            "--right-command", "instantmenu_smartrun terminal",
+            "--left-command", "instantmenu_smartrun desktop",
+            "-p", "desktop", "-i", "--fast", "--placeholder", "search apps",
             "-l", "10", "--position", "centered", "--width", "-1",
             "--line-height", "-1", "--border-width", "4",
         ];
@@ -250,6 +249,26 @@ mod tests {
     #[test]
     fn garbage_numbers_rejected() {
         assert!(Args::try_parse_from(["instantmenu", "--lines", "banana"]).is_err());
+    }
+
+    #[test]
+    fn demoted_shorts_rejected() {
+        /* the old uppercase and non-mnemonic shorts are now long-only */
+        for bad in [
+            &["instantmenu", "-P"][..],
+            &["instantmenu", "-M"][..],
+            &["instantmenu", "-W", "0x2a"][..],
+            &["instantmenu", "-G"][..],
+            &["instantmenu", "-T", "3"][..],
+            &["instantmenu", "-C"][..],
+            &["instantmenu", "-I"][..],
+            &["instantmenu", "-H"][..],
+            &["instantmenu", "-A"][..],
+            &["instantmenu", "-q", "x"][..],
+            &["instantmenu", "-v"][..],
+        ] {
+            assert!(Args::try_parse_from(bad).is_err(), "{bad:?} should be rejected");
+        }
     }
 
     #[test]
@@ -286,7 +305,7 @@ mod tests {
     #[test]
     fn nonsense_ranges_rejected() {
         /* negative values used to be accepted and misbehave at runtime */
-        assert!(Args::try_parse_from(["instantmenu", "-T", "-1"]).is_err());
+        assert!(Args::try_parse_from(["instantmenu", "--toast", "-1"]).is_err());
         assert!(Args::try_parse_from(["instantmenu", "--animation", "-5"]).is_err());
         assert!(Args::try_parse_from(["instantmenu", "--border-width", "-3"]).is_err());
         assert!(Args::try_parse_from(["instantmenu", "--monitor", "-2"]).is_err());
@@ -305,8 +324,8 @@ mod tests {
         assert_eq!(parse_window_id("42"), Ok(42));
         assert!(parse_window_id("banana").is_err());
         assert!(parse_window_id("-1").is_err());
-        assert!(Args::try_parse_from(["instantmenu", "-W", "0x2a"]).is_ok());
-        assert!(Args::try_parse_from(["instantmenu", "-W", "banana"]).is_err());
+        assert!(Args::try_parse_from(["instantmenu", "--embed", "0x2a"]).is_ok());
+        assert!(Args::try_parse_from(["instantmenu", "--embed", "banana"]).is_err());
     }
 }
 

@@ -192,7 +192,7 @@ impl Menu {
         }
     }
 
-    /// Draw the input field (text, search_text placeholder or password dots)
+    /// Draw the input field (text, placeholder or password dots)
     /// and the cursor.
     fn draw_input_field(&mut self, x: i32, arrow_width: i32, font_height: i32) {
         let w = if self.layout.lines > 0 || self.matcher.matches.is_empty() {
@@ -212,10 +212,10 @@ impl Menu {
         } else if !self.editor.text.is_empty() {
             self.renderer
                 .text(&mut self.canvas, field, lpad, &self.editor.text, false, false);
-        } else if let Some(search_text) = self.cfg.search_text.as_deref() {
+        } else if let Some(placeholder) = self.cfg.placeholder.as_deref() {
             self.renderer.set_scheme(Scheme::Fade);
             self.renderer
-                .text(&mut self.canvas, field, lpad, search_text, false, false);
+                .text(&mut self.canvas, field, lpad, placeholder, false, false);
             self.renderer.set_scheme(Scheme::Normal);
         }
 

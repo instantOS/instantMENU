@@ -15,10 +15,6 @@ fn main() {
     /* die silently on a closed pipe like the C version (| head etc.) */
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     let args = cli::Args::parse();
-    if args.version {
-        println!("instantmenu-{}", instantmenu::config::VERSION);
-        ExitStatus::Success.exit();
-    }
 
     let mut cfg = Config::default();
     apply_flags(&args, &mut cfg);
@@ -60,7 +56,7 @@ fn main() {
     for text in [
         args.initial_text.as_deref(),
         cfg.prompt.as_deref(),
-        cfg.search_text.as_deref(),
+        cfg.placeholder.as_deref(),
     ]
     .into_iter()
     .flatten()
@@ -123,6 +119,9 @@ fn apply_flags(args: &cli::Args, cfg: &mut Config) {
     if args.pre_match {
         cfg.pre_match = true;
     }
+    if args.space_confirm {
+        cfg.space_confirm = true;
+    }
     if args.full_height {
         cfg.full_height = true;
     }
@@ -184,8 +183,8 @@ fn apply_values(args: &cli::Args, cfg: &mut Config) -> (Option<String>, Vec<(Sch
     if let Some(p) = &args.prompt {
         cfg.prompt = Some(p.clone());
     }
-    if let Some(q) = &args.search_text {
-        cfg.search_text = Some(q.clone());
+    if let Some(q) = &args.placeholder {
+        cfg.placeholder = Some(q.clone());
     }
     if let Some(a) = args.animation {
         cfg.frame_count = a;
@@ -208,8 +207,8 @@ fn apply_values(args: &cli::Args, cfg: &mut Config) -> (Option<String>, Vec<(Sch
     if let Some(w) = args.embed {
         cfg.embed = Some(w);
     }
-    cfg.left_command = args.left_cmd.clone();
-    cfg.right_command = args.right_cmd.clone();
+    cfg.left_command = args.left_command.clone();
+    cfg.right_command = args.right_command.clone();
 
     /* temporary font/colors: applied AFTER X resources so the CLI wins */
     let mut temp_font: Option<String> = args.font.clone();
