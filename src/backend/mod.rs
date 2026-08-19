@@ -149,7 +149,8 @@ pub const MOD3_MASK: u32 = 1 << 5;
 pub const MOD4_MASK: u32 = 1 << 6;
 pub const MOD5_MASK: u32 = 1 << 7;
 
-/// Offset added to X11/evdev keycodes to get an xkb keycode.
+/// Offset added to raw evdev keycodes (Wayland) to get an xkb keycode.
+/// X11 keycodes already include this offset.
 pub const XKB_OFFSET: u32 = 8;
 
 /// Open the backend. `choice` is the `--backend` selection: `Auto` prefers

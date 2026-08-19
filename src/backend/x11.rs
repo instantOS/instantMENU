@@ -14,7 +14,7 @@ use x11rb::xcb_ffi::XCBConnection;
 use xkbcommon::xkb::x11 as xkbx11;
 use xkbcommon::xkb::{self, KeyDirection, Keycode};
 
-use super::{Backend, BackendEvent, MonitorInfo, MouseButton, XKB_OFFSET};
+use super::{Backend, BackendEvent, MonitorInfo, MouseButton};
 use crate::enums::ExitStatus;
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
@@ -97,7 +97,9 @@ impl X11Backend {
 
     /// keysym + utf8 text for a raw X11 keycode, keeping the xkb state fresh.
     fn lookup_key(&mut self, keycode: u8, pressed: bool) -> (u32, String) {
-        let code = Keycode::new(keycode as u32 + XKB_OFFSET);
+        /* X11 keycodes are already xkb keycodes (the 8-key offset over raw
+         * evdev is included); only Wayland's raw evdev codes need XKB_OFFSET. */
+        let code = Keycode::new(keycode as u32);
         self.xkb_state.update_key(
             code,
             if pressed {
