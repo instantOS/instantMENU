@@ -27,7 +27,7 @@ cd instantMENU
 
 instantMENU started as a fork of dmenu and keeps the dmenu workflow (items on stdin,
 selection on stdout, full keyboard control), with all extra features optional. The
-command line uses modern long options (`--width`, `--right-cmd`, ...) with a few
+command line uses modern long options (`--width`, `--right-command`, ...) with a few
 single-letter shortcuts (`-i`, `-p`, `-l`, ...) instead of dmenu's historical flags.
 
 --------

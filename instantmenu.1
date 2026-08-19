@@ -6,7 +6,7 @@ instantMENU \- menu for instantOS
 .RB [ OPTIONS ]
 .br
 .B instantmenu
-.RB [ \-rfiInPsvMGAH ]
+.RB [ \-rfins ]
 .RB [ \-l
 .IR lines ]
 .RB [ \-g
@@ -15,16 +15,14 @@ instantMENU \- menu for instantOS
 .IR monitor ]
 .RB [ \-p
 .IR prompt ]
-.RB [ \-q
-.IR pretext ]
 .RB [ \-x
 .IR xoffset ]
 .RB [ \-y
 .IR yoffset ]
 .RB [ \-w
 .IR width ]
-.RB [ \-W
-.IR windowid ]
+.RB [ \-a
+.IR duration ]
 .br
 .B instantmenu_run " ..."
 .SH DESCRIPTION
@@ -48,7 +46,7 @@ most common flags exist as well; they are listed for each option below.
 .BI \-\-help
 Print command line help and exit.
 .TP
-.BI \-v ", " \-\-version
+.BI \-V ", " \-\-version
 Print version information to stdout and exit.
 .TP
 .BI \-\-position " position"
@@ -64,17 +62,17 @@ Reject input if it results in no matches.
 Grab the keyboard before reading stdin if not reading from a tty.  This is
 faster, but will lock up X until stdin reaches end\-of\-file.
 .TP
-.BI \-T ", " \-\-toast " tenths"
+.BI \-\-toast " tenths"
 Toast mode: instantmenu draws itself, waits for the given time in tenths of
 seconds and exits without a selection.
 .TP
 .BI \-\-commented
 Activate instantASSIST mode (single\-letter launcher).
 .TP
-.BI \-C ", " \-\-follow-cursor
+.BI \-\-follow-cursor
 instantmenu appears at the position of the mouse cursor.
 .TP
-.BI \-I ", " \-\-input-only
+.BI \-\-input-only
 Only display the input field, without the item list.
 .TP
 .BI \-s ", " \-\-smart-case
@@ -91,7 +89,10 @@ exact matches first, then prefixes, then substrings), or
 .BI \-\-pre-match
 Enable pre matching.
 .TP
-.BI \-H ", " \-\-full-height
+.BI \-\-space-confirm
+Confirm the selection with the space key instead of typing a space.
+.TP
+.BI \-\-full-height
 Make instantmenu take the full screen height.
 .TP
 .BI \-i ", " \-\-insensitive
@@ -100,25 +101,25 @@ Match menu items case\-insensitively.
 .BI \-n ", " \-\-instant
 Instantly select the only match.
 .TP
-.BI \-P ", " \-\-password
+.BI \-\-password
 Display input as dots.
 .TP
-.BI \-M ", " \-\-monospace
+.BI \-\-monospace
 Use a monospace font (Fira Code Nerd Font:pixelsize=15).
 .TP
-.BI \-G ", " \-\-no-grab
+.BI \-\-no-grab
 Don't grab the keyboard.
 .TP
-.BI \-A ", " \-\-alt-tab
+.BI \-\-alt-tab
 Activate alt\-tab behaviour.
 .TP
 .BI \-\-managed
 Let instantmenu be managed by the window manager as a normal window.
 .TP
-.BI \-\-right-cmd " command"
+.BI \-\-right-command " command"
 Run command on shift + right.
 .TP
-.BI \-\-left-cmd " command"
+.BI \-\-left-command " command"
 Run command on shift + left and add a click target left of the input field.
 .TP
 .BI \-g ", " \-\-columns " columns"
@@ -154,7 +155,7 @@ from 0.
 .BI \-p ", " \-\-prompt " prompt"
 Define the prompt to be displayed to the left of the input field.
 .TP
-.BI \-q ", " \-\-search-text " pretext"
+.BI \-\-placeholder " pretext"
 Define text to be displayed in an empty input field.
 .TP
 .BI \-\-font " font"
@@ -181,7 +182,7 @@ Define the selected background color.
 .BI \-\-selected-fg " color"
 Define the selected foreground color.
 .TP
-.BI \-W ", " \-\-embed " windowid"
+.BI \-\-embed " windowid"
 Embed into windowid (X11 only).
 .TP
 .BI \-\-border-width " borderwidth"

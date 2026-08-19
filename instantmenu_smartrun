@@ -22,7 +22,7 @@ if [ -n "$2" ] || [ -z "$1" ]; then
 else
     if [ "$1" = "desktop" ]; then
         shift 1
-        i3-dmenu-desktop --dmenu="instantmenu -p desktop --left-cmd \"instantmenu_smartrun terminal\" --right-cmd \"instantmenu_smartrun\" --search-text \"search apps\" -l 10 --position centered -i --width 900 --line-height -1 --border-width 4${TOAST_DMENU}"
+        i3-dmenu-desktop --dmenu="instantmenu -p desktop --left-command \"instantmenu_smartrun terminal\" --right-command \"instantmenu_smartrun\" --placeholder \"search apps\" -l 10 --position centered -i --width 900 --line-height -1 --border-width 4${TOAST_DMENU}"
         exit
     fi
     LIST="$HOME/.cache/instanttermmenuhist"
@@ -37,8 +37,8 @@ if [ -n "$2" ]; then
         tac "$LIST"
         instantmenu_path | sort -u
     } | perl -nE '$seen{$_}++ or print' |
-        instantmenu --right-cmd "instantmenu_smartrun $RARGS" --left-cmd "instantmenu_smartrun $LARGS" \
-            -p "${1}" -i --fast --search-text "search apps" -l 10 --position centered --width 900 --line-height -1 --border-width 4 --initial-text "$2" "${TOAST_ARGS[@]}")
+        instantmenu --right-command "instantmenu_smartrun $RARGS" --left-command "instantmenu_smartrun $LARGS" \
+            -p "${1}" -i --fast --placeholder "search apps" -l 10 --position centered --width 900 --line-height -1 --border-width 4 --initial-text "$2" "${TOAST_ARGS[@]}")
 else
 
     # read history and path
@@ -46,8 +46,8 @@ else
         tac "$LIST"
         instantmenu_path | sort -u
     } | perl -nE '$seen{$_}++ or print' |
-        instantmenu --right-cmd "instantmenu_smartrun $RARGS" --left-cmd "instantmenu_smartrun $LARGS" \
-            -p "${1}" -i --fast --search-text "search apps" -l 10 --position centered --width 900 --line-height -1 --border-width 4 "${TOAST_ARGS[@]}")
+        instantmenu --right-command "instantmenu_smartrun $RARGS" --left-command "instantmenu_smartrun $LARGS" \
+            -p "${1}" -i --fast --placeholder "search apps" -l 10 --position centered --width 900 --line-height -1 --border-width 4 "${TOAST_ARGS[@]}")
 fi
 
 # check if the application doesn't exist (indicated by exit code 1 and short runtime)
