@@ -78,10 +78,14 @@ impl Editor {
         match dir {
             Direction::Backward => {
                 /* move cursor to the start of the word */
-                while self.cursor > 0 && self.is_delimiter(self.next_rune(Direction::Backward), delimiters) {
+                while self.cursor > 0
+                    && self.is_delimiter(self.next_rune(Direction::Backward), delimiters)
+                {
                     self.cursor = self.next_rune(Direction::Backward);
                 }
-                while self.cursor > 0 && !self.is_delimiter(self.next_rune(Direction::Backward), delimiters) {
+                while self.cursor > 0
+                    && !self.is_delimiter(self.next_rune(Direction::Backward), delimiters)
+                {
                     self.cursor = self.next_rune(Direction::Backward);
                 }
             }

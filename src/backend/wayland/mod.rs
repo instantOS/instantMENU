@@ -22,15 +22,13 @@ use wayland_protocols::wp::primary_selection::zv1::client::{
     zwp_primary_selection_offer_v1,
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
-use wayland_protocols_wlr::layer_shell::v1::client::{
-    zwlr_layer_shell_v1, zwlr_layer_surface_v1,
-};
+use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 use xkbcommon::xkb;
 
-use selection::pump_offer;
 use super::{Backend, BackendEvent, MonitorInfo};
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
+use selection::pump_offer;
 
 pub struct WaylandBackend {
     connection: Connection,
@@ -75,7 +73,11 @@ struct OfferTracker {
 
 impl OfferTracker {
     fn new() -> Self {
-        OfferTracker { mimes: Vec::new(), read_fd: None, pending: Vec::new() }
+        OfferTracker {
+            mimes: Vec::new(),
+            read_fd: None,
+            pending: Vec::new(),
+        }
     }
 
     fn best_mime(&self) -> Option<String> {
@@ -142,8 +144,10 @@ pub struct EventState {
 
     /* selection offers */
     clipboard_offer: Option<(wl_data_offer::WlDataOffer, OfferTracker)>,
-    primary_offer:
-        Option<(zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1, OfferTracker)>,
+    primary_offer: Option<(
+        zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1,
+        OfferTracker,
+    )>,
 
     /* events out */
     events: VecDeque<BackendEvent>,
@@ -248,7 +252,11 @@ impl EventState {
                     &self.queue_handle,
                     (),
                 );
-                pool.slots.push(ShmSlot { buffer, offset, released: false });
+                pool.slots.push(ShmSlot {
+                    buffer,
+                    offset,
+                    released: false,
+                });
                 pool.slots.len() - 1
             }
         };
@@ -322,7 +330,14 @@ impl EventState {
             unsafe { libc::close(fd) };
             return;
         }
-        let pool = unsafe { shm.create_pool(BorrowedFd::borrow_raw(fd), len as i32, &self.queue_handle, ()) };
+        let pool = unsafe {
+            shm.create_pool(
+                BorrowedFd::borrow_raw(fd),
+                len as i32,
+                &self.queue_handle,
+                (),
+            )
+        };
         self.pool = Some(ShmPool {
             pool,
             fd,
@@ -375,7 +390,11 @@ impl WaylandBackend {
             return Err("compositor has no wl_shm".to_string());
         }
         state.monitors = state.outputs.iter().map(|o| o.info.clone()).collect();
-        Ok(WaylandBackend { connection, queue, state })
+        Ok(WaylandBackend {
+            connection,
+            queue,
+            state,
+        })
     }
 
     fn pump_selection(&mut self) -> Option<BackendEvent> {
@@ -428,9 +447,10 @@ impl WaylandBackend {
         grab: bool,
     ) -> Result<(), String> {
         let state = &mut self.state;
-        let shell = state.layer_shell.as_ref().ok_or(
-            "compositor has no wlr-layer-shell (use -wm for managed windows)",
-        )?;
+        let shell = state
+            .layer_shell
+            .as_ref()
+            .ok_or("compositor has no wlr-layer-shell (use -wm for managed windows)")?;
         let output_index = state.output_for_point(rect.origin());
         let output = state.outputs.get(output_index).map(|o| o.proxy.clone());
         let layer_surface = shell.get_layer_surface(
@@ -607,12 +627,20 @@ impl Backend for WaylandBackend {
             }
             if let Some((_, tracker)) = &self.state.clipboard_offer {
                 if let Some(fd) = tracker.read_fd {
-                    fds.push(libc::pollfd { fd, events: libc::POLLIN, revents: 0 });
+                    fds.push(libc::pollfd {
+                        fd,
+                        events: libc::POLLIN,
+                        revents: 0,
+                    });
                 }
             }
             if let Some((_, tracker)) = &self.state.primary_offer {
                 if let Some(fd) = tracker.read_fd {
-                    fds.push(libc::pollfd { fd, events: libc::POLLIN, revents: 0 });
+                    fds.push(libc::pollfd {
+                        fd,
+                        events: libc::POLLIN,
+                        revents: 0,
+                    });
                 }
             }
             loop {
@@ -644,9 +672,15 @@ impl Backend for WaylandBackend {
 
     fn request_selection(&mut self, clipboard: bool) {
         let mime = if clipboard {
-            self.state.clipboard_offer.as_ref().and_then(|(_, t)| t.best_mime())
+            self.state
+                .clipboard_offer
+                .as_ref()
+                .and_then(|(_, t)| t.best_mime())
         } else {
-            self.state.primary_offer.as_ref().and_then(|(_, t)| t.best_mime())
+            self.state
+                .primary_offer
+                .as_ref()
+                .and_then(|(_, t)| t.best_mime())
         };
         let Some(mime) = mime else { return };
 
@@ -682,11 +716,13 @@ impl Backend for WaylandBackend {
         };
         if !sent {
             /* no offer, or a transfer is already in flight */
-            unsafe { libc::close(fds[0]); libc::close(fds[1]) };
+            unsafe {
+                libc::close(fds[0]);
+                libc::close(fds[1])
+            };
         }
         /* flush so the compositor actually receives the request and writes
          * to the pipe (next_event() polls it only after this) */
         let _ = self.connection.flush();
     }
-
 }

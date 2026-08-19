@@ -2,13 +2,13 @@
 //! resources → command line), fontset creation, stdin/keyboard ordering and
 //! driving the menu through setup and the event loop.
 
+use clap::Parser;
 use instantmenu::backend;
 use instantmenu::cli;
 use instantmenu::config::Config;
 use instantmenu::enums::{ColorRole, ExitStatus, Scheme};
 use instantmenu::menu::{self, Menu};
 use instantmenu::render::Renderer;
-use clap::Parser;
 use std::io::IsTerminal;
 
 fn main() {
@@ -148,7 +148,10 @@ fn apply_flags(args: &cli::Args, cfg: &mut Config) {
 
 /// Value options, plus the temporary font/color overrides applied after X
 /// resources.
-fn apply_values(args: &cli::Args, cfg: &mut Config) -> (Option<String>, Vec<(Scheme, ColorRole, String)>) {
+fn apply_values(
+    args: &cli::Args,
+    cfg: &mut Config,
+) -> (Option<String>, Vec<(Scheme, ColorRole, String)>) {
     if let Some(v) = args.toast {
         cfg.toast = v;
     }

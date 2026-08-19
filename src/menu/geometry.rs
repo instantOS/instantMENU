@@ -183,7 +183,12 @@ impl Menu {
     }
 
     /// Geometry when embedding into a parent window (`-W`, no monitor info).
-    fn embed_geometry(&mut self, root: Size, width: i32, layout: &mut Layout) -> Result<(), ExitStatus> {
+    fn embed_geometry(
+        &mut self,
+        root: Size,
+        width: i32,
+        layout: &mut Layout,
+    ) -> Result<(), ExitStatus> {
         let Some(parent) = self.backend.embed_parent_size() else {
             return Err(ExitStatus::Failure);
         };
@@ -254,8 +259,7 @@ impl Menu {
         }
         if self.cfg.full_height {
             layout.y = monitor.y + 32;
-            layout.menu_height =
-                root.h - self.cfg.border_width * 2 - (root.h - monitor.h + 32);
+            layout.menu_height = root.h - self.cfg.border_width * 2 - (root.h - monitor.h + 32);
             layout.lines = root.h / self.cfg.line_height - 2;
         } else if layout.y + layout.menu_height > root.h {
             layout.y = root.h - layout.menu_height;
@@ -264,9 +268,7 @@ impl Menu {
 
     /// Prematch: select the item that first matched the pretyped text.
     fn apply_pre_match(&mut self) -> Option<ExitStatus> {
-        if !(self.cfg.pre_match
-            && !self.matcher.matches.is_empty()
-            && !self.editor.text.is_empty())
+        if !(self.cfg.pre_match && !self.matcher.matches.is_empty() && !self.editor.text.is_empty())
         {
             return None;
         }

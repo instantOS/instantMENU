@@ -8,8 +8,7 @@ use super::matcher::Item;
 use super::transition::Transition;
 use super::Menu;
 use crate::backend::{
-    Backend, BackendEvent, MonitorInfo, MouseButton, CONTROL_MASK, MOD1_MASK, MOD4_MASK,
-    SHIFT_MASK,
+    Backend, BackendEvent, MonitorInfo, MouseButton, CONTROL_MASK, MOD1_MASK, MOD4_MASK, SHIFT_MASK,
 };
 use crate::config::Config;
 use crate::enums::ExitStatus;
@@ -67,7 +66,11 @@ impl Backend for StubBackend {
         self.feed.lock().unwrap().pop_front()
     }
     fn request_selection(&mut self, clipboard: bool) {
-        self.state.lock().unwrap().selection_requests.push(clipboard);
+        self.state
+            .lock()
+            .unwrap()
+            .selection_requests
+            .push(clipboard);
     }
 }
 
@@ -143,16 +146,13 @@ fn menu_with(cfg: Config, items: &[&str]) -> (Menu, StubHandle, SharedOutput) {
     menu.layout.menu_height = 240;
     menu.layout.bar_height = 30;
     menu.layout.input_width = 200;
+    menu.layout.columns = 1;
 
     let out = SharedOutput::default();
     menu.out = Box::new(out.clone());
 
     let _ = menu.do_match();
-    (
-        menu,
-        StubHandle { feed, state },
-        out,
-    )
+    (menu, StubHandle { feed, state }, out)
 }
 
 /// Type raw text through key events (sym 0: plain characters are only
@@ -177,7 +177,10 @@ fn return_prints_selection_and_exits() {
         key(&mut menu, ks::KEY_Return, 0),
         Transition::PrintAndExit("alpha".into())
     );
-    assert_eq!(menu.perform(Transition::PrintAndExit("alpha".into())), Some(ExitStatus::Success));
+    assert_eq!(
+        menu.perform(Transition::PrintAndExit("alpha".into())),
+        Some(ExitStatus::Success)
+    );
     assert_eq!(out.contents(), "alpha\n");
 }
 
@@ -241,8 +244,10 @@ fn tab_completes_to_selection() {
 /// -r: an edit that empties the match list is reverted.
 #[test]
 fn reject_no_match_reverts_edit() {
-    let mut cfg = Config::default();
-    cfg.reject_no_match = true;
+    let cfg = Config {
+        reject_no_match: true,
+        ..Config::default()
+    };
     let (mut menu, _stub, _out) = menu_with(cfg, &["alpha"]);
     type_text(&mut menu, "alph");
     type_text(&mut menu, "x");
@@ -279,6 +284,28 @@ fn ctrl_k_truncates_at_cursor() {
     assert_eq!(menu.editor.text, "al");
 }
 
+/// Ctrl+s inserts the literal ".*" (the regex-any prefix trick).
+#[test]
+fn ctrl_s_inserts_regex_any() {
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha", "beta"]);
+    assert_eq!(key(&mut menu, ks::KEY_s, CONTROL_MASK), Transition::Redraw);
+    assert_eq!(menu.editor.text, ".*");
+}
+
+/// Ctrl+j/Ctrl+m are Return with the modifier consumed: a plain confirm.
+#[test]
+fn ctrl_j_confirms_like_return() {
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha", "beta"]);
+    assert_eq!(
+        key(&mut menu, ks::KEY_j, CONTROL_MASK),
+        Transition::PrintAndExit("alpha".into())
+    );
+    assert_eq!(
+        key(&mut menu, ks::KEY_m, CONTROL_MASK),
+        Transition::PrintAndExit("alpha".into())
+    );
+}
+
 /// Paste inserts only the first line of the selection.
 #[test]
 fn paste_takes_the_first_line() {
@@ -287,17 +314,17 @@ fn paste_takes_the_first_line() {
     assert_eq!(menu.editor.text, "pasted");
 }
 
-/// Ctrl+v pastes the clipboard and redraws; Ctrl+y pastes the primary
-/// selection without forcing a redraw.
+/// Ctrl+v pastes and redraws; Ctrl+y pastes without forcing a redraw. Both
+/// take the primary selection — Shift switches the request to the clipboard.
 #[test]
-fn ctrl_v_and_ctrl_y_request_different_selections() {
+fn ctrl_v_and_ctrl_y_request_selections() {
     let (mut menu, stub, _out) = menu_with(Config::default(), &["alpha"]);
     assert_eq!(key(&mut menu, ks::KEY_v, CONTROL_MASK), Transition::Redraw);
     assert_eq!(key(&mut menu, ks::KEY_y, CONTROL_MASK), Transition::Nop);
-    assert_eq!(*stub.state().selection_requests.last().unwrap(), true);
-    stub.state().selection_requests.clear();
-    key(&mut menu, ks::KEY_y, CONTROL_MASK);
-    assert_eq!(*stub.state().selection_requests.last().unwrap(), false);
+    assert!(!*stub.state().selection_requests.last().unwrap());
+    // Shift+v holds the clipboard variant
+    key(&mut menu, ks::KEY_v, CONTROL_MASK | SHIFT_MASK);
+    assert!(*stub.state().selection_requests.last().unwrap());
 }
 
 /* ── instant and commented modes ───────────────────────────────────────── */
@@ -305,8 +332,10 @@ fn ctrl_v_and_ctrl_y_request_different_selections() {
 /// -n: typing down to a single fuzzy match prints it and exits mid-edit.
 #[test]
 fn instant_mode_picks_while_typing() {
-    let mut cfg = Config::default();
-    cfg.instant = true;
+    let cfg = Config {
+        instant: true,
+        ..Config::default()
+    };
     let (mut menu, _stub, _out) = menu_with(cfg, &["abc", "bcd"]);
     assert_eq!(
         menu.key_press(0, 0, "a"),
@@ -314,17 +343,27 @@ fn instant_mode_picks_while_typing() {
     );
 }
 
-/// -ct: the first typed byte picks the first item starting with it.
+/// -ct: the first typed byte picks the first item starting with it; a byte
+/// no item starts with exits. (The first edit stays applied, so a second
+/// keystroke still decides by the first byte — the menu would have exited
+/// already in production.)
 #[test]
 fn commented_mode_picks_by_first_byte() {
-    let mut cfg = Config::default();
-    cfg.commented = true;
-    let (mut menu, _stub, _out) = menu_with(cfg, &["yes", "no"]);
+    let cfg = Config {
+        commented: true,
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg.clone(), &["yes", "no"]);
     assert_eq!(
         menu.key_press(0, 0, "n"),
         Transition::PrintAndExit("no".into())
     );
-    assert_eq!(menu.key_press(0, 0, "x"), Transition::Exit(ExitStatus::Success));
+
+    let (mut menu, _stub, _out) = menu_with(cfg.clone(), &["yes", "no"]);
+    assert_eq!(
+        menu.key_press(0, 0, "x"),
+        Transition::Exit(ExitStatus::Success)
+    );
 }
 
 /* ── exit paths ────────────────────────────────────────────────────────── */
@@ -372,18 +411,17 @@ fn right_click_exits() {
 /// confirms the selection.
 #[test]
 fn alt_tab_release_confirms() {
-    let mut cfg = Config::default();
-    cfg.alt_tab = true;
+    let cfg = Config {
+        alt_tab: true,
+        ..Config::default()
+    };
     let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta", "gamma"]);
 
     assert_eq!(key(&mut menu, ks::KEY_Tab, MOD1_MASK), Transition::Redraw);
     assert_eq!(menu.selection.selected, Some(1));
 
     // the Tab release only ends the tab cycle
-    assert_eq!(
-        menu.key_release(ks::KEY_Tab, MOD1_MASK),
-        Transition::Nop
-    );
+    assert_eq!(menu.key_release(ks::KEY_Tab, MOD1_MASK), Transition::Nop);
     // the Alt release confirms
     assert_eq!(
         menu.key_release(ks::KEY_Alt_L, MOD1_MASK),
@@ -397,9 +435,11 @@ fn alt_tab_release_confirms() {
 /// moving the cursor.
 #[test]
 fn left_command_triggers_spawn() {
-    let mut cfg = Config::default();
-    cfg.left_command = Some("true".into());
-    cfg.frame_count = 0; // skip the animation in tests
+    let cfg = Config {
+        left_command: Some("true".into()),
+        frame_count: 0, // skip the animation in tests
+        ..Config::default()
+    };
     let (mut menu, _stub, _out) = menu_with(cfg, &["alpha"]);
     assert_eq!(
         key(&mut menu, ks::KEY_Left, SHIFT_MASK),
@@ -486,6 +526,18 @@ fn run_returns_failure_when_the_connection_dies() {
     assert_eq!(menu.run(), ExitStatus::Failure);
 }
 
+/// -T: toast mode ignores all events and times out successfully.
+#[test]
+fn run_toast_times_out_with_success() {
+    let cfg = Config {
+        toast: 1, // one tenth of a second
+        ..Config::default()
+    };
+    let (mut menu, stub, _out) = menu_with(cfg, &["alpha"]);
+    stub.key(ks::KEY_Escape, 0, "");
+    assert_eq!(menu.run(), ExitStatus::Success);
+}
+
 #[test]
 fn run_prints_selection_and_exits_successfully() {
     let (mut menu, stub, out) = menu_with(Config::default(), &["alpha", "beta"]);
@@ -507,21 +559,75 @@ fn run_expose_presents_without_side_effects() {
 /// FocusInOther regrabs focus under the prompt title (or "dmenu").
 #[test]
 fn run_focus_loss_regrabs_with_prompt_title() {
-    let mut cfg = Config::default();
-    cfg.prompt = Some("menu".into());
+    let cfg = Config {
+        prompt: Some("menu".into()),
+        ..Config::default()
+    };
     let (mut menu, stub, _out) = menu_with(cfg, &["alpha"]);
     stub.push(BackendEvent::FocusInOther);
     stub.key(ks::KEY_Escape, 0, "");
     assert_eq!(menu.run(), ExitStatus::Failure);
     assert_eq!(stub.state().focus_titles, vec!["menu".to_string()]);
+
+    let (mut menu, stub, _out) = menu_with(Config::default(), &["alpha"]);
+    stub.push(BackendEvent::FocusInOther);
+    stub.key(ks::KEY_Escape, 0, "");
+    assert_eq!(menu.run(), ExitStatus::Failure);
+    assert_eq!(stub.state().focus_titles, vec!["dmenu".to_string()]);
+}
+
+/// Window destruction ends the loop with failure.
+#[test]
+fn run_destroyed_exits_with_failure() {
+    let (mut menu, stub, _out) = menu_with(Config::default(), &["alpha"]);
+    stub.push(BackendEvent::Destroyed);
+    assert_eq!(menu.run(), ExitStatus::Failure);
+}
+
+/// Motion is throttled to ~60fps: events closer than one frame are dropped.
+#[test]
+fn run_motion_is_throttled() {
+    let (mut menu, stub, _out) = menu_with(Config::default(), &["alpha", "beta"]);
+    let rects = menu.horizontal_item_rects(0);
+    let item0 = Point::new(rects[0].1.x + 5, rects[0].1.y + 5);
+    let item1 = Point::new(rects[1].1.x + 5, rects[1].1.y + 5);
+
+    stub.push(BackendEvent::Motion {
+        time: 1000,
+        pos: item1,
+    });
+    // 10ms later: within the frame budget, must be dropped
+    stub.push(BackendEvent::Motion {
+        time: 1010,
+        pos: item0,
+    });
+    stub.key(ks::KEY_Escape, 0, "");
+    assert_eq!(menu.run(), ExitStatus::Failure);
+    assert_eq!(menu.selection.selected, Some(1));
+
+    // well past the budget, the same event applies
+    let (mut menu, stub, _out) = menu_with(Config::default(), &["alpha", "beta"]);
+    stub.push(BackendEvent::Motion {
+        time: 1000,
+        pos: item1,
+    });
+    stub.push(BackendEvent::Motion {
+        time: 2000,
+        pos: item0,
+    });
+    stub.key(ks::KEY_Escape, 0, "");
+    assert_eq!(menu.run(), ExitStatus::Failure);
+    assert_eq!(menu.selection.selected, Some(0));
 }
 
 /// -Ps: the preselected-th item is selected and drawn before the first
 /// event is handled.
 #[test]
 fn run_preselects_before_the_first_event() {
-    let mut cfg = Config::default();
-    cfg.preselected = 2;
+    let cfg = Config {
+        preselected: 2,
+        ..Config::default()
+    };
     let (mut menu, stub, out) = menu_with(cfg, &["alpha", "beta", "gamma"]);
     stub.key(ks::KEY_Return, 0, "");
     assert_eq!(menu.run(), ExitStatus::Success);

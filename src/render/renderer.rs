@@ -107,8 +107,19 @@ impl Renderer {
 
     /// drw_rect — filled rect in the current scheme; `invert` swaps fg/bg,
     /// `accent` paints the bottom 4px strip with the detail color.
-    pub fn rect(&mut self, canvas: &mut Canvas, rect: Rect, filled: bool, invert: bool, accent: bool) {
-        let color = if invert { self.scheme.bg } else { self.scheme.fg };
+    pub fn rect(
+        &mut self,
+        canvas: &mut Canvas,
+        rect: Rect,
+        filled: bool,
+        invert: bool,
+        accent: bool,
+    ) {
+        let color = if invert {
+            self.scheme.bg
+        } else {
+            self.scheme.fg
+        };
         if filled && rect.h < 40 {
             if accent {
                 self.fill_rect(canvas, rect, color);
@@ -139,7 +150,8 @@ impl Renderer {
         if self.layout_cache.len() >= 1024 {
             self.layout_cache.clear();
         }
-        self.layout_cache.insert(text.to_owned(), TextLayout { width, buffer });
+        self.layout_cache
+            .insert(text.to_owned(), TextLayout { width, buffer });
         width
     }
 
@@ -193,7 +205,10 @@ impl Renderer {
                     CharClass::Emoji => &emoji,
                     CharClass::Normal => &primary,
                 };
-                spans.push((&text[start..index], Attrs::new().family(Family::Name(family))));
+                spans.push((
+                    &text[start..index],
+                    Attrs::new().family(Family::Name(family)),
+                ));
                 start = index;
                 current = class;
             }
@@ -242,14 +257,14 @@ impl Renderer {
         }
 
         // background
-        let fill = if invert { self.scheme.fg } else { self.scheme.bg };
+        let fill = if invert {
+            self.scheme.fg
+        } else {
+            self.scheme.bg
+        };
         if accent {
             self.fill_rect(canvas, Rect::new(x, y, w, h - 4), fill);
-            self.fill_rect(
-                canvas,
-                Rect::new(x, y + h - 4, w, 4),
-                self.scheme.detail,
-            );
+            self.fill_rect(canvas, Rect::new(x, y + h - 4, w, 4), self.scheme.detail);
         } else if self.frame_background != Some(fill) {
             self.fill_rect(canvas, cell, fill);
         }
@@ -257,7 +272,11 @@ impl Renderer {
             return x + w;
         }
 
-        let color = if invert { self.scheme.bg } else { self.scheme.fg };
+        let color = if invert {
+            self.scheme.bg
+        } else {
+            self.scheme.fg
+        };
         let cosmic_color = CosmicColor::rgba(color.r(), color.g(), color.b(), color.a());
 
         let available = w - left_padding;
@@ -274,14 +293,22 @@ impl Renderer {
             let mut hi = chars.len();
             while lo < hi {
                 let mid = (lo + hi).div_ceil(2);
-                let end = if mid < chars.len() { chars[mid].0 } else { text.len() };
+                let end = if mid < chars.len() {
+                    chars[mid].0
+                } else {
+                    text.len()
+                };
                 if self.text_width(&text[..end]) <= max_text_width {
                     lo = mid;
                 } else {
                     hi = mid - 1;
                 }
             }
-            let end = if lo < chars.len() { chars[lo].0 } else { text.len() };
+            let end = if lo < chars.len() {
+                chars[lo].0
+            } else {
+                text.len()
+            };
             display_text = &text[..end];
             drawn_width = self.text_width(display_text) + ellipsis_width;
             // draw ellipsis right after the truncated text
@@ -289,7 +316,15 @@ impl Renderer {
             self.draw_run(canvas, ellipsis_x, y, h, "...", cosmic_color, accent);
         }
         if !display_text.is_empty() {
-            self.draw_run(canvas, x + left_padding, y, h, display_text, cosmic_color, accent);
+            self.draw_run(
+                canvas,
+                x + left_padding,
+                y,
+                h,
+                display_text,
+                cosmic_color,
+                accent,
+            );
         }
 
         // drw_text returns the advanced x plus remaining w, which is x + w for
@@ -348,15 +383,13 @@ fn detect_locale() -> String {
     std::env::var("LC_ALL")
         .ok()
         .filter(|value| !value.is_empty())
-        .or_else(|| std::env::var("LC_CTYPE").ok().filter(|value| !value.is_empty()))
-        .or_else(|| std::env::var("LANG").ok().filter(|value| !value.is_empty()))
-        .map(|value| {
-            value
-                .split('.')
-                .next()
-                .unwrap_or("en_US")
-                .replace('_', "-")
+        .or_else(|| {
+            std::env::var("LC_CTYPE")
+                .ok()
+                .filter(|value| !value.is_empty())
         })
+        .or_else(|| std::env::var("LANG").ok().filter(|value| !value.is_empty()))
+        .map(|value| value.split('.').next().unwrap_or("en_US").replace('_', "-"))
         .unwrap_or_else(|| "en-US".to_string())
 }
 
@@ -372,7 +405,10 @@ fn char_class(ch: Option<char>) -> CharClass {
         Some(c) if matches!(c as u32, 0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD) => {
             CharClass::Icon
         }
-        Some(c) if (c as u32) >= 0x1F000 || matches!(c as u32, 0x2600..=0x27BF | 0x2190..=0x21FF | 0x2B00..=0x2BFF) => {
+        Some(c)
+            if (c as u32) >= 0x1F000
+                || matches!(c as u32, 0x2600..=0x27BF | 0x2190..=0x21FF | 0x2B00..=0x2BFF) =>
+        {
             CharClass::Emoji
         }
         _ => CharClass::Normal,

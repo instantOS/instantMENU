@@ -164,10 +164,13 @@ mod tests {
     fn selection_resets_to_top_on_match() {
         assert_eq!(Selection::from_match(0).selected, None);
         assert_eq!(Selection::from_match(0).current, None);
-        assert_eq!(Selection::from_match(3), Selection {
-            selected: Some(0),
-            current: Some(0),
-        });
+        assert_eq!(
+            Selection::from_match(3),
+            Selection {
+                selected: Some(0),
+                current: Some(0),
+            }
+        );
     }
 
     /// Vertical list: rows * columns * bar_height pixels per page.
@@ -182,7 +185,13 @@ mod tests {
         };
         // 3 rows of 30px fit into the 90px page; the 4th is the next page
         let paging = calc_paging(&sel, &its, &matches, &lay, &mut FakeMeasure);
-        assert_eq!(paging, Paging { next: Some(3), prev: 0 });
+        assert_eq!(
+            paging,
+            Paging {
+                next: Some(3),
+                prev: 0
+            }
+        );
 
         // page 2 (indices 3..6)
         let sel = Selection {
@@ -190,7 +199,13 @@ mod tests {
             current: Some(3),
         };
         let paging = calc_paging(&sel, &its, &matches, &lay, &mut FakeMeasure);
-        assert_eq!(paging, Paging { next: Some(6), prev: 0 });
+        assert_eq!(
+            paging,
+            Paging {
+                next: Some(6),
+                prev: 0
+            }
+        );
     }
 
     /// Horizontal list: the page is a pixel budget minus prompt, input field
@@ -206,19 +221,34 @@ mod tests {
             current: Some(0),
         };
         let paging = calc_paging(&sel, &its, &matches, &lay, &mut FakeMeasure);
-        assert_eq!(paging, Paging { next: Some(3), prev: 0 });
+        assert_eq!(
+            paging,
+            Paging {
+                next: Some(3),
+                prev: 0
+            }
+        );
 
         // wide items clamp to the budget: one per page
         let its = items(&["abcdefghijklmn", "abcdefghijklmn"]);
         let matches: Vec<usize> = (0..2).collect();
         let paging = calc_paging(&sel, &its, &matches, &lay, &mut FakeMeasure);
-        assert_eq!(paging, Paging { next: Some(1), prev: 0 });
+        assert_eq!(
+            paging,
+            Paging {
+                next: Some(1),
+                prev: 0
+            }
+        );
     }
 
     /// select_next turns the page exactly when it steps onto `next`.
     #[test]
     fn advance_turns_at_page_boundary() {
-        let paging = Paging { next: Some(3), prev: 0 };
+        let paging = Paging {
+            next: Some(3),
+            prev: 0,
+        };
 
         let within = Selection {
             selected: Some(0),
@@ -261,7 +291,10 @@ mod tests {
     /// select_prev turns the page when the selection is at the page top.
     #[test]
     fn retreat_turns_at_page_top() {
-        let paging = Paging { next: Some(6), prev: 0 };
+        let paging = Paging {
+            next: Some(6),
+            prev: 0,
+        };
 
         let within = Selection {
             selected: Some(4),

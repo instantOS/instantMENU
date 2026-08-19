@@ -93,7 +93,12 @@ impl Menu {
     }
 
     /// button_press
-    pub(super) fn button_press(&mut self, button: MouseButton, state: u32, pos: Point) -> Transition {
+    pub(super) fn button_press(
+        &mut self,
+        button: MouseButton,
+        state: u32,
+        pos: Point,
+    ) -> Transition {
         /* right-click: exit */
         if button == MouseButton::Right {
             return Transition::Exit(ExitStatus::Failure);
@@ -144,7 +149,9 @@ impl Menu {
             && pos.x >= 0
             && pos.x
                 <= x + w
-                    + if self.paging.prev == 0 || self.selection.current.map(|c| c == 0).unwrap_or(true) {
+                    + if self.paging.prev == 0
+                        || self.selection.current.map(|c| c == 0).unwrap_or(true)
+                    {
                         self.text_width("<")
                     } else {
                         0
@@ -171,7 +178,9 @@ impl Menu {
         if self.selected_is_comment() {
             return Transition::Nop;
         }
-        let out = self.selected_text().unwrap_or_else(|| self.editor.text.clone());
+        let out = self
+            .selected_text()
+            .unwrap_or_else(|| self.editor.text.clone());
         self.confirm(&out, state).at_least_redraw()
     }
 

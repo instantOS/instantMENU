@@ -63,11 +63,21 @@ impl Menu {
             self.selected_y = cell.y;
         }
 
-        let label_x = cell.x + if category == ItemCategory::Icon { temp_padding } else { 0 };
+        let label_x = cell.x
+            + if category == ItemCategory::Icon {
+                temp_padding
+            } else {
+                0
+            };
         let label_w = if self.cfg.commented {
             self.layout.bar_height
         } else {
-            cell.w - if category == ItemCategory::Icon { temp_padding } else { 0 }
+            cell.w
+                - if category == ItemCategory::Icon {
+                    temp_padding
+                } else {
+                    0
+                }
         };
         let left_padding = if self.cfg.commented {
             (self.layout.bar_height - self.renderer.text_width(output)) / 2
@@ -126,7 +136,11 @@ impl Menu {
             false,
             is_selected,
         );
-        let sc = if is_selected { Scheme::Hover } else { Scheme::Normal };
+        let sc = if is_selected {
+            Scheme::Hover
+        } else {
+            Scheme::Normal
+        };
         self.renderer.set_scheme(sc);
         (temp_padding, end)
     }
@@ -201,7 +215,11 @@ impl Menu {
             self.layout.input_width
         };
         self.renderer.set_scheme(Scheme::Normal);
-        let field_x = x + if self.cfg.left_command.is_some() { arrow_width } else { 0 };
+        let field_x = x + if self.cfg.left_command.is_some() {
+            arrow_width
+        } else {
+            0
+        };
         let field = Rect::new(field_x, 0, w, self.layout.bar_height);
         let lpad = self.renderer.horizontal_padding / 2;
 
@@ -210,8 +228,14 @@ impl Menu {
             self.renderer
                 .text(&mut self.canvas, field, lpad, &dots, false, false);
         } else if !self.editor.text.is_empty() {
-            self.renderer
-                .text(&mut self.canvas, field, lpad, &self.editor.text, false, false);
+            self.renderer.text(
+                &mut self.canvas,
+                field,
+                lpad,
+                &self.editor.text,
+                false,
+                false,
+            );
         } else if let Some(placeholder) = self.cfg.placeholder.as_deref() {
             self.renderer.set_scheme(Scheme::Fade);
             self.renderer
@@ -311,7 +335,11 @@ impl Menu {
         if self.show_numbers {
             let numbers = self.numbers.clone();
             let numbers_width = self.text_width(&numbers);
-            let right_padding = if self.cfg.right_command.is_some() { arrow_width } else { 0 };
+            let right_padding = if self.cfg.right_command.is_some() {
+                arrow_width
+            } else {
+                0
+            };
             self.renderer.text(
                 &mut self.canvas,
                 Rect::new(

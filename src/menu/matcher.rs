@@ -308,8 +308,7 @@ mod tests {
     /// with it; an empty query falls through to the normal matcher.
     #[test]
     fn commented_mode_picks_by_first_byte() {
-        let mut m =
-            matcher(|c| c.commented = true, &["yes", "no", "maybe"]);
+        let mut m = matcher(|c| c.commented = true, &["yes", "no", "maybe"]);
         assert_eq!(m.search("n"), MatchResult::CommentPick(Some(1)));
         assert_eq!(m.search("zzz"), MatchResult::CommentPick(None));
         assert_eq!(m.search(""), MatchResult::Listed);

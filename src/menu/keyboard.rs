@@ -72,7 +72,9 @@ impl Menu {
             if self.selected_is_comment() {
                 return Transition::Nop;
             }
-            let out = self.selected_text().unwrap_or_else(|| self.editor.text.clone());
+            let out = self
+                .selected_text()
+                .unwrap_or_else(|| self.editor.text.clone());
             return self.confirm(&out, state);
         }
         Transition::Nop
@@ -122,11 +124,7 @@ impl Menu {
             s if s == ks::KEY_g => sym = ks::KEY_Escape,
             s if s == ks::KEY_h => sym = ks::KEY_BackSpace,
             s if s == ks::KEY_i => sym = ks::KEY_Tab,
-            s if s == ks::KEY_j
-                || s == ks::KEY_J
-                || s == ks::KEY_m
-                || s == ks::KEY_M =>
-            {
+            s if s == ks::KEY_j || s == ks::KEY_J || s == ks::KEY_m || s == ks::KEY_M => {
                 sym = ks::KEY_Return;
                 state &= !CONTROL_MASK;
             }

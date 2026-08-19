@@ -38,7 +38,14 @@ pub(super) fn pump_offer<T>(slot: &mut Option<(T, OfferTracker)>) -> Option<Stri
 /// Load the xkb keymap from the compositor's keymap fd.
 pub(super) fn load_keymap(fd: RawFd, size: usize) -> Option<Xkb> {
     let map = unsafe {
-        libc::mmap(std::ptr::null_mut(), size, libc::PROT_READ, libc::MAP_PRIVATE, fd, 0)
+        libc::mmap(
+            std::ptr::null_mut(),
+            size,
+            libc::PROT_READ,
+            libc::MAP_PRIVATE,
+            fd,
+            0,
+        )
     };
     if map == libc::MAP_FAILED {
         return None;
@@ -55,7 +62,11 @@ pub(super) fn load_keymap(fd: RawFd, size: usize) -> Option<Xkb> {
         xkb::KEYMAP_COMPILE_NO_FLAGS,
     )?;
     let state = xkb::State::new(&keymap);
-    Some(Xkb { keymap, state, mods: 0 })
+    Some(Xkb {
+        keymap,
+        state,
+        mods: 0,
+    })
 }
 
 /// xkb mod mask -> X11 modifier mask (matched by mod name).

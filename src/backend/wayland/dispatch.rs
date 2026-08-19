@@ -13,15 +13,13 @@ use wayland_protocols::wp::primary_selection::zv1::client::{
     zwp_primary_selection_offer_v1,
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
-use wayland_protocols_wlr::layer_shell::v1::client::{
-    zwlr_layer_shell_v1, zwlr_layer_surface_v1,
-};
-use xkbcommon::xkb::{Keycode, KeyDirection};
+use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+use xkbcommon::xkb::{KeyDirection, Keycode};
 
-use crate::backend::{MouseButton, XKB_OFFSET};
-use crate::geom::{Point, Rect};
 use super::selection::{load_keymap, x11_mask};
 use super::{BackendEvent, EventState, MonitorInfo, OfferTracker, OutputEntry};
+use crate::backend::{MouseButton, XKB_OFFSET};
+use crate::geom::{Point, Rect};
 
 macro_rules! noop_dispatch {
     ($($ty:ty),* $(,)?) => {
@@ -61,7 +59,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for EventState {
         qh: &QueueHandle<Self>,
     ) {
         match event {
-            wl_registry::Event::Global { name, interface, version } => {
+            wl_registry::Event::Global {
+                name,
+                interface,
+                version,
+            } => {
                 let max_version = version.min(7);
                 match interface.as_str() {
                     "wl_compositor" => {
@@ -69,7 +71,8 @@ impl Dispatch<wl_registry::WlRegistry, ()> for EventState {
                     }
                     "wl_shm" => state.shm = Some(registry.bind(name, 1.min(max_version), qh, ())),
                     "wl_output" => {
-                        let proxy: wl_output::WlOutput = registry.bind(name, max_version.min(4), qh, ());
+                        let proxy: wl_output::WlOutput =
+                            registry.bind(name, max_version.min(4), qh, ());
                         state.outputs.push(OutputEntry {
                             proxy,
                             info: MonitorInfo {
@@ -114,13 +117,20 @@ impl Dispatch<wl_output::WlOutput, ()> for EventState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-        let Some(i) = state.outputs.iter().position(|o| o.proxy == *proxy) else { return };
+        let Some(i) = state.outputs.iter().position(|o| o.proxy == *proxy) else {
+            return;
+        };
         match event {
             wl_output::Event::Geometry { x, y, .. } => {
                 state.outputs[i].info.rect.x = x;
                 state.outputs[i].info.rect.y = y;
             }
-            wl_output::Event::Mode { flags, width, height, .. } => {
+            wl_output::Event::Mode {
+                flags,
+                width,
+                height,
+                ..
+            } => {
                 if let WEnum::Value(f) = flags {
                     if f.contains(wl_output::Mode::Current) {
                         state.outputs[i].info.rect.w = width;
@@ -146,7 +156,9 @@ impl Dispatch<wl_seat::WlSeat, ()> for EventState {
         qh: &QueueHandle<Self>,
     ) {
         if let wl_seat::Event::Capabilities { capabilities } = event {
-            let Ok(caps) = capabilities.into_result() else { return };
+            let Ok(caps) = capabilities.into_result() else {
+                return;
+            };
             if caps.contains(wl_seat::Capability::Keyboard) && state.keyboard.is_none() {
                 state.keyboard = Some(seat.get_keyboard(qh, ()));
             }
@@ -188,22 +200,35 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for EventState {
                 }
                 /* fd is an OwnedFd and closes on drop */
             }
-            wl_keyboard::Event::Key { key, state: key_state, .. } => {
+            wl_keyboard::Event::Key {
+                key,
+                state: key_state,
+                ..
+            } => {
                 let Some(x) = state.xkb.as_mut() else { return };
                 let code = Keycode::new(key + XKB_OFFSET);
-                let pressed =
-                    matches!(key_state, WEnum::Value(wl_keyboard::KeyState::Pressed));
+                let pressed = matches!(key_state, WEnum::Value(wl_keyboard::KeyState::Pressed));
                 x.state.update_key(
                     code,
-                    if pressed { KeyDirection::Down } else { KeyDirection::Up },
+                    if pressed {
+                        KeyDirection::Down
+                    } else {
+                        KeyDirection::Up
+                    },
                 );
                 let sym = x.state.key_get_one_sym(code).raw();
                 let mods = x.mods;
                 if pressed {
                     let text = x.state.key_get_utf8(code);
-                    state.events.push_back(BackendEvent::KeyPress { sym, state: mods, text });
+                    state.events.push_back(BackendEvent::KeyPress {
+                        sym,
+                        state: mods,
+                        text,
+                    });
                 } else {
-                    state.events.push_back(BackendEvent::KeyRelease { sym, state: mods });
+                    state
+                        .events
+                        .push_back(BackendEvent::KeyRelease { sym, state: mods });
                 }
             }
             wl_keyboard::Event::Modifiers {
@@ -213,7 +238,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for EventState {
                 ..
             } => {
                 let Some(x) = state.xkb.as_mut() else { return };
-                x.state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, 0);
+                x.state
+                    .update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, 0);
                 let mask = mods_depressed | mods_latched | mods_locked;
                 x.mods = x11_mask(&x.keymap, mask);
             }
@@ -233,11 +259,19 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
     ) {
         let mods = state.xkb.as_ref().map(|x| x.mods).unwrap_or(0);
         match event {
-            wl_pointer::Event::Enter { surface_x, surface_y, .. } => {
+            wl_pointer::Event::Enter {
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.pointer_x = surface_x;
                 state.pointer_y = surface_y;
             }
-            wl_pointer::Event::Motion { time, surface_x, surface_y } => {
+            wl_pointer::Event::Motion {
+                time,
+                surface_x,
+                surface_y,
+            } => {
                 state.pointer_x = surface_x;
                 state.pointer_y = surface_y;
                 state.events.push_back(BackendEvent::Motion {
@@ -245,9 +279,15 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
                     pos: Point::new(surface_x as i32, surface_y as i32),
                 });
             }
-            wl_pointer::Event::Button { button, state: button_state, .. } => {
+            wl_pointer::Event::Button {
+                button,
+                state: button_state,
+                ..
+            } => {
                 if let WEnum::Value(wl_pointer::ButtonState::Pressed) = button_state {
-                    let Some(button) = evdev_button(button) else { return };
+                    let Some(button) = evdev_button(button) else {
+                        return;
+                    };
                     state.events.push_back(BackendEvent::ButtonPress {
                         button,
                         state: mods,
@@ -260,7 +300,11 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
                 if let WEnum::Value(a) = axis {
                     if a == wl_pointer::Axis::VerticalScroll {
                         state.events.push_back(BackendEvent::ButtonPress {
-                            button: if value > 0.0 { MouseButton::ScrollDown } else { MouseButton::ScrollUp },
+                            button: if value > 0.0 {
+                                MouseButton::ScrollDown
+                            } else {
+                                MouseButton::ScrollUp
+                            },
                             state: mods,
                             pos: Point::new(-1, -1),
                         });
@@ -284,7 +328,11 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for EventState {
         _qh: &QueueHandle<Self>,
     ) {
         match event {
-            zwlr_layer_surface_v1::Event::Configure { serial, width, height } => {
+            zwlr_layer_surface_v1::Event::Configure {
+                serial,
+                width,
+                height,
+            } => {
                 surface.ack_configure(serial);
                 if width > 0 {
                     state.width = width as i32;
@@ -358,10 +406,10 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for EventState {
         match event {
             xdg_toplevel::Event::Configure { width, height, .. } => {
                 if width > 0 {
-                    state.width = width as i32;
+                    state.width = width;
                 }
                 if height > 0 {
-                    state.height = height as i32;
+                    state.height = height;
                 }
             }
             xdg_toplevel::Event::Close => {
@@ -425,10 +473,8 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for EventState {
             wl_data_device::Event::DataOffer { id } => {
                 state.clipboard_offer = Some((id, OfferTracker::new()));
             }
-            wl_data_device::Event::Selection { id } => {
-                if id.is_none() {
-                    state.clipboard_offer = None;
-                }
+            wl_data_device::Event::Selection { id } if id.is_none() => {
+                state.clipboard_offer = None;
             }
             _ => {}
         }
@@ -456,9 +502,7 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for EventState {
     }
 }
 
-impl Dispatch<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1, ()>
-    for EventState
-{
+impl Dispatch<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1, ()> for EventState {
     fn event(
         state: &mut Self,
         _proxy: &zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1,
@@ -471,10 +515,8 @@ impl Dispatch<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1, ()>
             zwp_primary_selection_device_v1::Event::DataOffer { offer } => {
                 state.primary_offer = Some((offer, OfferTracker::new()));
             }
-            zwp_primary_selection_device_v1::Event::Selection { id } => {
-                if id.is_none() {
-                    state.primary_offer = None;
-                }
+            zwp_primary_selection_device_v1::Event::Selection { id } if id.is_none() => {
+                state.primary_offer = None;
             }
             _ => {}
         }
@@ -492,9 +534,7 @@ impl Dispatch<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1, ()>
     );
 }
 
-impl Dispatch<zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1, ()>
-    for EventState
-{
+impl Dispatch<zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1, ()> for EventState {
     fn event(
         state: &mut Self,
         _proxy: &zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1,

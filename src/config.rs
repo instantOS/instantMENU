@@ -1,8 +1,8 @@
 //! Port of `config.def.h` — default settings; can be overridden by command
 //! line and X resources.
 
-use clap::ValueEnum;
 use crate::render::SchemeStrings;
+use clap::ValueEnum;
 
 pub const VERSION: &str = "4.9";
 

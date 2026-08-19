@@ -12,7 +12,7 @@ use x11rb::protocol::xproto::{
 use x11rb::protocol::Event;
 use x11rb::xcb_ffi::XCBConnection;
 use xkbcommon::xkb::x11 as xkbx11;
-use xkbcommon::xkb::{self, Keycode, KeyDirection};
+use xkbcommon::xkb::{self, KeyDirection, Keycode};
 
 use super::{Backend, BackendEvent, MonitorInfo, MouseButton, XKB_OFFSET};
 use crate::enums::ExitStatus;
@@ -70,8 +70,10 @@ impl X11Backend {
         let (xkb_context, xkb_keymap, xkb_state) = xkb_setup(&connection)?;
         let atoms = intern_atoms(&connection)?;
         let monitors = query_monitors(&connection);
-        let (root_width, root_height) =
-            (screen.width_in_pixels as i32, screen.height_in_pixels as i32);
+        let (root_width, root_height) = (
+            screen.width_in_pixels as i32,
+            screen.height_in_pixels as i32,
+        );
 
         Ok(X11Backend {
             connection,
@@ -98,7 +100,11 @@ impl X11Backend {
         let code = Keycode::new(keycode as u32 + XKB_OFFSET);
         self.xkb_state.update_key(
             code,
-            if pressed { KeyDirection::Down } else { KeyDirection::Up },
+            if pressed {
+                KeyDirection::Down
+            } else {
+                KeyDirection::Up
+            },
         );
         let sym = self.xkb_state.key_get_one_sym(code).raw();
         let text = self.xkb_state.key_get_utf8(code);
@@ -199,7 +205,12 @@ impl Backend for X11Backend {
     }
 
     fn pointer_position(&self) -> Option<Point> {
-        let reply = self.connection.query_pointer(self.root).ok()?.reply().ok()?;
+        let reply = self
+            .connection
+            .query_pointer(self.root)
+            .ok()?
+            .reply()
+            .ok()?;
         Some(Point::new(reply.root_x as i32, reply.root_y as i32))
     }
 
@@ -211,7 +222,10 @@ impl Backend for X11Backend {
             return None; // PointerRoot(1)/None(0)
         }
         let geometry = self.connection.get_geometry(window).ok()?;
-        let translated = self.connection.translate_coordinates(window, self.root, 0, 0).ok()?;
+        let translated = self
+            .connection
+            .translate_coordinates(window, self.root, 0, 0)
+            .ok()?;
         let geometry = geometry.reply().ok()?;
         let translated = translated.reply().ok()?;
         let mut best = 0usize;
@@ -439,8 +453,7 @@ impl Backend for X11Backend {
         if self.created {
             let _ = self.connection.configure_window(
                 self.window,
-                &ConfigureWindowAux::new()
-                    .stack_mode(x11rb::protocol::xproto::StackMode::ABOVE),
+                &ConfigureWindowAux::new().stack_mode(x11rb::protocol::xproto::StackMode::ABOVE),
             );
             self.flush();
         }
@@ -455,14 +468,23 @@ impl Backend for X11Backend {
             match ev {
                 Event::KeyPress(k) => {
                     let (sym, text) = self.lookup_key(k.detail, true);
-                    return Some(BackendEvent::KeyPress { sym, state: k.state.bits() as u32, text });
+                    return Some(BackendEvent::KeyPress {
+                        sym,
+                        state: k.state.bits() as u32,
+                        text,
+                    });
                 }
                 Event::KeyRelease(k) => {
                     let (sym, _) = self.lookup_key(k.detail, false);
-                    return Some(BackendEvent::KeyRelease { sym, state: k.state.bits() as u32 });
+                    return Some(BackendEvent::KeyRelease {
+                        sym,
+                        state: k.state.bits() as u32,
+                    });
                 }
                 Event::ButtonPress(b) => {
-                    let Some(button) = mouse_button(b.detail) else { continue };
+                    let Some(button) = mouse_button(b.detail) else {
+                        continue;
+                    };
                     return Some(BackendEvent::ButtonPress {
                         button,
                         state: b.state.bits() as u32,
@@ -495,20 +517,18 @@ impl Backend for X11Backend {
                         return Some(BackendEvent::Destroyed);
                     }
                 }
-                Event::SelectionNotify(s) => {
-                    if s.property != x11rb::NONE {
-                        if let Ok(reply) = self.connection.get_property(
-                            true,
-                            self.window,
-                            s.property,
-                            AtomEnum::ANY,
-                            0,
-                            8192 / 4 + 1,
-                        ) {
-                            if let Ok(prop) = reply.reply() {
-                                let text = String::from_utf8_lossy(&prop.value).into_owned();
-                                return Some(BackendEvent::SelectionNotify { text });
-                            }
+                Event::SelectionNotify(s) if s.property != x11rb::NONE => {
+                    if let Ok(reply) = self.connection.get_property(
+                        true,
+                        self.window,
+                        s.property,
+                        AtomEnum::ANY,
+                        0,
+                        8192 / 4 + 1,
+                    ) {
+                        if let Ok(prop) = reply.reply() {
+                            let text = String::from_utf8_lossy(&prop.value).into_owned();
+                            return Some(BackendEvent::SelectionNotify { text });
                         }
                     }
                 }
@@ -532,7 +552,6 @@ impl Backend for X11Backend {
         );
         self.flush();
     }
-
 }
 
 /// Set up XKB so keysyms/text match what the server keymap produces.
@@ -540,8 +559,7 @@ fn xkb_setup(
     connection: &XCBConnection,
 ) -> Result<(xkb::Context, xkb::Keymap, xkb::State), String> {
     let xkb_context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-    let (mut major, mut minor, mut base_event, mut base_error) =
-        (0u16, 0u16, 0u8, 0u8);
+    let (mut major, mut minor, mut base_event, mut base_error) = (0u16, 0u16, 0u8, 0u8);
     if !xkbx11::setup_xkb_extension(
         connection,
         xkbx11::MIN_MAJOR_XKB_VERSION,
@@ -567,9 +585,15 @@ fn xkb_setup(
 
 /// Intern the atoms the backend uses.
 fn intern_atoms(connection: &XCBConnection) -> Result<Atoms, String> {
-    let net_wm_name = connection.intern_atom(false, b"_NET_WM_NAME").map_err(|e| e.to_string())?;
-    let utf8_string = connection.intern_atom(false, b"UTF8_STRING").map_err(|e| e.to_string())?;
-    let clipboard = connection.intern_atom(false, b"CLIPBOARD").map_err(|e| e.to_string())?;
+    let net_wm_name = connection
+        .intern_atom(false, b"_NET_WM_NAME")
+        .map_err(|e| e.to_string())?;
+    let utf8_string = connection
+        .intern_atom(false, b"UTF8_STRING")
+        .map_err(|e| e.to_string())?;
+    let clipboard = connection
+        .intern_atom(false, b"CLIPBOARD")
+        .map_err(|e| e.to_string())?;
     Ok(Atoms {
         wm_name: AtomEnum::WM_NAME.into(),
         net_wm_name: net_wm_name.reply().map_err(|e| e.to_string())?.atom,

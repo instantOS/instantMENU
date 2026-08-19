@@ -53,7 +53,12 @@ impl Rect {
 
     /// The zero-origin rectangle of the given size.
     pub const fn with_size(size: Size) -> Self {
-        Rect { x: 0, y: 0, w: size.w, h: size.h }
+        Rect {
+            x: 0,
+            y: 0,
+            w: size.w,
+            h: size.h,
+        }
     }
 
     pub fn origin(self) -> Point {

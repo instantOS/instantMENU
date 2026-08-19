@@ -98,7 +98,9 @@ pub(super) fn primary_font_height(
             stretch: fontdb::Stretch::Normal,
             style: fontdb::Style::Normal,
         };
-        let Some(face_id) = db.query(&query) else { continue };
+        let Some(face_id) = db.query(&query) else {
+            continue;
+        };
         /* FaceInfo carries no metrics; read them from the face data itself */
         let h = db
             .with_face_data(face_id, |data, index| {

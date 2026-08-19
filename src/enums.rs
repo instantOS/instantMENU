@@ -138,7 +138,11 @@ pub enum ColorRole {
 }
 
 impl ColorRole {
-    pub const ALL: [ColorRole; 3] = [ColorRole::Foreground, ColorRole::Background, ColorRole::Detail];
+    pub const ALL: [ColorRole; 3] = [
+        ColorRole::Foreground,
+        ColorRole::Background,
+        ColorRole::Detail,
+    ];
 
     /// X resource color type name, port of `xrescolortype`.
     pub fn x_res_name(self) -> &'static str {

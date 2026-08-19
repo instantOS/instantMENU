@@ -30,7 +30,7 @@ use crate::geom::Rect;
 use crate::render::{Canvas, Renderer};
 
 use layout::Layout;
-use matcher::{Matcher, MatchResult};
+use matcher::{MatchResult, Matcher};
 use measure::{Measure, TextMeasurer};
 use paging::{Paging, Selection};
 use transition::Transition;
@@ -178,7 +178,8 @@ impl Menu {
 
     /// Move the selection one item forward, paging when it crosses `next`.
     pub(in crate::menu) fn select_next(&mut self) {
-        let (sel, turned) = paging::advance(&self.selection, self.matcher.matches.len(), &self.paging);
+        let (sel, turned) =
+            paging::advance(&self.selection, self.matcher.matches.len(), &self.paging);
         self.selection = sel;
         if turned {
             self.recalc_paging();
@@ -195,7 +196,11 @@ impl Menu {
     }
 
     pub(in crate::menu) fn recalc_paging(&mut self) {
-        let mut m = TextMeasurer::new(&mut self.renderer, self.cfg.commented, self.layout.bar_height);
+        let mut m = TextMeasurer::new(
+            &mut self.renderer,
+            self.cfg.commented,
+            self.layout.bar_height,
+        );
         self.paging = paging::calc_paging(
             &self.selection,
             &self.matcher.items,
@@ -249,7 +254,12 @@ impl Menu {
 
     /// TEXTW macro
     pub(in crate::menu) fn text_width(&mut self, s: &str) -> i32 {
-        TextMeasurer::new(&mut self.renderer, self.cfg.commented, self.layout.bar_height).text_width(s)
+        TextMeasurer::new(
+            &mut self.renderer,
+            self.cfg.commented,
+            self.layout.bar_height,
+        )
+        .text_width(s)
     }
 
     /// max_textw — widest item text.

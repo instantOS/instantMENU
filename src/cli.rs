@@ -17,7 +17,12 @@ use crate::config::{MatchMode, Position};
 )]
 pub struct Args {
     /// Where the menu appears on screen: top, bottom or centered.
-    #[arg(long, value_enum, value_name = "POSITION", conflicts_with = "follow_cursor")]
+    #[arg(
+        long,
+        value_enum,
+        value_name = "POSITION",
+        conflicts_with = "follow_cursor"
+    )]
     pub position: Option<Position>,
 
     /// Reject input if it results in no matches.
@@ -221,11 +226,26 @@ mod tests {
         /* the argv instantmenu_smartrun passes (see instantmenu_smartrun) */
         let argv = [
             "instantmenu",
-            "--right-command", "instantmenu_smartrun terminal",
-            "--left-command", "instantmenu_smartrun desktop",
-            "-p", "desktop", "-i", "--fast", "--placeholder", "search apps",
-            "-l", "10", "--position", "centered", "--width", "-1",
-            "--line-height", "-1", "--border-width", "4",
+            "--right-command",
+            "instantmenu_smartrun terminal",
+            "--left-command",
+            "instantmenu_smartrun desktop",
+            "-p",
+            "desktop",
+            "-i",
+            "--fast",
+            "--placeholder",
+            "search apps",
+            "-l",
+            "10",
+            "--position",
+            "centered",
+            "--width",
+            "-1",
+            "--line-height",
+            "-1",
+            "--border-width",
+            "4",
         ];
         assert!(Args::try_parse_from(argv).is_ok());
     }
@@ -235,7 +255,10 @@ mod tests {
         /* the old single-dash multi-char spellings are gone; they must not
          * silently parse (e.g. -rc as -r -c with a stray positional) */
         for bad in [["-rc", "x"], ["-bw", "4"], ["-wm", "x"], ["-fn", "font"]] {
-            assert!(Args::try_parse_from(bad).is_err(), "{bad:?} should be rejected");
+            assert!(
+                Args::try_parse_from(bad).is_err(),
+                "{bad:?} should be rejected"
+            );
         }
     }
 
@@ -267,13 +290,19 @@ mod tests {
             &["instantmenu", "-q", "x"][..],
             &["instantmenu", "-v"][..],
         ] {
-            assert!(Args::try_parse_from(bad).is_err(), "{bad:?} should be rejected");
+            assert!(
+                Args::try_parse_from(bad).is_err(),
+                "{bad:?} should be rejected"
+            );
         }
     }
 
     #[test]
     fn position_is_exclusive_with_follow_cursor() {
-        assert!(Args::try_parse_from(["instantmenu", "--position", "bottom", "--follow-cursor"]).is_err());
+        assert!(
+            Args::try_parse_from(["instantmenu", "--position", "bottom", "--follow-cursor"])
+                .is_err()
+        );
         let a = Args::try_parse_from(["instantmenu", "--position", "bottom"]).unwrap();
         assert_eq!(a.position, Some(Position::Bottom));
         let a = Args::try_parse_from(["instantmenu", "--follow-cursor"]).unwrap();
@@ -298,7 +327,10 @@ mod tests {
     #[test]
     fn formerly_silent_overrides_now_rejected() {
         /* both flags used to parse with one silently winning */
-        assert!(Args::try_parse_from(["instantmenu", "--x-offset", "5", "--right-x-offset", "10"]).is_err());
+        assert!(
+            Args::try_parse_from(["instantmenu", "--x-offset", "5", "--right-x-offset", "10"])
+                .is_err()
+        );
         assert!(Args::try_parse_from(["instantmenu", "--font", "x", "--monospace"]).is_err());
     }
 
@@ -336,6 +368,7 @@ fn parse_window_id(s: &str) -> Result<u32, String> {
     if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
         u32::from_str_radix(hex, 16).map_err(|_| format!("invalid window id: `{s}`"))
     } else {
-        t.parse::<u32>().map_err(|_| format!("invalid window id: `{s}`"))
+        t.parse::<u32>()
+            .map_err(|_| format!("invalid window id: `{s}`"))
     }
 }

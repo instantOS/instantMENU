@@ -82,9 +82,7 @@ impl Flags {
 }
 
 fn usage() -> ! {
-    eprintln!(
-        "usage: itest [-abcdefghlpqrsuvwx] [-n file] [-o file] [file...]"
-    );
+    eprintln!("usage: itest [-abcdefghlpqrsuvwx] [-n file] [-o file] [file...]");
     std::process::exit(2); /* like test(1) return > 1 on error */
 }
 
@@ -124,20 +122,36 @@ fn test(path: &str, name: &str, flags: &Flags, out: &mut impl Write) -> bool {
 
     if let Some(stat) = &stat {
         check!(flags.all || !name.starts_with('.'));
-        if flags.block { check!(mode_bits(stat) & libc::S_IFMT == libc::S_IFBLK); }
-        if flags.character { check!(mode_bits(stat) & libc::S_IFMT == libc::S_IFCHR); }
-        if flags.directory { check!(stat.is_dir()); }
-        if flags.regular { check!(stat.is_file()); }
-        if flags.set_group_id { check!(mode_bits(stat) & libc::S_ISGID != 0); }
+        if flags.block {
+            check!(mode_bits(stat) & libc::S_IFMT == libc::S_IFBLK);
+        }
+        if flags.character {
+            check!(mode_bits(stat) & libc::S_IFMT == libc::S_IFCHR);
+        }
+        if flags.directory {
+            check!(stat.is_dir());
+        }
+        if flags.regular {
+            check!(stat.is_file());
+        }
+        if flags.set_group_id {
+            check!(mode_bits(stat) & libc::S_ISGID != 0);
+        }
         if flags.newer {
             check!(flags.new_mtime.map(|t| mtime(stat) > t).unwrap_or(false));
         }
         if flags.older {
             check!(flags.old_mtime.map(|t| mtime(stat) < t).unwrap_or(false));
         }
-        if flags.pipe { check!(mode_bits(stat) & libc::S_IFMT == libc::S_IFIFO); }
-        if flags.not_empty { check!(stat.len() > 0); }
-        if flags.set_user_id { check!(mode_bits(stat) & libc::S_ISUID != 0); }
+        if flags.pipe {
+            check!(mode_bits(stat) & libc::S_IFMT == libc::S_IFIFO);
+        }
+        if flags.not_empty {
+            check!(stat.len() > 0);
+        }
+        if flags.set_user_id {
+            check!(mode_bits(stat) & libc::S_ISUID != 0);
+        }
     } else {
         /* stat failed: only -h (lstat) can still make the chain true */
         check!(false);
@@ -146,12 +160,10 @@ fn test(path: &str, name: &str, flags: &Flags, out: &mut impl Write) -> bool {
         check!(access_ok(path, libc::F_OK));
     }
     if flags.symlink {
-        check!(
-            link_stat
-                .as_ref()
-                .map(|m| mode_bits(m) & libc::S_IFMT == libc::S_IFLNK)
-                .unwrap_or(false),
-        );
+        check!(link_stat
+            .as_ref()
+            .map(|m| mode_bits(m) & libc::S_IFMT == libc::S_IFLNK)
+            .unwrap_or(false),);
     }
     if flags.readable {
         check!(access_ok(path, libc::R_OK));
