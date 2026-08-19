@@ -2,21 +2,23 @@
 build:
     cargo build
 
-# install to ~/.local/bin (debug build)
-install:
+# install to ~/.local (debug build)
+install: man
     cargo build
     install ./target/debug/instantmenu ~/.local/bin/
     install ./target/debug/itest ~/.local/bin/
     install ./instantmenu_path ~/.local/bin/
     install ./instantmenu_run ~/.local/bin/
     install ./instantmenu_smartrun ~/.local/bin/
+    install -D -m 644 ./instantmenu.1 ~/.local/share/man/man1/instantmenu.1
     chmod +x ~/.local/bin/instantmenu_*
 
 # install to system (root)
-rootinstall:
+rootinstall: man
     cargo build
     sudo install ./target/debug/instantmenu /usr/local/bin/
     sudo install ./target/debug/itest /usr/local/bin/
+    sudo install -D -m 644 ./instantmenu.1 /usr/local/share/man/man1/instantmenu.1
 
 
 # regenerate instantmenu.1 from the clap CLI definition
