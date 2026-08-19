@@ -314,3 +314,6 @@ impl Menu {
         let _ = self.out.flush();
     }
 }
+
+#[cfg(test)]
+mod tests;

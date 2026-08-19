@@ -23,7 +23,7 @@ pub(super) struct Layout {
 
 /// The -l/-g pair before monitor clamping: as adjusted by stdin's item
 /// count, consumed by [`Menu::setup`](super::Menu::setup).
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GridShape {
     pub lines: i32,
     pub columns: i32,

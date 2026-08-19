@@ -110,3 +110,25 @@ pub fn adjusted_grid(lines: i32, columns: i32, count: i32) -> GridShape {
     };
     GridShape { lines, columns }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lines_shrink_to_the_item_count() {
+        assert_eq!(adjusted_grid(10, 1, 3), GridShape { lines: 3, columns: 1 });
+        // a single column never shrinks further
+        assert_eq!(adjusted_grid(10, 1, 0), GridShape { lines: 0, columns: 1 });
+    }
+
+    #[test]
+    fn multi_column_grids_shrink_to_fit() {
+        // 5 items, 2 columns → 3 rows needed → still 2 columns
+        assert_eq!(adjusted_grid(10, 2, 5), GridShape { lines: 3, columns: 2 });
+        // 4 items, 3 columns → 2 rows → 2 columns suffice
+        assert_eq!(adjusted_grid(4, 3, 4), GridShape { lines: 2, columns: 2 });
+        // no items: lines drop to 0, the -g value survives
+        assert_eq!(adjusted_grid(5, 2, 0), GridShape { lines: 0, columns: 2 });
+    }
+}
