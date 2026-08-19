@@ -33,7 +33,7 @@ pub enum MatchMode {
 pub struct Config {
     /* --position option; top (default), bottom, or centered on screen */
     pub position: Position,
-    /* -C option; place menu at mouse position */
+    /* --follow-cursor option; place menu at mouse position */
     pub follow_cursor: bool,
     /* minimum width when centered */
     pub min_width: i32,
@@ -50,19 +50,19 @@ pub struct Config {
     pub animated: bool,
     pub frame_count: i32,
     pub full_height: bool,
-    /* -h option; minimum height of a menu line */
+    /* --line-height option; minimum height of a menu line */
     pub line_height: i32,
 
-    /* -fn option overrides fonts[0]; default font set */
+    /* --font option overrides fonts[0]; default font set */
     pub fonts: Vec<String>,
 
     /* -p option; prompt to the left of input field */
     pub prompt: Option<String>,
     /* --placeholder option; placeholder inside the input field */
     pub placeholder: Option<String>,
-    /* -lc option; command run on shift+left / left arrow cell */
+    /* --left-command option; command run on shift+left / left arrow cell */
     pub left_command: Option<String>,
-    /* -rc option; command run on shift+right */
+    /* --right-command option; command run on shift+right */
     pub right_command: Option<String>,
     /* fg / bg / detail per scheme */
     pub colors: [SchemeStrings; 9],
@@ -75,7 +75,7 @@ pub struct Config {
     /* Characters not considered part of a word while deleting words */
     pub word_delimiters: String,
 
-    /* -ps option; preselected item starting from 0 */
+    /* --preselect option; preselected item starting from 0 */
     pub preselected: i32,
 
     /* Size of the window border */
@@ -83,33 +83,33 @@ pub struct Config {
 
     /* ---- runtime options (set from argv, globals in instantmenu.c) ---- */
 
-    /* -T option; toast mode that times out after a while (tenth of seconds) */
+    /* --toast option; toast mode that times out after a while (tenths of seconds) */
     pub toast: i32,
-    /* -I option; input only */
+    /* --input-only option; input only */
     pub input_only: bool,
-    /* -P option; display input as dots */
+    /* --password option; display input as dots */
     pub password: bool,
-    /* -G option; don't grab the keyboard */
+    /* --no-grab option; don't grab the keyboard */
     pub no_grab: bool,
-    /* -A option; alt-tab behaviour */
+    /* --alt-tab option; alt-tab behaviour */
     pub alt_tab: bool,
-    /* -wm option; display as managed wm window */
+    /* --managed option; display as managed wm window */
     pub managed: bool,
     /* -r option; reject input that results in no match */
     pub reject_no_match: bool,
-    /* -ct option; instantASSIST mode */
+    /* --commented option; instantASSIST mode */
     pub commented: bool,
     /* -m option; monitor index, -1 = auto */
     pub monitor: i32,
     /* -x option: window x offset */
     pub x_offset: i32,
-    /* -xr option: x offset counted from the right */
+    /* --right-x-offset option: x offset counted from the right */
     pub right_x_offset: bool,
     /* -y option: window y offset */
     pub y_offset: i32,
     /* -w option: make instantmenu this wide */
     pub width: i32,
-    /* -W option; embedding window id */
+    /* --embed option; embedding window id */
     pub embed: Option<u32>,
     /* -f; grab keyboard before reading stdin */
     pub fast: bool,
