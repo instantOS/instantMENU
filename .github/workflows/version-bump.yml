@@ -33,7 +33,7 @@ jobs:
     name: Prepare release PR
     runs-on: blacksmith-4vcpu-ubuntu-2404
     container:
-      image: ubuntu:24.04
+      image: archlinux:latest
     if: ${{ github.repository_owner == 'instantOS' }}
     permissions:
       contents: write
@@ -42,14 +42,26 @@ jobs:
       group: version-bump-pr
       cancel-in-progress: false
     steps:
-      - name: Install dependencies
+      # actions/checkout falls back to a source archive when git is absent.
+      # Release planning needs full history and tags, so bootstrap git first.
+      - name: Bootstrap checkout dependencies
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends ca-certificates git python3
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed git
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - name: Install build dependencies
+        run: bash scripts/ci/install-deps-arch.sh
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: "false"
+      - name: Remove leaked rustup state
+        run: rm -rf ~/.rustup ~/.cargo/bin
       - name: Configure git
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -59,6 +71,14 @@ jobs:
         env:
           BUMP: ${{ inputs.bump || 'auto' }}
         run: python3 .github/scripts/prepare-release.py --bump "$BUMP"
+      - name: Generate derived release metadata
+        run: |
+          cargo run --locked --bin instantmenu-mangen
+          useradd -m builder
+          for directory in packaging/arch packaging/arch-bin; do
+            install -o builder -g builder -m 0644 "$directory/PKGBUILD" /home/builder/PKGBUILD
+            su builder -c 'cd /home/builder && makepkg --printsrcinfo' > "$directory/.SRCINFO"
+          done
       - name: Read prepared version
         id: version
         run: bash scripts/ci/extract-version.sh
@@ -73,4 +93,4 @@ jobs:
           body: |
             Prepare `v${{ steps.version.outputs.version }}`.
 
-            This PR updates Cargo metadata, the changelog, the man page, and Arch package metadata.
+            This PR updates Cargo metadata, the changelog, the generated man page, and Arch package metadata.

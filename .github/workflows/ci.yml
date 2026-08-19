@@ -32,6 +32,8 @@ jobs:
         run: rm -rf ~/.rustup ~/.cargo/bin
       - name: Check formatting
         run: cargo fmt -- --check
+      - name: Test release preparation
+        run: python3 .github/scripts/test_prepare_release.py
       - name: Run clippy
         run: cargo clippy --locked --all-targets
       - name: Run tests
@@ -51,6 +53,7 @@ jobs:
       - name: Check package metadata
         run: |
           for directory in packaging/arch packaging/arch-bin; do
-            (cd "$directory" && makepkg --printsrcinfo > generated.SRCINFO)
-            diff -u "$directory/.SRCINFO" "$directory/generated.SRCINFO"
+            generated="$(mktemp)"
+            (cd "$directory" && makepkg --printsrcinfo) > "$generated"
+            diff -u "$directory/.SRCINFO" "$generated"
           done

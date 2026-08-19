@@ -9,6 +9,7 @@ pacman -S --noconfirm --needed \
   rust \
   pkgconf \
   git \
+  python \
   fontconfig \
   ttf-dejavu \
   libxcb \

@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+"""Prepare the primary metadata and changelog for an instantMENU release.
+
+This script owns release policy: selecting a semantic-version bump from commit
+messages and updating files whose version is maintained by hand. Generated
+artifacts are deliberately outside its scope. The version-bump workflow runs
+instantmenu-mangen for the man page and makepkg for each .SRCINFO afterward.
+"""
+
 import argparse
 import datetime as dt
 import re
@@ -7,6 +15,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+Commit = tuple[str, str, str]
 
 
 def run(args: list[str]) -> str:
@@ -33,7 +42,7 @@ def latest_version_tag() -> str | None:
     return tags.splitlines()[0] if tags else None
 
 
-def commits_since(tag: str | None) -> list[tuple[str, str, str]]:
+def commits_since(tag: str | None) -> list[Commit]:
     git_range = f"{tag}..HEAD" if tag else "HEAD"
     raw = run(["git", "log", "--format=%H%x00%s%x00%b%x1e", git_range])
     commits = []
@@ -47,7 +56,13 @@ def commits_since(tag: str | None) -> list[tuple[str, str, str]]:
     return commits
 
 
-def bump_level(commits: list[tuple[str, str, str]], requested: str) -> str | None:
+def bump_level(commits: list[Commit], requested: str) -> str | None:
+    """Apply the repository's Conventional Commit release policy.
+
+    Breaking changes bump major, features bump minor, maintenance-only commits
+    do not release, and all other work—including non-conventional subjects—
+    bumps patch. An explicit workflow input overrides this policy.
+    """
     if requested != "auto":
         return requested
     level = None
@@ -78,7 +93,8 @@ def replace_once(path: str, pattern: str, replacement: str) -> None:
     write(path, text)
 
 
-def update_versions(version: str) -> None:
+def update_primary_versions(version: str) -> None:
+    """Update source metadata; generated artifacts are handled by the workflow."""
     replace_once("Cargo.toml", r'^(version = )"[^"]+"', rf'\1"{version}"')
     replace_once(
         "Cargo.lock",
@@ -86,39 +102,8 @@ def update_versions(version: str) -> None:
         rf'\1"{version}"',
     )
     for path in ("packaging/arch/PKGBUILD", "packaging/arch-bin/PKGBUILD"):
-        text = re.sub(r"^pkgver=.*", f"pkgver={version}", read(path), flags=re.MULTILINE)
-        text = re.sub(r"^pkgrel=.*", "pkgrel=1", text, flags=re.MULTILINE)
-        write(path, text)
-    for path in ("packaging/arch/.SRCINFO", "packaging/arch-bin/.SRCINFO"):
-        text = re.sub(r"^(\s*pkgver = ).*", rf"\g<1>{version}", read(path), flags=re.MULTILINE)
-        text = re.sub(
-            r"^(\s*provides = instantmenu=).*",
-            rf"\g<1>{version}",
-            text,
-            flags=re.MULTILINE,
-        )
-        text = re.sub(
-            r"(instantMENU-|instantmenu-)(\d+\.\d+\.\d+)",
-            rf"\g<1>{version}",
-            text,
-        )
-        text = re.sub(
-            r"(refs/tags/v)(\d+\.\d+\.\d+)",
-            rf"\g<1>{version}",
-            text,
-        )
-        text = re.sub(r"(-v)(\d+\.\d+\.\d+)", rf"\g<1>{version}", text)
-        write(path, text)
-    replace_once(
-        "instantmenu.1",
-        r'^(\.TH instantmenu 1  "instantmenu )[^\"]+(".*)$',
-        rf"\g<1>{version}\g<2>",
-    )
-    replace_once(
-        "instantmenu.1",
-        r"^(\.SH VERSION\n)v[^\n]+",
-        rf"\g<1>v{version}",
-    )
+        replace_once(path, r"^pkgver=.*", f"pkgver={version}")
+        replace_once(path, r"^pkgrel=.*", "pkgrel=1")
 
 
 def clean_subject(subject: str) -> tuple[str, str]:
@@ -135,7 +120,8 @@ def clean_subject(subject: str) -> tuple[str, str]:
     return "Other", text
 
 
-def update_changelog(version: str, previous_tag: str | None, commits: list[tuple[str, str, str]]) -> None:
+def update_changelog(version: str, previous_tag: str | None, commits: list[Commit]) -> None:
+    """Insert chronologically ordered, de-duplicated notes after Unreleased."""
     text = read("CHANGELOG.md")
     today = dt.date.today().isoformat()
     base = previous_tag or "HEAD"
@@ -171,7 +157,7 @@ def main() -> int:
     new_version = bump_version(old_version, level)
     print(f"Bumping {old_version} -> {new_version} ({level})")
     if not args.dry_run:
-        update_versions(new_version)
+        update_primary_versions(new_version)
         update_changelog(new_version, previous_tag, commits)
     return 0
 
