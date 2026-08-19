@@ -6,3 +6,788 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [4.9.1](https://github.com/instantOS/instantMENU/compare/HEAD...v4.9.1) - 2026-08-19
+
+### Fixed
+
+- multimon: always spawn client on first monitor if specified with -m 0
+- Do not crash on e.g. dmenu < /dev/null
+- adjust drawitem function to include commented parameter for better text width handling
+
+### Other
+
+- initial import
+- rearranged several stuff
+- remove stderr spitting
+- prepared 0.1
+- Added tag 0.1 for changeset fcc8a282cb52c6a9343b461026b386825590cd31
+- removed config.h
+- fixed dist target
+- fixed README of dmenu
+- yet another fix
+- small change
+- menu now also uses -Os
+- removed -t title crap from dmenu
+- updated man page
+- renamed some functions to make it more readable
+- fixed a bad mistake setting the dmenu border to False;
+- added stripping to dmenu target
+- Added tag 0.2 for changeset 656be0f47df545dfdd2e1e0663663b8b1b26f031
+- next attempt for bright background switch
+- also made my colors tasting better with my overall colorscheme
+- next version is 0.3
+- settle with grey
+- fixed dmenu.1 version info
+- appliead Sanders manpage/Makefile pacth
+- font size changed as well
+- made dmenu(1) more dwm(1) alike
+- removed unnecessary typedef
+- using a better colorscheme
+- dito
+- noborder
+- default colors are best
+- fixes to README
+- removed control sequences which actually aren't implemented anymore (only the real unix control sequences are implemented)
+- removed C-[ from source and man page
+- added uppercase chars for C-u and C-h as well
+- swapping my default colors
+- removed unnecessary border color
+- drawing border around sel item
+- readded border colors, this sucks least
+- Added tag 0.3 for changeset d352e9dc112ee96aa5cad961a0ed880ae9ce7276
+- simplified drawborder
+- applied my new color scheme
+- applied Sanders LD patch
+- added comment
+- fixed string cutting
+- removed finished message
+- Added tag 0.4 for changeset 7acf0dde1120542917bae12e0e42293f9d2cc899
+- fixed the same issue in dmenu
+- applied sanders Makefile patch
+- applied sanders patch
+- fixed a typo in config.mk, fixed cleanup code in dmenu (now frees all allocated stuff)
+- small changes in dmenu.1
+- renamed bad_malloc into badmalloc as well
+- applied OpenBSD changes..
+- fixed
+- font fix
+- back to terminus font
+- sanitizing my colorscheme
+- removed unnecessary Xlib call
+- prepared dmenu-0.5
+- Added tag 0.5 for changeset 4a0ecd881c4fc15de4a0bebd79308b064be020ef
+- migrated dmenu to use 4 instead of 3 colors
+- small color change
+- fixed minor bug
+- removed useless call
+- back to 3 colors
+- updated dmenu to borderless drawing as well
+- small color fixes
+- switching back to a dark color scheme with larger font
+- Added tag 0.6 for changeset 25f679fb19686140a907684ffcb423b9e9d44b53
+- updated version
+- small change of main event loop
+- Added tag 0.7 for changeset 5fc20d7158bd16b4d5f8d1c25e177680b6d54252
+- fixed man page
+- Added tag 0.8 for changeset 409667a57221f7e50ba8b5248f638915cd61b366
+- made dmenu.1 also concise
+- another fix
+- new version of dmenu
+- implemented early keyboard grab for dmenu with a timeout for stdin data writers to prevent endless grabbings of the keyboard
+- Added tag 0.9 for changeset d046c818ea467555cc338751c9bf3024609f1f12
+- commented dmenu
+- made function signatures more consistent to my coding style
+- Added tag 1.0 for changeset 9e11140d4cc3eecac3b0ab752f91528fd5e04be8
+- applied something similiar to Jukkas patch
+- applied a change made by Uriel to dmenu (though I didn't applied everything)
+- uriel didn't understood dmenu code, he broke nearly everything
+- removed config.h stuff, made dwm configurable due to command line options
+- added fallback to color initialization
+- reverting
+- foo
+- error handling
+- removed crap from Makefile
+- updated README
+- Added tag 1.1 for changeset e8c1e9733752db12f2dbd1fa93c46f5806242ba9
+- small update to man page (backported)
+- removed useless newlines
+- changing version info
+- Added tag 1.2 for changeset bee7fe6d1189174d0204ca3195b83cdc1bb4f82e
+- simplified main event loop
+- simplified util.c
+- changing order
+- Added tag 1.3 for changeset 2eb9997be51cb1b11a8900728ccc0904f9371157
+- fixing arg handling in dmenu (thanks to Sander for his report)
+- removed misleading input cursor
+- Added tag 1.4 for changeset df3fbb050004c544d14e43c36f6a94cca6ed4a69
+- fixing sizeof stuff
+- next version will be 1.5
+- Added tag 1.5 for changeset e071fb045bd9e8574947acff7196360bc0270e68
+- enforcing using imcomplete fonsets anyways
+- only setting LC_CTYPE
+- also fixing dmenu accordingly
+- using -*-fixed-*-*-*-*-*-*-*-*-*-*-iso10646-* fixed by default
+- people should define fixed being compatible with their locale
+- found compromise
+- Added tag 1.6 for changeset dcc5427f99f51a978386a0dd770467cd911ac84b
+- removed hardcoded 'fixed' fallback, useless and misleading
+- fixed diagnostic error message
+- ordered switch branches in kpress alphabetically, applied Sanders patch for PgUp/Dn and Home/End scrolling
+- added prompt option (-p 'prompt text'), documented in man page as well
+- changed text in dmenu manpage
+- Added tag 1.7 for changeset 58dbef4aef3d45c7a3da6945e53c9667c0f02d5b
+- applied hotfix of sander
+- Added tag 1.7.1 for changeset 8e0b9b09bf83c429c73e60a23997f32877a645bf
+- silent hotfix
+- Added tag 1.7.1 for changeset 3696d77aaf02f5d15728dde3b9e35abcaf291496
+- added vi-like key-bindings for keyboards without cursor keys (they are undocumented features)
+- hotfix
+- applied Stefan Tibus' sun patch, added -bottom option to dmenu which makes it appear in the bottom (for wmii compliance), slightly modified version than the patch proposed by Stefan Tibus
+- agreed with Sander
+- added wmii reference to dmenu(1)
+- prepared dmenu-1.8, shortened command line options (-font is -fn, -selbg is -sb, -selfg is -sf, -normbg is -nb, -normfg is -nf now)
+- fixed a typo in dmenu.1
+- Added tag 1.8 for changeset d3e6fa22ae45b38b1bdb0d813390365e5930360b
+- next version will contain updated copyright notice
+- corrected
+- corrections
+- applied Alexis Hildebrandts patches
+- applied Sanders  dmenu_ctrlchars.patch (thanks!)
+- commented recent Control-shortcut additions
+- documenting undocumented vi-alike shortcuts of dmenu
+- s/Mod1-Shift-g/Mod1-G/ in fact Sander is right
+- added evil key support to dmenu
+- Added tag 1.9 for changeset c7f5f4d54317
+- small fix of Control-j in dmenu.1
+- applied new default colors
+- removed useless mx, my
+- small fix
+- Added tag 2.0 for changeset 1fce5c464fcd
+- Added tag 2.1 for changeset d91c79020430
+- hotfix changes
+- Added tag 2.1 for changeset 7656557298c9
+- got rid of LD, inspired by JGs patch to wmii
+- letting dmenu appear at the bottom by default
+- nah nah nah, I can't get used to the  bottom bar, pushing the conditional dmenu again
+- fixed Copyright notice in Makefile
+- Added tag 2.2 for changeset 90f0e34e7f11
+- removed draw.c, implemented C-w handling (backward word deletion)
+- removed -t, now using isatty() instead of select() to prevent execution from an interactive shell
+- readded draw.c again (except getcolor and setfont)
+- s/setfont/initfont/
+- renamed getcolor to initcolor
+- applied the fix inspired by a recent wmii commit
+- Added tag 2.3 for changeset b6e09682c8adcb6569656bee73c311f9ab457715
+- made Fnt an anonymous struct
+- added dmenu_path convenience script
+- Added tag 2.4 for changeset 9e9036cbfb4b
+- Added tag 2.4.1 for changeset 03e83e2788c8
+- ok 2.4.2
+- Added tag 2.4.2 for changeset 1ca5d430524e
+- fixed a bug when dmenu is run with -v
+- using the old-style fashion we uses earlier
+- removed superfluous externs as well
+- I also dislike sort -u, I support that each Unix tool does one job and does it right ;)
+- Added tag 2.5 for changeset 041143e9fc54
+- Escape -s in dmenu.1
+- next is 2.6, but not yet ;)
+- if isatty() first read from stdin and then grab the keyboard, otherwise first grab the keyboard and then read from stdin
+- changed Backspace/C-w behavior (now it only removes a single character)
+- useless var declaration prev_nitem
+- Added tag 2.6 for changeset 775f761a5647
+- also, don't set the font all the time
+- keyboard grab works on the dmenu window now (not on the root window) - thx for Kris for this hint
+- Added tag 2.7 for changeset fbd9e9d63f20
+- Wait for an Expose and draw the menu immediately after mapping the window.
+- reverting keyboard grab to root window - invoking several dmenu's now works again...
+- attempt to grab the keyboard only 1000 times, not forever.
+- Added tag 2.8 for changeset dd3d02b07cac
+- allowing numpad keys as inpyt
+- next version is 2.9
+- making copyright notice more compact
+- Added tag 3.0 for changeset 59b3024854db
+- fixed a small bug in dmenu when an empty font is supplied
+- applied anydot's dmenu_path caching patch, thank you!
+- removed strip, added -s to LDFLAGs
+- Added tag 3.1 for changeset 8f0f917ac988
+- applied Jukka's fix
+- made dmenu_path the way anydot proposed in response to Jukka
+- removed some superflous strncmp's
+- Changed dmenu_path (fixed race, improved speed, check that $PATH is the same as the last run).
+- Merge.
+- Fix grouping in dmenu_path.
+- Silence the first find in dmenu_path.
+- Fix the uptodate logic (uptodate if !find newer dirs than the cache).
+- I agree with the race fix of JG, but I dislike the SUSV3-breaking find, and I don't care about PATH changes, keep it simple, stupid
+- referred to LICENSE file
+- Added tag 3.2 for changeset e4c81a78ffba
+- foooooo
+- applied ido-matching to dmenu
+- fixed fallback
+- micromizing dmenu step 1
+- next version is 3.3
+- reorganized
+- applied yiyus initfont fix
+- Added tag 3.3 for changeset 709df5a4bad7
+- applied Michał Janeczek dmenu patch, made dmenu match case-insensitive by default, added -i command line option to enable ido matching, added Michał to Copyright holders
+- small cosmetic fix
+- yet another cosmetic fix
+- switching to white
+- casting char to int when using tolower (thanks to Jukkas careful cosmetic checking!)
+- applied my favorite color scheme
+- applied new color nuance
+- using saner defaults
+- fixed dmenu
+- fixed font definition
+- implemented strcasestr for dmenu (I call it cistrstr) for portability issues (cygwin has no strcasestr, oh dear)
+- adapted c99 for pedantic checks, even if those checks are somewhat broken
+- Added tag 3.4 for changeset 9ab649b3b3e5
+- added dmenu run
+- updated
+- removed set
+- removed ido-matching, changed behavior of -i meaning case insensitive matching now, commented -x, -y, -w arguments in dmenu.1
+- applied Sanders patch
+- applied next patch of Sander
+- Added tag 3.5 for changeset 05e5bd706b3b
+- fixed match() to prefer prefix-matches to strstr-matches in the match list, extended the -y handling, next version is 3.6
+- several performance tweaks
+- removed unused variable nitem.
+- made some whitespacing consistent.
+- cosmetics
+- more cosmetics
+- applied Jukkas hotfix
+- bugfix of the -0 case in dmenu (thanks to Sander for his hint)
+- using limits.h
+- fix typo
+- Added tag 3.6 for changeset 0bc2751d06e8
+- re-applied Peter Hartlich's and Jukkas dmenu-related patches, for odd reasons they disappeared
+- though sticking to |uniq
+- fixed unquoted dmenu_run $exe-use reported by Jukka
+- no exe should be unquoted, agreed to Peter Hartlich
+- added Xinerama support to dmenu, reverted -b behavior, removed -x, -y, -w
+- s/unsigned int/uint/, s/unsigned long/ulong/
+- cosmetic fixes
+- yet another cosmetic change
+- using xidx
+- reusing config.h's color values, note we have to use const char *, instead of const char [] here, because the pointer might change
+- minor fix
+- Added tag 3.7 for changeset 0508a3a6ee10
+- removed emalloc, used only once so obsolete
+- minor update regarding locale support
+- reverted uint/ulong introduction
+- got rid of compile time xidx, grabbing the mouse pointer instead, falling back to screen 0 if no pointer available
+- removed compiler warning if XINERAMA is disabled
+- similiar change as in dwm
+- Added tag 3.8 for changeset 644b0798fccc
+- getting rid of setlocale(), it doesn't seem to make sense with Xmb, artifact of Xutf8 times
+- backported drawtext() simplifications to dmenu
+- removed the i = textnw... as remarked by Martin Hurton
+- abc...
+- fixed a problem when backporting dwm's drawtext()
+- removed artifact from wmii menu
+- reverted setlocale() call
+- simplified initfont
+- Added tag 3.9 for changeset 21a1ed9a69b9
+- minor modification
+- next release will be 4.0
+- applied Matthias Christian Ott's sanity fixes (thanks a lot!)
+- Added tag 4.0 for changeset 78f9f72cc9c6
+- applied cursor, vertical and paste patches for upcoming 4.1 dmenu version (due to the fact that surf is using dmenu as well)
+- this is only a temporary workaround, the command executed by -p must be configurable through some switch, that was the initial idea, just using sselp is too limited, I'll look into the other issues soon
+- applied Connor's patch, thanks!
+- applied cls' patch, thanks Connor!
+- applied Connor's next nice patch, thanks a lot!
+- applied Connor's subwindow patch
+- add ^a and ^e keybindings
+- apply nibble patch removing per-item length limit
+- commited Connor's sanity patch
+- added Connor to LICENSE file
+- applied Troels' patch, thanks Troels!
+- fixed 3 bugs and some inconsistency
+- fixed ^U cursor support
+- fixed bad parenting, simpler vlist
+- cleaning up
+- fixed vlist alignment
+- prepared dmenu-4.1 release
+- Added tag 4.1 for changeset 844587572673
+- applied Ramils patch
+- prepared bugfix release 4.1.1
+- Added tag 4.1.1 for changeset 72749a826cab
+- updated manpage
+- fixed vlist paging, cleaned up
+- cleaned up
+- added sselp requirement to readme
+- added ^K, optimisations
+- updated manpage, changed keybinds M- binds tend to be wm level, and there were up to 3 binds for the same action M-{hjkl} also no longer made sense in vlist mode
+- fixed vlist cursor
+- initial dmenu / dinput separation
+- typo fixes
+- overlapping code
+- added draw.h
+- fixed makefile
+- fixed static symbols in config.def.h
+- fixed offsets, updated eprint, cleaned up
+- decoupled draw.c from dmenu & dinput
+- removed colors from dc
+- moved draw.c to libdraw.a
+- extended libdraw
+- dinput with dmenu flags, fixed usage & -v, cosmetics
+- decosmetics
+- resizing vlist, new dinput binding
+- libdraw now has own repo
+- fixed no-input invisible text bug
+- removed -e flag (too buggy), cleaned up
+- atexit cleanup
+- updated to new libdraw
+- added dmenu.h, common.c
+- updated to libdraw tip
+- fixed vlist select
+- new libdraw
+- underline match
+- merged dmenu & dinput (clunky interface)
+- updated manpage, added paste, cleaned up, new libdraw
+- fixed bugs, no more config.h, updated manpage, new libdraw
+- replaced promptw
+- retyped promptw
+- merged *{h,v} functions
+- typo fix
+- another typo fix (thanks, Gene Auyeung)
+- new libdraw, typo fixes
+- added ^D, removed ^M
+- cursor fix + style
+- simplifications
+- reverted calcoffsets
+- more efficient initfont
+- new libdraw, replaced cistrstr with fstrstr, simpler readstdin
+- fixed paste
+- fixed insert segfault, added nextrune
+- signed ints, ignore negative -l value
+- resorted globals
+- rebound paste, removed useless max widths
+- fixed width bug
+- arrow offset
+- update to libdc, fixed utf8 bug
+- simplification
+- fixed linking bug (thanks Jacob Nixdorf) & iscntrl corner case
+- dmenu_path.c (shell is a bottleneck)
+- -m flag to fix dwm selmon bug
+- removed libdc dependence
+- rebound paste to ^Y
+- fixed config.mk dep
+- moved main, updated args
+- removed unnecessary defines
+- Added tag 4.2 for changeset 379813a051f0
+- fixed dist target bug
+- Added tag 4.2.1 for changeset abb6579a324f
+- posix makefile
+- gmake spews
+- cache option in config.mk
+- update license
+- paring
+- helpful errors
+- fast grab patch (thanks Rob)
+- fixed -m bug (thanks Rob)
+- fixed xinerama corner case
+- use array for items
+- instant ^E
+- fast dmenu_path script
+- whoops, wrong dmenu_path version
+- cleanup
+- follow symlinks
+- only match links
+- increment version
+- fast but inexact
+- faster grab
+- match first
+- efficient incremental search
+- portability
+- fixed extra warnings
+- fix possible overflow
+- no -m, cleanup
+- Added tag 4.3 for changeset 14c79f054bdf
+- bugfix
+- Added tag 4.3.1 for changeset 34a2d77049a9
+- add ^M
+- new lsx branch
+- add lsx.1
+- new dmenu_run
+- simpler lsx
+- update draw.c
+- check snprintf
+- close lsx branch
+- merge lsx -> default
+- make clean lsx
+- include limits.h
+- rebind ^N ^P
+- simpler vline
+- fix extra warning
+- efficiency tweaks
+- tweaks
+- add lsx.1 to dist
+- Added tag 4.4 for changeset 2b105eaae831
+- fix loadfont
+- dmenu_run: sh -c
+- change version to 'hg'
+- add token matching
+- detect active monitor using input focus
+- update manpage
+- tweak match
+- merge token -> default
+- fix monitor select when no focus
+- input focus: fix for reparenting wms
+- limit lines to input
+- add xim support
+- merge default -> lsx
+- return failure on error
+- check for corner cases
+- detect read errors
+- use ~/.dmenu_cache if no xdg cache
+- merge xim -> default
+- simplify dmenu_run
+- input focus: calculate areas of intersection
+- add lots of comments
+- add paste from clipboard
+- *.o depend on draw.h
+- new default colour scheme
+- fix C-n / C-p directions (thanks bastien)
+- limit direction keys in vline
+- replace lsx with stest
+- faster dmenu_run -f
+- fix dmenu_path exec sh
+- set window background_pixel
+- dmenu_run: use $SHELL
+- simplify stest
+- remove unneeded lstat
+- fork dmenu_run to disown child shell
+- restore stream testing
+- comment xdg fallback behaviour
+- merge stest -> default
+- add Mod1Mask keybindings
+- happy new year!
+- align M-[hjkl] closer to vi keys
+- config.mk cleanup
+- update version 4.5-hg
+- remove _POSIX_C_SOURCE cflag
+- add ^G escape keybinding
+- listen for C-S-[jm]
+- _POSIX_C_SOURCE=200809L
+- ignore prompt if it is empty in addition to NULL
+- dmenu_run: Split cache logic to dmenu_path again
+- applied multisel patch to mainline
+- applied Alex Sedov's Tab buffer termination patch, thanks
+- adopted Alex Sedov's config.h revival patch to tip
+- forgot to add config.def.h, thanks William
+- accepted vi'is exit approach ^[ (suggested by Arkaduisz)
+- applied Martti Kühne's dmenu monitor patch https://gist.github.com/mar77i/3349298/raw/f6581ca96627f4c71c0bd1faf531daaf2a613b95/monarg.patch becomes upstream now
+- applied Martin Kühl's inverse matching flag to stest
+- updated copyright notices in LICENSE and dmenu.c file
+- fix crash with ctrl-enter as input
+- applied Hiltjo's patch as suggested on the ml to fix ControlMask for C-j and C-m
+- Use libdraw: add Xft and fallback-fonts support to graphics lib
+- fix prompt color style how it used to be
+- config.mk: add FREETYPELIBS and FREETYPEINC
+- get rid of getopt, use suckless arg.h
+- Fixed typo introduced by shared code
+- config.mk: improve feature test check
+- config.mk: fix _XOPEN_SOURCE=700 for getline()
+- separate program-specific c99 bool and X11
+- drw style improvements
+- style improvements
+- config.mk: use -std=c99
+- Replace deprecated usleep() with nanosleep()
+- Fix the conversion from microseconds to nanoseconds
+- Untypedef struct item
+- Remove function prototypes and reorder functions accordingly
+- minor style fix
+- fix paste from clipboard (ctrl+shift+y)
+- fix incorrect ordering of match results
+- fix input text matching
+- free schemes as array
+- add sbase-style ecalloc(), calloc: or die
+- a valid (non-NULL) Drw and Fnt context must be passed
+- simplify drw_font_xcreate and prevent a potential unneeded allocation
+- cleanup drw_text, prevent gcc warning false-positive of unused var
+- dmenu.1: clarify monitor numbers are starting from 0 (first mon)
+- remove .hgtags file
+- package config.def.h on make dist
+- unboolify dmenu
+- arg.h: remove unused ARGNUM* macros
+- Add config option for word delimiters
+- Shut up glibc about _BSD_SOURCE being deprecated
+- Typofix
+- arg.h: fixed argv checks order
+- import new drw from libsl and minor fixes.
+- config.def.h: style improvement, use color Scheme enum
+- Partially revert 44c7de3: fix items text width offset calculation
+- Print highlighted input text only on single match
+- Revert "Print highlighted input text only on single match"
+- fix crash if negative monitor (< -1) was passed
+- die() consistency: always add newline
+- dmenu.1: fix -l option
+- dmenu.1: group single options
+- add embedding support with -w option
+- die() on calloc failure
+- correct variable declarations in preprocessor conditional
+- Revert "fix input text matching"
+- release 4.7
+- Set class name on menu window
+- init colors using SchemeLast
+- fix a possible free of a uninitialize variable in paste()
+- drw_scm_create: use Clr type
+- Instantiate j var outside #ifdef XINEMARA directive because it is used in loop outside directive
+- Fix regression in 84a1bc5
+- add key bindings for moving to the word start or end
+- bump version to 4.8
+- Update LICENSE
+- Fix handling of input strings
+- Handle IME input
+- bikesheddingly replace ${} with $()
+- Fix cursor drawn position with wide glyphs
+- Use bold for keyboard shortcuts in dmenu.1
+- Pledge on OpenBSD
+- code-style for pledge(2)
+- code-style for pledge: check the return code -1, not < 0
+- Do not strip at link stage
+- just show the compiler output
+- dmenu_path: always use the cachedir
+- Use slow path if stdin is a tty
+- dmenu.1: document improved fastgrab behaviour from previous patch
+- Prepared 4.9 release.
+- Close when the embedding window is destroyed
+- fix crash when XOpenIM returns NULL
+- make dmenu_path script executable
+- improve xopenim error message
+- revert IME support
+- paperbenni color scheme
+- fuzzy search
+- add mouse support
+- xyw
+- dmenu -P password option
+- gitignore and themes
+- theme chooser works now
+- arc theme
+- instant select if only one left
+- height
+- add match numbers
+- add manjaro theme
+- add roundedness
+- change default height
+- rebranding
+- fix rounded corners on slim entries
+- renaming
+- fix small graphical glitch
+- fix small black bar
+- circle for single chars
+- split build and theme.sh
+- fix big circle overlay
+- border width arg
+- updated readme
+- fix glitch with tall rounded corners
+- add centered flag
+- change standard prefix
+- new design
+- remove stest
+- start follorcursor
+- add stest back in and fix positioning when mouse following
+- add mouse hovering support
+- prevent the menu going offscreen
+- width parameter for follorcursor
+- allow comments with ">"
+- fix width argument
+- add nograb option and hide cursor on password input
+- don't center prompt on tall menu
+- make centered menu wide boi
+- prevent menu going off screen
+- rename stest to itest to avoid dmenu conflict
+- only display numbers if necessary
+- more numer display fixes
+- don't draw comment signs
+- add alt-tab functionality
+- fix alttab clicking
+- hidpi
+- don't confirm comments
+- fix imenu -i crash
+- fix emoji font
+- fix 2
+- add markup
+- improve offscreen detection
+- better icon and sidebar support
+- add comment markup
+- add custom search text
+- add fullheight option
+- fix special character performance issues
+- add animatesel
+- make fullheight respect top bar
+- fix height detection
+- fix settings hidpi
+- add auto line height/width and animation counter
+- add hovercolor
+- change height
+- simplify clicking on items
+- readd destroynotify
+- add preselect option
+- fix mouse button problem
+- fix logo link
+- add managed mode
+- add smartrun
+- fix width overflow
+- speed up stuff
+- add left/right cmd
+- add invalidcommand/crash detection to smartrun
+- introduce max history size
+- enable switching to terminal mode and back
+- fix output silencing
+- let super trigger left/right cmd
+- add command on both sides if not specified otherwise
+- add ability to comment labels
+- Revert "add ability to comment labels"
+- add single letter labeling
+- Update README.md
+- fix comment offset
+- instantmatch for commented
+- center instantassist letters
+- add inputonly
+- add toast option
+- custom class for floating menu
+- improve instantassist matching
+- allow setting window title
+- fix lineheight crash
+- fix smartrun
+- better hidpi support
+- fix bug
+- make smartmenu use default terminal
+- fix settings positioning
+- make alt f4 and super + q work in instantmenu
+- initialtext
+- add preselect to smartrun
+- add golaunch support but wait for stdin bug to be fixed
+- Respect y-offset of monitor when using `-H` flag.
+- Merge pull request #2 from DiXN/master
+- add golaunch
+- loop alttab
+- fix logo
+- Merge branch 'master' of https://github.com/instantOS/instantMENU into master
+- fix negative preselect
+- init confirmspace
+- fix preselect argument handling
+- add exact matching
+- add smart case
+- prevent oversized menu
+- add ctrl + v
+- prevent more oversizing
+- add ability to center on one axis
+- fix toast centering
+- init changed manpage
+- add rightoffset
+- add grid to config.def.h
+- add grid to instantmenu.c
+- add grid to man page
+- add grid left and right navigation
+- add -g option to usage()
+- Merge pull request #6 from bob8677/grid
+- add mouse support for columns
+- fix issue with hovering over first item
+- add wildcard shortcut
+- fix memory leak
+- add prematch option
+- fix segfault
+- Add Xresources support ported from dmenu patch
+- more documentation
+- Merge pull request #9 from uvera/add-xresources
+- add reject no match option
+- fix codacy issue
+- Actually fix codacy issue
+- Merge pull request #10 from bob8677/reject-no-match
+- fix initialtext for rejectnomatch
+- readme instructions
+- fix line and column values being too high when using grid
+- fix -w -1 with grid option
+- fix columns getting changed when not used
+- inline comments after tab
+- Merge pull request #11 from bob8677/grid-fixes
+- Merge pull request #12 from bob8677/inline_comments
+- stop columns from expanding while using grid & stop / by 0 with -g 0
+- Merge pull request #13 from bob8677/grid-fixes
+- allow selecting entry n using ctrl + number
+- Merge branch 'master' of https://github.com/instantOS/instantMENU
+- better manpage
+- switch to new color scheme
+- change default font to inter
+- update logo branch name
+- add arrow buttons to leftcmd/rightcmd
+- add monospace flag
+- merge upstream to d78ff08d99780a73447d5a95bf1e358e8c23aa3c
+- magic number bad
+- remove deprecated theme.sh file
+- Merge remote-tracking branch 'origin/main' into main
+- Merge remote-tracking branch 'origin/master'
+- merge upstream until 308fe78b83836371720c7d7eb2c3eac409f3cc16
+- merge upstream until 41fdabbf7c517f8d524b70cbd78238cc319ccef3
+- merge upstream until 6be057f060543bb0f3ed9423904263617cdffffe
+- merge upstream until 7269c5355d257dd2ad2c53f15dc9c1cf6796aea5
+- merge upstream until 77526f756e23e362081ac807521f901f2e5cd5e6
+- merge upstream until 22511c41d55a38a770541ae617a09383d5e6ad1c
+- merge upstream until b43ec0577f2ad8ad33a0b893fe5360d966036786
+- merge upstream until 33685b06e9332638769e677e77b257e24e069fd1
+- merge upstream until e35976f4a50f884c2162f71e4128d7c273e3e042
+- merge upstream until 32db2b125190d366be472ccb7cad833248696144
+- merge upstream until 1d2b462acf1210b8f86966b8dd9bb6e36e369ee1
+- merge upstream until bcbc1ef5c4cf4875a4d66e7dc0919da88a6096a5
+- merge upstream until ba1a347dcaba055f824161007dfee60db3ea785b
+- merge upstream until dfbbf7f6e1b22ccf9e5a45d77ee10995577fb4fc
+- merge upstream until 0fe460dbd469a1d5b6a7140d0e1801935e4a923b
+- merge upstream until 7ab0cb5ef0e19352fc5d64ae0d57a5cf4540acbf
+- fix upstream incompatibility with instantassist
+- merge upstream until 8df553e0048733bab4bc85a6b76bcfd44c046e71
+- replace golaunch with i3-dmenu-desktop
+- Merge branch 'main' of github.com:instantOS/instantMENU
+- merge upstream until 51e32d49b56c86cd288c64fccf6cd765547781b9
+- merge upstream until 86f0b5119eaa39943013d009967432ffd9d18365
+- add debug config
+- add clang-format configuration and update VSCode settings for C language support
+- run clang-format
+- get rid of horrible hack
+- move enums, fix emoji picker
+- move old codebase
+- init rust rewrite
+- init X11 backend (still janky)
+- first compiling rewrite version
+- better cli parser
+- fix bugs
+- Merge branch 'rust-rewrite' of github.com:instantOS/instantMENU into rust-rewrite
+- fix CLI args
+- fix off canvas stuff
+- refactor stuff
+- refactor long functions
+- rename to get rid of some abbreviations
+- more renames
+- performance optimizations
+- reduce protocol overhead and forwarding wrappers
+- Merge upstream Rust naming refactor
+- less magic numbers
+- better args UX
+- do not reinvent standard library
+- more idiomatic rust
+- add justfile
+- fix misnomer
+- more type safety
+- redo font caching to massively improve performance
+- fix border, anim and arrow symbols
+- fix right mouse button
+- redo animation system, fix bugs
+- laarge scale refactor
+- rename placeholder thingy
+- update docs/callsites
+- add new tests
+- more tests
+- fix doc comments
+- clippy fmt
+- add manpage generator
+- fix item count bug
+- add backend arg
+- fix x11 keycodes
+- add man installer
+- remove old c codebase
+- change geometry anchoring
+- init packaging and CI testing
