@@ -19,6 +19,10 @@ rootinstall:
     sudo install ./target/debug/itest /usr/local/bin/
 
 
+# regenerate instantmenu.1 from the clap CLI definition
+man:
+    cargo run --bin instantmenu-mangen
+
 # format code
 format:
     cargo clippy --fix --allow-dirty
