@@ -3,18 +3,6 @@
 use super::{Menu, LEFT_GLYPH, RIGHT_GLYPH};
 use crate::enums::{output_offset, ItemCategory, Scheme};
 
-/// Map a color-prefix byte (`r`/`g`/`y`/`h`/`b`) to its scheme.
-fn color_scheme_for(byte: u8) -> Option<Scheme> {
-    match byte {
-        b'r' => Some(Scheme::Red),
-        b'g' => Some(Scheme::Green),
-        b'y' => Some(Scheme::Yellow),
-        b'h' => Some(Scheme::Highlight),
-        b'b' => Some(Scheme::Selected),
-        _ => None,
-    }
-}
-
 impl Menu {
     /// recalculate_numbers
     fn recalculate_numbers(&mut self) {
@@ -42,7 +30,7 @@ impl Menu {
         let text = self.items[self.matches[pos]].text.clone();
         let bytes = text.as_bytes();
 
-        let mut category = self.classify_item(pos, bytes, is_selected);
+        let mut category = self.classify_item(pos, &text, is_selected);
 
         let mut temp_padding = 0;
         if category == ItemCategory::Colored && bytes.get(2) == Some(&b' ') {
@@ -93,51 +81,23 @@ impl Menu {
     }
 
     /// Classify an item by its `>`/`:` prefix and set the matching scheme.
-    fn classify_item(&mut self, pos: usize, bytes: &[u8], is_selected: bool) -> ItemCategory {
-        let mut category = ItemCategory::Normal;
-        if bytes.first() == Some(&b'>') {
-            if bytes.get(1) == Some(&b'>') {
-                category = ItemCategory::ColoredComment;
-                match bytes.get(2).copied().and_then(color_scheme_for) {
-                    Some(s) => self.renderer.set_scheme(s),
-                    None => {
-                        category = ItemCategory::Comment;
-                        self.renderer.set_scheme(Scheme::Normal);
-                    }
+    fn classify_item(&mut self, pos: usize, text: &str, is_selected: bool) -> ItemCategory {
+        let (category, prefixed) = ItemCategory::from_prefix(text, is_selected);
+        let scheme = match prefixed {
+            Some(s) => s,
+            None if category == ItemCategory::Normal => {
+                // plain item: the scheme follows selection/output state
+                if is_selected {
+                    Scheme::Selected
+                } else if self.items[self.matches[pos]].already_output {
+                    Scheme::Output
+                } else {
+                    Scheme::Normal
                 }
-            } else {
-                self.renderer.set_scheme(Scheme::Normal);
-                category = ItemCategory::Comment;
             }
-        } else if bytes.first() == Some(&b':') {
-            category = ItemCategory::Colored;
-            if is_selected {
-                // the C `:x` branch has no `h` highlight case
-                match bytes
-                    .get(1)
-                    .copied()
-                    .filter(|&b| b != b'h')
-                    .and_then(color_scheme_for)
-                {
-                    Some(s) => self.renderer.set_scheme(s),
-                    None => {
-                        self.renderer.set_scheme(Scheme::Selected);
-                        category = ItemCategory::Normal;
-                    }
-                }
-            } else {
-                self.renderer.set_scheme(Scheme::Normal);
-            }
-        } else {
-            let scheme = if is_selected {
-                Scheme::Selected
-            } else if self.items[self.matches[pos]].already_output {
-                Scheme::Output
-            } else {
-                Scheme::Normal
-            };
-            self.renderer.set_scheme(scheme);
-        }
+            None => Scheme::Normal, // unselected `:c` item
+        };
+        self.renderer.set_scheme(scheme);
         category
     }
 

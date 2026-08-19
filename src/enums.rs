@@ -68,7 +68,7 @@ impl ItemCategory {
         let bytes = text.as_bytes();
         if bytes.first() == Some(&b'>') {
             if bytes.get(1) == Some(&b'>') {
-                match colored_scheme(bytes.get(2)) {
+                match comment_scheme(bytes.get(2)) {
                     Some(s) => (ItemCategory::ColoredComment, Some(s)),
                     None => (ItemCategory::Comment, Some(Scheme::Normal)),
                 }
@@ -90,13 +90,26 @@ impl ItemCategory {
     }
 }
 
-/// The scheme for a `>>`/`:` color code: r/g/y/h/b.
-fn colored_scheme(code: Option<&u8>) -> Option<Scheme> {
+/// The scheme for a `>>` color code: r/g/y/h/b.
+fn comment_scheme(code: Option<&u8>) -> Option<Scheme> {
     match code {
         Some(b'r') => Some(Scheme::Red),
         Some(b'g') => Some(Scheme::Green),
         Some(b'y') => Some(Scheme::Yellow),
         Some(b'h') => Some(Scheme::Highlight),
+        Some(b'b') => Some(Scheme::Selected),
+        _ => None,
+    }
+}
+
+/// The scheme for a `:` colored item: r/g/y/b only — the C `drawitem` `:x`
+/// branch has no highlight case (a selected `:c ` item with an unknown
+/// code, including `h`, falls back to a plain selected item).
+fn colored_scheme(code: Option<&u8>) -> Option<Scheme> {
+    match code {
+        Some(b'r') => Some(Scheme::Red),
+        Some(b'g') => Some(Scheme::Green),
+        Some(b'y') => Some(Scheme::Yellow),
         Some(b'b') => Some(Scheme::Selected),
         _ => None,
     }

@@ -15,6 +15,7 @@ use xkbcommon::xkb::x11 as xkbx11;
 use xkbcommon::xkb::{self, Keycode, KeyDirection};
 
 use super::{intersect_area, Backend, BackendEvent, MonitorInfo, MouseButton, XKB_OFFSET};
+use crate::enums::ExitStatus;
 use crate::render::{Canvas, Color};
 
 pub struct X11Backend {
@@ -139,7 +140,7 @@ impl X11Backend {
             std::thread::sleep(Duration::from_millis(10));
         }
         eprintln!("instantmenu: cannot grab focus");
-        std::process::exit(1);
+        ExitStatus::Failure.exit();
     }
 }
 
@@ -370,7 +371,7 @@ impl Backend for X11Backend {
             std::thread::sleep(Duration::from_millis(1));
         }
         eprintln!("instantmenu: cannot grab keyboard");
-        std::process::exit(1);
+        ExitStatus::Failure.exit();
     }
 
     fn grab_focus(&mut self, title: &str) {

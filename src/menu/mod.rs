@@ -19,6 +19,7 @@ use std::io::Write;
 
 use crate::backend::{Backend, CONTROL_MASK, SHIFT_MASK};
 use crate::config::Config;
+use crate::enums::{ExitStatus, ItemCategory};
 use crate::render::{Canvas, Renderer};
 
 /// sizeof text in the C version (BUFSIZ) minus the terminator.
@@ -129,7 +130,8 @@ impl Menu {
 
     /// The selected item is a non-selectable comment (starts with '>').
     fn selected_is_comment(&self) -> bool {
-        self.selected_text_ref().is_some_and(|t| t.starts_with('>'))
+        self.selected_text_ref()
+            .is_some_and(|t| ItemCategory::from_prefix(t, true).0.is_comment())
     }
 
     /// Move the selection one item forward, paging when it crosses `next`.
@@ -166,7 +168,7 @@ impl Menu {
         self.animate_selection();
         self.println(out);
         if state & CONTROL_MASK == 0 {
-            self.finish(0);
+            self.finish(ExitStatus::Success);
         }
         if let Some(pos) = self.selected {
             self.items[self.matches[pos]].already_output = true;
@@ -267,8 +269,8 @@ impl Menu {
     }
 
     /// cleanup + exit
-    fn finish(&mut self, code: i32) -> ! {
+    fn finish(&mut self, status: ExitStatus) -> ! {
         let _ = self.stdout.flush();
-        std::process::exit(code);
+        status.exit()
     }
 }

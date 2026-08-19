@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use super::Menu;
-use crate::enums::Scheme;
+use crate::enums::{ExitStatus, Scheme, Side};
 
 /// easeOutQuint
 fn ease_out_quint(t: f64) -> f64 {
@@ -95,42 +95,45 @@ impl Menu {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn();
-        self.finish(0)
+        self.finish(ExitStatus::Success)
     }
 
     /// trigger_command — run the left/right command with its animation.
-    pub(super) fn trigger_command(&mut self, direction: i32) {
+    pub(super) fn trigger_command(&mut self, side: Side) {
         self.cfg.animated = true;
-        let cmd = if direction != 0 {
-            let c = self
-                .cfg
-                .right_command
-                .clone()
-                .or_else(|| self.cfg.left_command.clone());
-            self.animate_rect(
-                self.menu_width + self.cfg.border_width,
-                0,
-                0,
-                self.menu_height,
-                0,
-                0,
-                self.menu_width,
-                self.menu_height,
-            );
-            c
-        } else {
-            let c = self
-                .cfg
-                .left_command
-                .clone()
-                .or_else(|| self.cfg.right_command.clone());
-            self.animate_rect(0, 0, 0, self.menu_height, 0, 0, self.menu_width, self.menu_height);
-            c
+        let cmd = match side {
+            Side::Right => {
+                let c = self
+                    .cfg
+                    .right_command
+                    .clone()
+                    .or_else(|| self.cfg.left_command.clone());
+                self.animate_rect(
+                    self.menu_width + self.cfg.border_width,
+                    0,
+                    0,
+                    self.menu_height,
+                    0,
+                    0,
+                    self.menu_width,
+                    self.menu_height,
+                );
+                c
+            }
+            Side::Left => {
+                let c = self
+                    .cfg
+                    .left_command
+                    .clone()
+                    .or_else(|| self.cfg.right_command.clone());
+                self.animate_rect(0, 0, 0, self.menu_height, 0, 0, self.menu_width, self.menu_height);
+                c
+            }
         };
 
         match cmd {
             Some(c) => self.spawn(&c),
-            None => self.finish(0),
+            None => self.finish(ExitStatus::Success),
         }
     }
 }

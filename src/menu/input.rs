@@ -3,49 +3,46 @@
 use std::io::Read;
 
 use super::{Item, Menu, TEXT_MAX};
+use crate::enums::{Direction, EditOp};
 
 impl Menu {
-    /// Port of insert(): insert `s` at the cursor (n > 0, or n == 0 with a
-    /// non-empty string) or delete -n bytes before the cursor (n < 0).
-    pub(super) fn insert(&mut self, s: Option<&str>, n: i32) {
-        let n = n as isize;
-        if self.text.len() as isize + n > TEXT_MAX as isize {
-            return;
+    /// Port of insert(): EditOp::Insert(s) inserts `s` at the cursor (capped
+    /// at the TEXT_MAX budget on a char boundary), EditOp::Delete(n) deletes
+    /// `n` bytes before the cursor (clamped at the text start).
+    pub(super) fn insert(&mut self, op: EditOp) {
+        // only insertion can overflow the TEXT_MAX budget
+        if let EditOp::Insert(s) = op {
+            if self.text.len() + s.len() > TEXT_MAX {
+                return;
+            }
         }
 
         let last = self
             .cfg
             .reject_no_match
             .then(|| (self.text.clone(), self.cursor));
-        let cursor = self.cursor as isize;
 
-        if n > 0 {
-            let s = s.unwrap_or("");
-            // cut at the TEXT_MAX budget on a char boundary; a raw byte cut
-            // could land inside a multi-byte char and panic on insert_str
-            let byte_len = s
-                .floor_char_boundary((n as usize).min(s.len()).min(TEXT_MAX - self.text.len()));
-            self.text.insert_str(cursor as usize, &s[..byte_len]);
-            self.cursor = (cursor + byte_len as isize) as usize;
-
-            if self.cfg.smart_case {
-                let has_upper = self.text.bytes().any(|b| b.is_ascii_uppercase());
-                if has_upper {
-                    self.cfg.smart_case = false;
-                    self.insensitive = false;
-                }
-            }
-        } else if n < 0 {
-            let cut = (cursor + n).max(0) as usize;
-            self.text.replace_range(cut..cursor as usize, "");
-            self.cursor = cut;
-        } else if let Some(s) = s {
-            // n == 0 with a payload: -it inserts with strlen(text)
-            if !s.is_empty() {
-                let byte_len =
-                    s.floor_char_boundary(s.len().min(TEXT_MAX - self.text.len()));
+        match op {
+            EditOp::Insert(s) => {
+                // cut at the TEXT_MAX budget on a char boundary; a raw byte
+                // cut could land inside a multi-byte char and panic on
+                // insert_str
+                let byte_len = s.floor_char_boundary(s.len().min(TEXT_MAX - self.text.len()));
                 self.text.insert_str(self.cursor, &s[..byte_len]);
                 self.cursor += byte_len;
+
+                if self.cfg.smart_case {
+                    let has_upper = self.text.bytes().any(|b| b.is_ascii_uppercase());
+                    if has_upper {
+                        self.cfg.smart_case = false;
+                        self.insensitive = false;
+                    }
+                }
+            }
+            EditOp::Delete(n) => {
+                let cut = (self.cursor as isize - n as isize).max(0) as usize;
+                self.text.replace_range(cut..self.cursor, "");
+                self.cursor = cut;
             }
         }
 
@@ -64,11 +61,10 @@ impl Menu {
     /// (std's floor/ceil_char_boundary, the optimized form of the C byte
     /// walk). Callers guard cursor > 0 / cursor < len, so the C quirk of
     /// returning cursor + 1 past the end is never observable.
-    pub(super) fn next_rune(&self, inc: isize) -> usize {
-        if inc > 0 {
-            self.text.ceil_char_boundary(self.cursor + 1)
-        } else {
-            self.text.floor_char_boundary(self.cursor - 1)
+    pub(super) fn next_rune(&self, dir: Direction) -> usize {
+        match dir {
+            Direction::Forward => self.text.ceil_char_boundary(self.cursor + 1),
+            Direction::Backward => self.text.floor_char_boundary(self.cursor - 1),
         }
     }
 
@@ -80,22 +76,25 @@ impl Menu {
             .unwrap_or(false)
     }
 
-    pub(super) fn move_word_edge(&mut self, dir: isize) {
-        if dir < 0 {
-            /* move cursor to the start of the word */
-            while self.cursor > 0 && self.is_delimiter(self.next_rune(-1)) {
-                self.cursor = self.next_rune(-1);
+    pub(super) fn move_word_edge(&mut self, dir: Direction) {
+        match dir {
+            Direction::Backward => {
+                /* move cursor to the start of the word */
+                while self.cursor > 0 && self.is_delimiter(self.next_rune(Direction::Backward)) {
+                    self.cursor = self.next_rune(Direction::Backward);
+                }
+                while self.cursor > 0 && !self.is_delimiter(self.next_rune(Direction::Backward)) {
+                    self.cursor = self.next_rune(Direction::Backward);
+                }
             }
-            while self.cursor > 0 && !self.is_delimiter(self.next_rune(-1)) {
-                self.cursor = self.next_rune(-1);
-            }
-        } else {
-            /* move cursor to the end of the word */
-            while self.cursor < self.text.len() && self.is_delimiter(self.cursor) {
-                self.cursor = self.next_rune(1);
-            }
-            while self.cursor < self.text.len() && !self.is_delimiter(self.cursor) {
-                self.cursor = self.next_rune(1);
+            Direction::Forward => {
+                /* move cursor to the end of the word */
+                while self.cursor < self.text.len() && self.is_delimiter(self.cursor) {
+                    self.cursor = self.next_rune(Direction::Forward);
+                }
+                while self.cursor < self.text.len() && !self.is_delimiter(self.cursor) {
+                    self.cursor = self.next_rune(Direction::Forward);
+                }
             }
         }
     }
@@ -149,7 +148,7 @@ impl Menu {
     pub fn initial_text(&mut self, s: &str) {
         let tmp = self.cfg.reject_no_match;
         self.cfg.reject_no_match = false;
-        self.insert(Some(s), s.len() as i32);
+        self.insert(EditOp::Insert(s));
         self.cfg.reject_no_match = tmp;
     }
 }

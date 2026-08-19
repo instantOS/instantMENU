@@ -5,7 +5,7 @@
 use instantmenu::backend;
 use instantmenu::cli;
 use instantmenu::config::Config;
-use instantmenu::enums::{ColorRole, Scheme};
+use instantmenu::enums::{ColorRole, ExitStatus, Scheme};
 use instantmenu::menu::Menu;
 use instantmenu::render::Renderer;
 use clap::Parser;
@@ -17,7 +17,7 @@ fn main() {
     let args = cli::Args::parse();
     if args.version {
         println!("instantmenu-{}", instantmenu::config::VERSION);
-        std::process::exit(0);
+        ExitStatus::Success.exit();
     }
 
     let mut cfg = Config::default();
@@ -27,7 +27,7 @@ fn main() {
     /* open backend (Wayland preferred when WAYLAND_DISPLAY is set) */
     let backend = backend::open(cfg.embed).unwrap_or_else(|e| {
         eprintln!("instantmenu: {e}");
-        std::process::exit(1);
+        ExitStatus::Failure.exit();
     });
 
     /* readxresources(): X resources are the base layer under the CLI */

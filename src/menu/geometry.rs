@@ -3,7 +3,7 @@
 use super::Menu;
 use crate::backend::{intersect_area, MonitorInfo};
 use crate::config::Position;
-use crate::enums::Scheme;
+use crate::enums::{EditOp, ExitStatus, Scheme};
 
 impl Menu {
     /// setup — geometry, monitor selection, window creation, first draw.
@@ -211,7 +211,7 @@ impl Menu {
     /// Geometry when embedding into a parent window (`-W`, no monitor info).
     fn embed_geometry(&mut self, root_width: i32, root_height: i32) -> (i32, i32) {
         let Some((parent_width, parent_height)) = self.backend.embed_parent_size() else {
-            self.finish(1);
+            self.finish(ExitStatus::Failure);
         };
         let mut x = 0;
         let mut y = 0;
@@ -258,8 +258,7 @@ impl Menu {
         if self.cfg.pre_match && !self.matches.is_empty() && !self.text.is_empty() {
             // remember the item that was the first match for the pretyped text
             let first_match_item = *self.matches.first().unwrap();
-            let cursor = self.cursor as i32;
-            self.insert(None, -cursor);
+            self.insert(EditOp::Delete(self.cursor));
             // selected = that item (find its position in the rebuilt match list)
             self.selected = self.matches.iter().position(|&it| it == first_match_item);
             if let Some(next_pos) = self.next {
@@ -298,7 +297,7 @@ impl Menu {
             .is_err()
         {
             eprintln!("instantmenu: cannot create window");
-            std::process::exit(1);
+            ExitStatus::Failure.exit();
         }
 
         if managed {
