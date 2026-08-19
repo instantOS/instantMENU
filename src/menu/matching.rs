@@ -2,6 +2,7 @@
 
 use super::Menu;
 use crate::config::MatchMode;
+use crate::enums::ExitStatus;
 
 impl Menu {
     /// fstrncmp(a, b, n) == 0, honoring the case-insensitivity switch.
@@ -49,11 +50,11 @@ impl Menu {
                     if item.text.as_bytes().first() == Some(&c) {
                         let text = item.text.clone();
                         self.println(&text);
-                        self.finish(0);
+                        self.finish(ExitStatus::Success);
                     }
                 }
                 // exit if no match is found
-                self.finish(0);
+                self.finish(ExitStatus::Success);
             }
         }
 
@@ -102,7 +103,7 @@ impl Menu {
                 let text = self.items[item_index].text.clone();
                 self.println(&text);
             }
-            self.finish(0);
+            self.finish(ExitStatus::Success);
         }
 
         self.calc_offsets();
@@ -167,7 +168,7 @@ impl Menu {
                 let text = self.items[item_index].text.clone();
                 self.println(&text);
             }
-            self.finish(0);
+            self.finish(ExitStatus::Success);
         }
 
         self.calc_offsets();

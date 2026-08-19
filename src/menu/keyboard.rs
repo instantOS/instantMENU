@@ -5,6 +5,7 @@ use xkbcommon::xkb::keysyms as ks;
 
 use super::{Menu, TEXT_MAX};
 use crate::backend::{CONTROL_MASK, MOD1_MASK, MOD4_MASK, SHIFT_MASK};
+use crate::enums::{Direction, EditOp, ExitStatus, Side};
 
 impl Menu {
     /// select_number — Ctrl-1..9 select the n-th item and hit Return.
@@ -116,7 +117,7 @@ impl Menu {
             s if s == ks::KEY_n => sym = ks::KEY_Down,
             s if s == ks::KEY_p => sym = ks::KEY_Up,
             s if s == ks::KEY_s => {
-                self.insert(Some(".*"), 2);
+                self.insert(EditOp::Insert(".*"));
             }
             s if s == ks::KEY_v => {
                 /* paste clipboard */
@@ -131,8 +132,7 @@ impl Menu {
             }
             s if s == ks::KEY_u => {
                 /* delete left */
-                let cursor = self.cursor as i32;
-                self.insert(None, -cursor);
+                self.insert(EditOp::Delete(self.cursor));
             }
             s if s == ks::KEY_w => {
                 self.delete_word();
@@ -143,12 +143,12 @@ impl Menu {
                 return None;
             }
             s if s == ks::KEY_Left || s == ks::KEY_KP_Left => {
-                self.move_word_edge(-1);
+                self.move_word_edge(Direction::Backward);
                 self.draw_menu();
                 return None;
             }
             s if s == ks::KEY_Right || s == ks::KEY_KP_Right => {
-                self.move_word_edge(1);
+                self.move_word_edge(Direction::Forward);
                 self.draw_menu();
                 return None;
             }
@@ -161,7 +161,7 @@ impl Menu {
                 return None;
             }
             s if s == ks::KEY_bracketleft => {
-                self.finish(1);
+                self.finish(ExitStatus::Failure);
             }
             _ => return None,
         }
@@ -194,7 +194,7 @@ impl Menu {
             target = previous;
         }
         if target != self.cursor {
-            self.insert(None, target as i32 - self.cursor as i32);
+            self.insert(EditOp::Delete(self.cursor - target));
         }
     }
 
@@ -218,14 +218,14 @@ impl Menu {
     fn mod1_key(&mut self, sym: u32) -> Option<u32> {
         let mut sym = sym;
         match sym {
-            s if s == ks::KEY_F4 => self.finish(1),
+            s if s == ks::KEY_F4 => self.finish(ExitStatus::Failure),
             s if s == ks::KEY_b => {
-                self.move_word_edge(-1);
+                self.move_word_edge(Direction::Backward);
                 self.draw_menu();
                 return None;
             }
             s if s == ks::KEY_f => {
-                self.move_word_edge(1);
+                self.move_word_edge(Direction::Forward);
                 self.draw_menu();
                 return None;
             }
@@ -263,7 +263,7 @@ impl Menu {
     /// Mod4-prefixed keys (only Mod4-q is bound: quit).
     fn mod4_key(&mut self, sym: u32) {
         if sym == ks::KEY_q {
-            self.finish(1);
+            self.finish(ExitStatus::Failure);
         }
     }
 
@@ -274,20 +274,20 @@ impl Menu {
             if self.cursor >= self.text.len() {
                 return Some(false);
             }
-            self.cursor = self.next_rune(1);
+            self.cursor = self.next_rune(Direction::Forward);
             // fallthrough to BackSpace
             if self.cursor == 0 {
                 return Some(false);
             }
-            let next_rune_pos = self.next_rune(-1);
-            self.insert(None, next_rune_pos as i32 - self.cursor as i32);
+            let next_rune_pos = self.next_rune(Direction::Backward);
+            self.insert(EditOp::Delete(self.cursor - next_rune_pos));
             Some(true)
         } else if sym == ks::KEY_BackSpace {
             if self.cursor == 0 {
                 return Some(false);
             }
-            let next_rune_pos = self.next_rune(-1);
-            self.insert(None, next_rune_pos as i32 - self.cursor as i32);
+            let next_rune_pos = self.next_rune(Direction::Backward);
+            self.insert(EditOp::Delete(self.cursor - next_rune_pos));
             Some(true)
         } else if sym == ks::KEY_End || sym == ks::KEY_KP_End {
             if self.cursor < self.text.len() {
@@ -302,7 +302,7 @@ impl Menu {
             };
             Some(true)
         } else if sym == ks::KEY_Escape {
-            self.finish(1);
+            self.finish(ExitStatus::Failure);
         } else if sym == ks::KEY_Home || sym == ks::KEY_KP_Home {
             if self.selected.is_none() && self.matches.is_empty() {
                 self.cursor = 0;
@@ -387,7 +387,7 @@ impl Menu {
             // insert: composed string from the input method
             if let Some(first) = buf.bytes().next() {
                 if !first.is_ascii_control() {
-                    self.insert(Some(buf), buf.len() as i32);
+                    self.insert(EditOp::Insert(buf));
                 }
             }
         }
@@ -419,12 +419,12 @@ impl Menu {
             if (state & (SHIFT_MASK | MOD4_MASK) != 0)
                 && (self.cfg.left_command.is_some() || self.cfg.right_command.is_some())
             {
-                self.trigger_command(0);
+                self.trigger_command(Side::Left);
             } else {
                 if self.cursor > 0
                     && (self.selected.is_none() || self.selected == Some(0) || self.cfg.lines > 0)
                 {
-                    self.cursor = self.next_rune(-1);
+                    self.cursor = self.next_rune(Direction::Backward);
                 } else if self.cfg.lines > 0 {
                     return false;
                 } else {
@@ -461,9 +461,9 @@ impl Menu {
             if (state & (SHIFT_MASK | MOD4_MASK) != 0)
                 && (self.cfg.right_command.is_some() || self.cfg.left_command.is_some())
             {
-                self.trigger_command(1);
+                self.trigger_command(Side::Right);
             } else if self.cursor < self.text.len() {
-                self.cursor = self.next_rune(1);
+                self.cursor = self.next_rune(Direction::Forward);
             } else if self.cfg.lines > 0 {
                 return false;
             } else {

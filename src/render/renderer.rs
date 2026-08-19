@@ -105,11 +105,11 @@ impl Renderer {
     }
 
     /// drw_rect — filled rect in the current scheme; `invert` swaps fg/bg,
-    /// `rounded` paints the bottom 4px strip with the detail color.
-    pub fn rect(&mut self, canvas: &mut Canvas, x: i32, y: i32, w: i32, h: i32, filled: bool, invert: bool, rounded: bool) {
+    /// `accent` paints the bottom 4px strip with the detail color.
+    pub fn rect(&mut self, canvas: &mut Canvas, x: i32, y: i32, w: i32, h: i32, filled: bool, invert: bool, accent: bool) {
         let color = if invert { self.scheme.bg } else { self.scheme.fg };
         if filled && h < 40 {
-            if rounded {
+            if accent {
                 self.fill_rect(canvas, x, y, w, h - 4, color);
                 self.fill_rect(canvas, x, y + h - 4, w, 4, self.scheme.detail);
             } else {
@@ -216,7 +216,7 @@ impl Renderer {
     }
 
     /// drw_text — draw `text` at (x, y, w, h) with `left_padding` padding.
-    /// `invert` swaps fg/bg, `rounded` paints a 4px detail strip at the
+    /// `invert` swaps fg/bg, `accent` paints a 4px detail strip at the
     /// bottom and shifts the text up by 2px. Text that does not fit is
     /// truncated with an ellipsis ("..."). Returns the x position after the
     /// drawn text.
@@ -230,7 +230,7 @@ impl Renderer {
         left_padding: i32,
         text: &str,
         invert: bool,
-        rounded: bool,
+        accent: bool,
     ) -> i32 {
         let render = x != 0 || y != 0 || w != 0 || h != 0;
         if !render {
@@ -243,7 +243,7 @@ impl Renderer {
 
         // background
         let fill = if invert { self.scheme.fg } else { self.scheme.bg };
-        if rounded {
+        if accent {
             self.fill_rect(canvas, x, y, w, h - 4, fill);
             self.fill_rect(canvas, x, y + h - 4, w, 4, self.scheme.detail);
         } else if self.frame_background != Some(fill) {
@@ -282,10 +282,10 @@ impl Renderer {
             drawn_width = self.text_width(display_text) + ellipsis_width;
             // draw ellipsis right after the truncated text
             let ellipsis_x = x + left_padding + self.text_width(display_text);
-            self.draw_run(canvas, ellipsis_x, y, h, "...", cosmic_color, rounded);
+            self.draw_run(canvas, ellipsis_x, y, h, "...", cosmic_color, accent);
         }
         if !display_text.is_empty() {
-            self.draw_run(canvas, x + left_padding, y, h, display_text, cosmic_color, rounded);
+            self.draw_run(canvas, x + left_padding, y, h, display_text, cosmic_color, accent);
         }
 
         // drw_text returns the advanced x plus remaining w, which is x + w for
@@ -302,7 +302,7 @@ impl Renderer {
         h: i32,
         text: &str,
         color: CosmicColor,
-        rounded: bool,
+        accent: bool,
     ) {
         let mut layout = self.layout_cache.remove(text).unwrap_or_else(|| {
             let buffer = self.make_buffer(text, None);
@@ -317,7 +317,7 @@ impl Renderer {
         // vertical centering like drw_text:
         // ty = y + (h - usedfont->h)/2 + ascent, here the buffer baseline sits
         // at ascent within font_height rows.
-        let y_off = y + (h - self.font_height) / 2 - if rounded { 2 } else { 0 };
+        let y_off = y + (h - self.font_height) / 2 - if accent { 2 } else { 0 };
 
         layout.buffer.draw(
             &mut self.font_system,

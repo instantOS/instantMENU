@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use super::Menu;
 use crate::backend::BackendEvent;
+use crate::enums::ExitStatus;
 
 impl Menu {
     /// run — port of the event loop in run().
@@ -11,14 +12,14 @@ impl Menu {
         if self.cfg.toast != 0 {
             let toast = self.cfg.toast;
             std::thread::sleep(Duration::from_micros(toast as u64 * 100_000));
-            std::process::exit(0);
+            ExitStatus::Success.exit();
         }
 
         let mut last_time: u32 = 0;
         let mut preselected = self.cfg.preselected;
         loop {
             let Some(ev) = self.backend.next_event() else {
-                std::process::exit(1);
+                ExitStatus::Failure.exit();
             };
 
             if preselected != 0 {
@@ -38,7 +39,7 @@ impl Menu {
                     self.set_selection(x, y);
                 }
                 BackendEvent::Destroyed => {
-                    std::process::exit(1);
+                    ExitStatus::Failure.exit();
                 }
                 BackendEvent::ButtonPress { button, state, x, y } => {
                     self.button_press(button, state, x, y);

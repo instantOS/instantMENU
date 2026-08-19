@@ -2,6 +2,7 @@
 
 use super::Menu;
 use crate::backend::MouseButton;
+use crate::enums::{EditOp, ExitStatus, ItemCategory, Side};
 
 impl Menu {
     /// x offset after the prompt (0 when there is no prompt).
@@ -95,7 +96,7 @@ impl Menu {
     pub(super) fn button_press(&mut self, button: MouseButton, state: u32, ev_x: i32, ev_y: i32) {
         /* right-click: exit */
         if button == MouseButton::Right {
-            std::process::exit(1);
+            ExitStatus::Failure.exit();
         }
 
         let x = self.prompt_offset();
@@ -150,12 +151,11 @@ impl Menu {
             || (self.cfg.lines > 0 && ev_y >= y && ev_y <= y + row_height);
         if input_hit {
             if self.cfg.left_command.is_some() && ev_x < command_cell_width {
-                self.trigger_command(0);
+                self.trigger_command(Side::Left);
             } else if ev_x > self.menu_width - command_cell_width {
-                self.trigger_command(1);
+                self.trigger_command(Side::Right);
             } else {
-                let cursor = self.cursor as i32;
-                self.insert(None, -cursor);
+                self.insert(EditOp::Delete(self.cursor));
                 self.draw_menu();
             }
             return;
@@ -194,7 +194,7 @@ impl Menu {
         for (pos, item_x, item_width) in self.horizontal_item_rects(x) {
             if ev_x >= item_x && ev_x <= item_x + item_width {
                 let item_text = self.items[self.matches[pos]].text.clone();
-                if item_text.starts_with('>')
+                if ItemCategory::from_prefix(&item_text, false).0.is_comment()
                     && self.selected_text_ref().is_some_and(|t| !t.is_empty())
                 {
                     break;
@@ -225,7 +225,7 @@ impl Menu {
     pub(super) fn paste(&mut self, text: &str) {
         /* we have been given the current selection, now insert it into input */
         let line = text.split('\n').next().unwrap_or("");
-        self.insert(Some(line), line.len() as i32);
+        self.insert(EditOp::Insert(line));
         self.draw_menu();
     }
 }
