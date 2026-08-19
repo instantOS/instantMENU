@@ -548,6 +548,18 @@ fn run_toast_times_out_with_success() {
     assert_eq!(menu.run(), ExitStatus::Success);
 }
 
+/// a negative toast (only reachable via a hand-built Config — the CLI
+/// rejects it) must not overflow and behaves like the shortest toast
+#[test]
+fn run_toast_negative_is_clamped() {
+    let cfg = Config {
+        toast: -5,
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &["alpha"]);
+    assert_eq!(menu.run(), ExitStatus::Success);
+}
+
 #[test]
 fn run_toast_re_presents_on_expose() {
     let cfg = Config {

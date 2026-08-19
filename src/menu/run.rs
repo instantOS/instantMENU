@@ -11,7 +11,10 @@ impl Menu {
     /// transitions; returns the exit status.
     pub fn run(&mut self) -> ExitStatus {
         if self.cfg.toast != 0 {
-            let toast = self.cfg.toast;
+            /* the CLI rejects negative --toast, but Config can be built
+             * directly (tests, library use); clamp so the u64 multiply
+             * below cannot overflow */
+            let toast = self.cfg.toast.max(1);
             let deadline = Instant::now() + Duration::from_micros(toast as u64 * 100_000);
             loop {
                 let now = Instant::now();
