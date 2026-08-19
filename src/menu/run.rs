@@ -10,6 +10,9 @@ impl Menu {
     /// run — port of the event loop in run(). Interprets the handlers'
     /// transitions; returns the exit status.
     pub fn run(&mut self) -> ExitStatus {
+        if self.slider.is_some() {
+            return self.run_slide();
+        }
         if self.cfg.toast != 0 {
             /* the CLI rejects negative --toast, but Config can be built
              * directly (tests, library use); clamp so the u64 multiply
@@ -63,6 +66,7 @@ impl Menu {
                 BackendEvent::ButtonPress { button, state, pos } => {
                     self.button_press(button, state, pos)
                 }
+                BackendEvent::ButtonRelease { .. } => continue,
                 BackendEvent::Expose => {
                     self.backend.present(&self.canvas);
                     continue;

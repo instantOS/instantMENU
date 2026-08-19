@@ -34,6 +34,7 @@ bump can also be selected manually from the workflow dispatch form.
 - animations and hover over indicators
 - icon prefixes
 - comments
+- slider mode (`instantmenu --slide --command 'brightnessctl s'`)
 
 ## is this dmenu?
 

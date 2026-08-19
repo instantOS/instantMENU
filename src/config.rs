@@ -44,6 +44,79 @@ pub enum MatchMode {
     Exact,
 }
 
+/// `--slide` settings as given on the command line, before defaults are
+/// applied. `Config::slide` being `Some` is what puts the menu in slide
+/// mode; `resolve` fills in the defaults and rejects empty/inverted ranges.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlideSettings {
+    /// Minimum value (`--min`, default 0).
+    pub min: i32,
+    /// Maximum value (`--max`, default 100).
+    pub max: i32,
+    /// Initial value (`--value`, default: the middle of the range).
+    pub value: Option<i32>,
+    /// Small step for left/right (`--step`, default 1).
+    pub step: Option<i32>,
+    /// Large step for up/down (`--big-step`, default max(range/10, 5)).
+    pub big_step: Option<i32>,
+    /// Command run on every value change (`--command`), the value appended
+    /// as its last argument.
+    pub command: Option<String>,
+}
+
+impl Default for SlideSettings {
+    /// The command line defaults: a 0..=100 slider.
+    fn default() -> Self {
+        SlideSettings {
+            min: 0,
+            max: 100,
+            value: None,
+            step: None,
+            big_step: None,
+            command: None,
+        }
+    }
+}
+
+impl SlideSettings {
+    /// The step after defaults: at least 1.
+    pub fn resolved_step(&self) -> i32 {
+        self.step.unwrap_or(1).max(1)
+    }
+
+    /// The large step after defaults: at least the small step, at least
+    /// a tenth of the range (min 5).
+    pub fn resolved_big_step(&self) -> i32 {
+        self.big_step
+            .unwrap_or((self.max - self.min) / 10)
+            .max(5)
+            .max(self.resolved_step())
+    }
+
+    /// The initial value after defaults: the middle of the range, clamped
+    /// into it.
+    pub fn resolved_value(&self) -> i32 {
+        self.value
+            .unwrap_or(self.min + (self.max - self.min) / 2)
+            .clamp(self.min, self.max)
+    }
+
+    /// Validate the range and apply the defaults in place. `Err` carries a
+    /// ready-to-print message.
+    pub fn resolve(&mut self) -> Result<(), String> {
+        if self.min >= self.max {
+            return Err(format!(
+                "slide: minimum ({}) must be less than maximum ({})",
+                self.min, self.max
+            ));
+        }
+        self.value = Some(self.resolved_value());
+        self.step = Some(self.resolved_step());
+        self.big_step = Some(self.resolved_big_step());
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     /* --position option; anchor corner/edge/center on screen */
@@ -127,6 +200,8 @@ pub struct Config {
     pub embed: Option<u32>,
     /* -f; grab keyboard before reading stdin */
     pub fast: bool,
+    /* --slide option; Some(_) = slide mode with these settings */
+    pub slide: Option<SlideSettings>,
 }
 
 impl Default for Config {
@@ -189,6 +264,7 @@ impl Default for Config {
             width: 0,
             embed: None,
             fast: false,
+            slide: None,
         }
     }
 }

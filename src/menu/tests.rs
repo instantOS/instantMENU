@@ -2,7 +2,7 @@
 //! backend and assert on the returned [`Transition`]s — no window, and no
 //! font-dependent pixels (fonts load, but nothing is rasterized).
 
-use super::input::StdinItems;
+use super::input::{read_stdin, StdinItems};
 use super::layout::GridShape;
 use super::matcher::Item;
 use super::transition::Transition;
@@ -11,7 +11,7 @@ use crate::backend::{
     Backend, BackendEvent, EventPoll, MonitorInfo, MouseButton, CONTROL_MASK, MOD1_MASK, MOD4_MASK,
     SHIFT_MASK,
 };
-use crate::config::Config;
+use crate::config::{Config, SlideSettings};
 use crate::enums::ExitStatus;
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color, Renderer};
@@ -708,4 +708,274 @@ fn run_motion_selects_items() {
     stub.key(ks::KEY_Escape, 0, "");
     assert_eq!(menu.run(), ExitStatus::Failure);
     assert_eq!(menu.selection.selected, Some(1));
+}
+
+/* ── slide mode ────────────────────────────────────────────────────────── */
+
+/// A slide-mode menu: no items, resolved slider settings, the same stub
+/// geometry menu_with sets up.
+fn slide_with(settings: SlideSettings) -> (Menu, StubHandle, SharedOutput) {
+    let cfg = Config {
+        slide: Some(settings),
+        ..Config::default()
+    };
+    let (menu, stub, out) = menu_with(cfg, &[]);
+    (menu, stub, out)
+}
+
+fn slide_value(menu: &Menu) -> i32 {
+    menu.slider.as_ref().unwrap().value()
+}
+
+/// Return prints the current value and exits successfully.
+#[test]
+fn slide_return_prints_value_and_exits() {
+    let (mut menu, stub, out) = slide_with(SlideSettings::default());
+    stub.key(ks::KEY_Return, 0, "");
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert_eq!(out.contents(), "50\n"); // default value: middle of 0..=100
+}
+
+/// Escape and q cancel without printing.
+#[test]
+fn slide_escape_and_q_cancel() {
+    let (mut menu, stub, out) = slide_with(SlideSettings::default());
+    stub.key(ks::KEY_Escape, 0, "");
+    assert_eq!(menu.run(), ExitStatus::Failure);
+    assert_eq!(out.contents(), "");
+
+    let (mut menu, stub, out) = slide_with(SlideSettings::default());
+    stub.key(ks::KEY_q, 0, "");
+    assert_eq!(menu.run(), ExitStatus::Failure);
+    assert_eq!(out.contents(), "");
+}
+
+/// hjkl and the arrows step by --step / --big-step, clamped at the ends.
+#[test]
+fn slide_keys_step_by_step_and_big_step() {
+    let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
+    assert_eq!(menu.slide_key(ks::KEY_Right, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_l, 0), Transition::Redraw);
+    assert_eq!(slide_value(&menu), 52);
+    assert_eq!(menu.slide_key(ks::KEY_j, 0), Transition::Redraw);
+    assert_eq!(slide_value(&menu), 42);
+    assert_eq!(menu.slide_key(ks::KEY_k, 0), Transition::Redraw);
+    assert_eq!(slide_value(&menu), 52);
+    assert_eq!(menu.slide_key(ks::KEY_h, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_Left, 0), Transition::Redraw);
+    assert_eq!(slide_value(&menu), 50);
+
+    // already at the maximum: End then another increase is a no-op
+    assert_eq!(menu.slide_key(ks::KEY_End, 0), Transition::Redraw);
+    assert_eq!(slide_value(&menu), 100);
+    assert_eq!(menu.slide_key(ks::KEY_Up, 0), Transition::Nop);
+    assert_eq!(slide_value(&menu), 100);
+    // and at the minimum
+    assert_eq!(menu.slide_key(ks::KEY_Home, 0), Transition::Redraw);
+    assert_eq!(slide_value(&menu), 0);
+    assert_eq!(menu.slide_key(ks::KEY_Down, 0), Transition::Nop);
+}
+
+/// plus/minus change by exactly 1.
+#[test]
+fn slide_plus_minus_change_by_one() {
+    let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
+    assert_eq!(menu.slide_key(ks::KEY_plus, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_equal, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_KP_Add, 0), Transition::Redraw);
+    assert_eq!(slide_value(&menu), 53);
+    assert_eq!(menu.slide_key(ks::KEY_minus, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_KP_Subtract, 0), Transition::Redraw);
+    assert_eq!(slide_value(&menu), 51);
+}
+
+/// Digits jump to ninths of the range: 1 is the minimum, 0 the maximum.
+#[test]
+fn slide_digits_jump_to_ninths() {
+    let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
+    assert_eq!(menu.slide_key(ks::KEY_1, 0), Transition::Redraw);
+    assert_eq!(slide_value(&menu), 0);
+    assert_eq!(menu.slide_key(ks::KEY_5, 0), Transition::Redraw);
+    assert_eq!(slide_value(&menu), 44); // round(100 * 4/9)
+    assert_eq!(menu.slide_key(ks::KEY_0, 0), Transition::Redraw);
+    assert_eq!(slide_value(&menu), 100);
+}
+
+/// Unbound keys do nothing; Ctrl+c cancels like Escape.
+#[test]
+fn slide_ignores_unbound_keys_and_ctrl_c_cancels() {
+    let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
+    assert_eq!(menu.slide_key(ks::KEY_x, 0), Transition::Nop);
+    assert_eq!(
+        menu.slide_key(ks::KEY_Return, CONTROL_MASK),
+        Transition::Nop
+    );
+    assert_eq!(slide_value(&menu), 50);
+    assert_eq!(
+        menu.slide_key(ks::KEY_c, CONTROL_MASK),
+        Transition::Exit(ExitStatus::Failure)
+    );
+}
+
+/// A configured --command spawns with the value appended on every change;
+/// without one a change just redraws.
+#[test]
+fn slide_changes_spawn_the_command() {
+    let settings = SlideSettings {
+        command: Some("true".into()),
+        ..SlideSettings::default()
+    };
+    let (mut menu, _stub, _out) = slide_with(settings);
+    assert_eq!(
+        menu.slide_key(ks::KEY_Right, 0),
+        Transition::Spawn("true 51".into())
+    );
+    assert_eq!(
+        menu.slide_key(ks::KEY_Left, 0),
+        Transition::Spawn("true 50".into())
+    );
+
+    let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
+    assert_eq!(menu.slide_key(ks::KEY_Right, 0), Transition::Redraw);
+}
+
+/// Clicking sets the value at the pointer; dragging follows the pointer
+/// until the button is released.
+#[test]
+fn slide_click_and_drag_set_the_value() {
+    let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
+    // menu_width is 600 in the stub geometry; clicking the exact current
+    // value is a no-op
+    assert_eq!(
+        menu.slide_button(MouseButton::Left, 0, Point::new(300, 5)),
+        Transition::Nop
+    );
+    assert_eq!(slide_value(&menu), 50);
+    assert_eq!(
+        menu.slide_button(MouseButton::Left, 0, Point::new(150, 5)),
+        Transition::Redraw
+    );
+    assert_eq!(slide_value(&menu), 25);
+    assert_eq!(menu.slide_motion(Point::new(450, 5)), Transition::Redraw);
+    assert_eq!(slide_value(&menu), 75);
+    // outside the bar: clamped into the range
+    assert_eq!(menu.slide_motion(Point::new(-20, 5)), Transition::Redraw);
+    assert_eq!(slide_value(&menu), 0);
+
+    // release ends the drag; further motion does nothing
+    assert_eq!(
+        menu.slide_release(MouseButton::Left, Point::new(0, 5)),
+        Transition::Nop
+    );
+    assert_eq!(menu.slide_motion(Point::new(590, 5)), Transition::Nop);
+    assert_eq!(slide_value(&menu), 0);
+}
+
+/// Motion without a held button never changes the value.
+#[test]
+fn slide_motion_without_drag_is_ignored() {
+    let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
+    assert_eq!(menu.slide_motion(Point::new(0, 5)), Transition::Nop);
+    assert_eq!(slide_value(&menu), 50);
+}
+
+/// Middle click resets to the initial value, scroll steps, right click
+/// exits.
+#[test]
+fn slide_middle_scroll_and_right_click() {
+    let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
+    let _ = menu.slide_key(ks::KEY_Right, 0);
+    let _ = menu.slide_key(ks::KEY_Right, 0);
+    assert_eq!(
+        menu.slide_button(MouseButton::Middle, 0, Point::new(0, 5)),
+        Transition::Redraw
+    );
+    assert_eq!(slide_value(&menu), 50);
+
+    assert_eq!(
+        menu.slide_button(MouseButton::ScrollUp, 0, Point::new(0, 5)),
+        Transition::Redraw
+    );
+    assert_eq!(
+        menu.slide_button(MouseButton::ScrollDown, 0, Point::new(0, 5)),
+        Transition::Redraw
+    );
+    assert_eq!(slide_value(&menu), 50);
+
+    assert_eq!(
+        menu.slide_button(MouseButton::Right, 0, Point::new(0, 5)),
+        Transition::Exit(ExitStatus::Failure)
+    );
+}
+
+/// The custom range/steps from the settings drive the keys.
+#[test]
+fn slide_respects_range_and_steps() {
+    let settings = SlideSettings {
+        min: -100,
+        max: 100,
+        step: Some(5),
+        big_step: Some(50),
+        value: Some(0),
+        ..SlideSettings::default()
+    };
+    let (mut menu, stub, out) = slide_with(settings);
+    assert_eq!(menu.slide_key(ks::KEY_Right, 0), Transition::Redraw);
+    assert_eq!(slide_value(&menu), 5);
+    assert_eq!(menu.slide_key(ks::KEY_Up, 0), Transition::Redraw);
+    assert_eq!(slide_value(&menu), 55);
+    assert_eq!(menu.slide_key(ks::KEY_Down, 0), Transition::Redraw);
+    assert_eq!(slide_value(&menu), 5);
+
+    stub.key(ks::KEY_Return, 0, "");
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert_eq!(out.contents(), "5\n");
+}
+
+/// The event loop: a dying connection fails, Expose re-presents, and the
+/// drag path works end to end through run().
+#[test]
+fn slide_run_loop() {
+    let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
+    assert_eq!(menu.run(), ExitStatus::Failure); // feed empty: connection died
+
+    let (mut menu, stub, _out) = slide_with(SlideSettings::default());
+    stub.push(BackendEvent::Expose);
+    stub.push(BackendEvent::ButtonPress {
+        button: MouseButton::Left,
+        state: 0,
+        pos: Point::new(450, 5),
+    });
+    stub.push(BackendEvent::Motion {
+        time: 1000,
+        pos: Point::new(600, 5),
+    });
+    stub.push(BackendEvent::ButtonRelease {
+        button: MouseButton::Left,
+        pos: Point::new(600, 5),
+    });
+    stub.key(ks::KEY_Return, 0, "");
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert_eq!(slide_value(&menu), 100);
+    assert!(stub.state().presents >= 1);
+}
+
+/// draw_menu dispatches to the slider drawing in slide mode.
+#[test]
+fn slide_draw_dispatches() {
+    let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
+    menu.draw_menu();
+    // nothing panicked and a frame was presented; the value box shows min/max
+    assert!(!menu.canvas.data.is_empty());
+}
+
+/// Slide mode does not read items from stdin even when some are provided.
+#[test]
+fn slide_ignores_stdin_items() {
+    let cfg = Config {
+        slide: Some(SlideSettings::default()),
+        ..Config::default()
+    };
+    let items = read_stdin(&cfg);
+    assert!(items.items.is_empty());
 }

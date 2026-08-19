@@ -5,7 +5,7 @@
 use clap::Parser;
 use instantmenu::backend;
 use instantmenu::cli;
-use instantmenu::config::Config;
+use instantmenu::config::{Config, SlideSettings};
 use instantmenu::enums::{ColorRole, ExitStatus, Scheme};
 use instantmenu::menu::{self, Menu};
 use instantmenu::render::Renderer;
@@ -19,6 +19,15 @@ fn main() {
     let mut cfg = Config::default();
     apply_flags(&args, &mut cfg);
     let (temp_font, color_temp) = apply_values(&args, &mut cfg);
+
+    /* --slide: validate the range and apply the slider defaults before
+     * anything is opened */
+    if let Some(slide) = cfg.slide.as_mut() {
+        if let Err(e) = slide.resolve() {
+            eprintln!("instantmenu: {e}");
+            ExitStatus::Failure.exit();
+        }
+    }
 
     /* open backend (wayland by default when WAYLAND_DISPLAY is set;
      * --backend x11/wayland forces the choice) */
@@ -209,6 +218,16 @@ fn apply_values(
     }
     cfg.left_command = args.left_command.clone();
     cfg.right_command = args.right_command.clone();
+    if args.slide {
+        cfg.slide = Some(SlideSettings {
+            min: args.min,
+            max: args.max,
+            value: args.value,
+            step: args.step,
+            big_step: args.big_step,
+            command: args.command.clone(),
+        });
+    }
 
     /* temporary font/colors: applied AFTER X resources so the CLI wins */
     let mut temp_font: Option<String> = args.font.clone();

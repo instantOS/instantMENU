@@ -4,9 +4,11 @@
 .SH NAME
 instantmenu \- A dynamic menu for X11 and Wayland (instantMENU, Rust port)
 .SH SYNOPSIS
-\fBinstantmenu\fR [\fB\-\-backend\fR] [\fB\-\-position\fR] [\fB\-r\fR|\fB\-\-reject\-no\-match\fR] [\fB\-f\fR|\fB\-\-fast\fR] [\fB\-\-toast\fR] [\fB\-\-commented\fR] [\fB\-\-follow\-cursor\fR] [\fB\-\-input\-only\fR] [\fB\-s\fR|\fB\-\-smart\-case\fR] [\fB\-\-match\-mode\fR] [\fB\-\-pre\-match\fR] [\fB\-\-space\-confirm\fR] [\fB\-\-full\-height\fR] [\fB\-i\fR|\fB\-\-insensitive\fR] [\fB\-n\fR|\fB\-\-instant\fR] [\fB\-\-password\fR] [\fB\-\-monospace\fR] [\fB\-\-no\-grab\fR] [\fB\-\-alt\-tab\fR] [\fB\-\-managed\fR] [\fB\-\-right\-command\fR] [\fB\-\-left\-command\fR] [\fB\-g\fR|\fB\-\-columns\fR] [\fB\-l\fR|\fB\-\-lines\fR] [\fB\-x\fR|\fB\-\-x\-offset\fR] [\fB\-y\fR|\fB\-\-y\-offset\fR] [\fB\-w\fR|\fB\-\-width\fR] [\fB\-m\fR|\fB\-\-monitor\fR] [\fB\-p\fR|\fB\-\-prompt\fR] [\fB\-\-placeholder\fR] [\fB\-\-font\fR] [\fB\-\-line\-height\fR] [\fB\-a\fR|\fB\-\-animation\fR] [\fB\-\-normal\-bg\fR] [\fB\-\-normal\-fg\fR] [\fB\-\-selected\-bg\fR] [\fB\-\-selected\-fg\fR] [\fB\-\-embed\fR] [\fB\-\-border\-width\fR] [\fB\-\-preselect\fR] [\fB\-\-initial\-text\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR]
+\fBinstantmenu\fR [\fB\-\-backend\fR] [\fB\-\-position\fR] [\fB\-r\fR|\fB\-\-reject\-no\-match\fR] [\fB\-f\fR|\fB\-\-fast\fR] [\fB\-\-toast\fR] [\fB\-\-commented\fR] [\fB\-\-slide\fR] [\fB\-\-min\fR] [\fB\-\-max\fR] [\fB\-\-value\fR] [\fB\-\-step\fR] [\fB\-\-big\-step\fR] [\fB\-\-command\fR] [\fB\-\-follow\-cursor\fR] [\fB\-\-input\-only\fR] [\fB\-s\fR|\fB\-\-smart\-case\fR] [\fB\-\-match\-mode\fR] [\fB\-\-pre\-match\fR] [\fB\-\-space\-confirm\fR] [\fB\-\-full\-height\fR] [\fB\-i\fR|\fB\-\-insensitive\fR] [\fB\-n\fR|\fB\-\-instant\fR] [\fB\-\-password\fR] [\fB\-\-monospace\fR] [\fB\-\-no\-grab\fR] [\fB\-\-alt\-tab\fR] [\fB\-\-managed\fR] [\fB\-\-right\-command\fR] [\fB\-\-left\-command\fR] [\fB\-g\fR|\fB\-\-columns\fR] [\fB\-l\fR|\fB\-\-lines\fR] [\fB\-x\fR|\fB\-\-x\-offset\fR] [\fB\-y\fR|\fB\-\-y\-offset\fR] [\fB\-w\fR|\fB\-\-width\fR] [\fB\-m\fR|\fB\-\-monitor\fR] [\fB\-p\fR|\fB\-\-prompt\fR] [\fB\-\-placeholder\fR] [\fB\-\-font\fR] [\fB\-\-line\-height\fR] [\fB\-a\fR|\fB\-\-animation\fR] [\fB\-\-normal\-bg\fR] [\fB\-\-normal\-fg\fR] [\fB\-\-selected\-bg\fR] [\fB\-\-selected\-fg\fR] [\fB\-\-embed\fR] [\fB\-\-border\-width\fR] [\fB\-\-preselect\fR] [\fB\-\-initial\-text\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR]
 .SH DESCRIPTION
 instantmenu reads a newline\-separated list of items from stdin and displays them in a menu. Selecting an item and pressing Return prints it to stdout and exits; typing narrows the list to matching items.
+.PP
+With \-\-slide it shows a value slider instead: Return prints the value and exits, every change runs \-\-command with the value appended.
 .SH OPTIONS
 .TP
 \fB\-\-backend\fR \fI<BACKEND>\fR [default: auto]
@@ -66,6 +68,35 @@ The menu draws itself, waits the given time, then exits without a selection.
 .TP
 \fB\-\-commented\fR
 Activate instantASSIST mode (single\-letter launcher)
+.TP
+\fB\-\-slide\fR
+Slide mode: show a value slider instead of a menu.
+
+Return prints the current value to stdout and exits; Escape exits without printing. Every value change runs \-\-command (if given) with the value appended as its last argument.
+.TP
+\fB\-\-min\fR \fI<N>\fR [default: 0]
+Minimum slider value (slide mode)
+.TP
+\fB\-\-max\fR \fI<N>\fR [default: 100]
+Maximum slider value (slide mode)
+.TP
+\fB\-\-value\fR \fI<N>\fR
+Initial slider value (slide mode).
+
+Defaults to the middle of the range; clamped into it.
+.TP
+\fB\-\-step\fR \fI<N>\fR
+Small step for left/right (slide mode)
+.TP
+\fB\-\-big\-step\fR \fI<N>\fR
+Large step for up/down (slide mode).
+
+Defaults to a tenth of the range (at least 5).
+.TP
+\fB\-\-command\fR \fI<CMD>\fR
+Command run on every value change (slide mode).
+
+Run through the shell with the current value appended as the last argument.
 .TP
 \fB\-\-follow\-cursor\fR
 Place the menu at the mouse position
@@ -230,5 +261,13 @@ KEYBOARD CONTROL:
   C\-y paste primary  C\-Y paste clipboard
   M\-b word start  M\-f word end  M\-g Home  M\-G End  M\-h Up
   M\-j page down  M\-k page up  M\-l Down  M\-F4 quit
+SLIDE MODE (\-\-slide):
+  Left h       decrease by \-\-step        Right l    increase by \-\-step
+  Down j       decrease by \-\-big\-step    Up k       increase by \-\-big\-step
+  plus/minus   change by 1               1..9, 0    jump to a ninth of the range
+  Home         minimum value             End        maximum value
+  Return       print the value and exit  Escape q   exit without printing
+  click/drag   set the value at the pointer         wheel  step
+  middle click reset to the initial value
 .SH VERSION
 v4.9.3

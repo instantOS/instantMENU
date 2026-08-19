@@ -14,7 +14,9 @@ use crate::config::{MatchMode, Position};
 const LONG_ABOUT: &str = concat!(
     "instantmenu reads a newline-separated list of items from stdin and ",
     "displays them in a menu. Selecting an item and pressing Return prints ",
-    "it to stdout and exits; typing narrows the list to matching items.",
+    "it to stdout and exits; typing narrows the list to matching items.\n\n",
+    "With --slide it shows a value slider instead: Return prints the value ",
+    "and exits, every change runs --command with the value appended.",
 );
 
 /// Keyboard bindings shown by `--help` and the generated man page.
@@ -33,6 +35,14 @@ const KEY_BINDINGS: &str = concat!(
     "  C-y paste primary  C-Y paste clipboard\n",
     "  M-b word start  M-f word end  M-g Home  M-G End  M-h Up\n",
     "  M-j page down  M-k page up  M-l Down  M-F4 quit\n",
+    "SLIDE MODE (--slide):\n",
+    "  Left h       decrease by --step        Right l    increase by --step\n",
+    "  Down j       decrease by --big-step    Up k       increase by --big-step\n",
+    "  plus/minus   change by 1               1..9, 0    jump to a ninth of the range\n",
+    "  Home         minimum value             End        maximum value\n",
+    "  Return       print the value and exit  Escape q   exit without printing\n",
+    "  click/drag   set the value at the pointer         wheel  step\n",
+    "  middle click reset to the initial value\n",
 );
 
 #[derive(Parser, Debug)]
@@ -83,6 +93,76 @@ pub struct Args {
     /// Activate instantASSIST mode (single-letter launcher).
     #[arg(long)]
     pub commented: bool,
+
+    /// Slide mode: show a value slider instead of a menu.
+    ///
+    /// Return prints the current value to stdout and exits; Escape exits
+    /// without printing. Every value change runs --command (if given) with
+    /// the value appended as its last argument.
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "toast",
+            "commented",
+            "input_only",
+            "password",
+            "preselect"
+        ]
+    )]
+    pub slide: bool,
+
+    /// Minimum slider value (slide mode).
+    #[arg(
+        long,
+        requires = "slide",
+        value_name = "N",
+        allow_hyphen_values = true,
+        default_value_t = 0
+    )]
+    pub min: i32,
+
+    /// Maximum slider value (slide mode).
+    #[arg(
+        long,
+        requires = "slide",
+        value_name = "N",
+        allow_hyphen_values = true,
+        default_value_t = 100
+    )]
+    pub max: i32,
+
+    /// Initial slider value (slide mode).
+    ///
+    /// Defaults to the middle of the range; clamped into it.
+    #[arg(long, requires = "slide", value_name = "N", allow_hyphen_values = true)]
+    pub value: Option<i32>,
+
+    /// Small step for left/right (slide mode).
+    #[arg(
+        long,
+        requires = "slide",
+        value_name = "N",
+        value_parser = clap::value_parser!(i32).range(1..)
+    )]
+    pub step: Option<i32>,
+
+    /// Large step for up/down (slide mode).
+    ///
+    /// Defaults to a tenth of the range (at least 5).
+    #[arg(
+        long,
+        requires = "slide",
+        value_name = "N",
+        value_parser = clap::value_parser!(i32).range(1..)
+    )]
+    pub big_step: Option<i32>,
+
+    /// Command run on every value change (slide mode).
+    ///
+    /// Run through the shell with the current value appended as the last
+    /// argument.
+    #[arg(long, requires = "slide", value_name = "CMD")]
+    pub command: Option<String>,
 
     /// Place the menu at the mouse position.
     #[arg(long, conflicts_with = "position")]
@@ -440,6 +520,79 @@ mod tests {
         assert!(parse_window_id("-1").is_err());
         assert!(Args::try_parse_from(["instantmenu", "--embed", "0x2a"]).is_ok());
         assert!(Args::try_parse_from(["instantmenu", "--embed", "banana"]).is_err());
+    }
+
+    #[test]
+    fn slide_args_parse() {
+        let a = Args::try_parse_from(["instantmenu", "--slide"]).unwrap();
+        assert!(a.slide);
+        assert_eq!(a.min, 0);
+        assert_eq!(a.max, 100);
+        assert_eq!(a.value, None);
+
+        let a = Args::try_parse_from([
+            "instantmenu",
+            "--slide",
+            "--min",
+            "-50",
+            "--max",
+            "50",
+            "--value",
+            "-10",
+            "--step",
+            "2",
+            "--big-step",
+            "10",
+            "--command",
+            "brightnessctl set",
+            "-p",
+            "Brightness",
+        ])
+        .unwrap();
+        assert_eq!(a.min, -50);
+        assert_eq!(a.max, 50);
+        assert_eq!(a.value, Some(-10));
+        assert_eq!(a.step, Some(2));
+        assert_eq!(a.big_step, Some(10));
+        assert_eq!(a.command.as_deref(), Some("brightnessctl set"));
+    }
+
+    #[test]
+    fn slide_options_require_slide() {
+        for bad in [
+            &["instantmenu", "--max"][..],
+            &["instantmenu", "--min", "0"][..],
+            &["instantmenu", "--value", "50"][..],
+            &["instantmenu", "--step", "1"][..],
+            &["instantmenu", "--big-step", "5"][..],
+            &["instantmenu", "--command", "true"][..],
+        ] {
+            assert!(
+                Args::try_parse_from(bad).is_err(),
+                "{bad:?} should require --slide"
+            );
+        }
+    }
+
+    #[test]
+    fn slide_rejects_contradictory_modes_and_steps() {
+        for bad in [
+            &["instantmenu", "--slide", "--toast", "5"][..],
+            &["instantmenu", "--slide", "--commented"][..],
+            &["instantmenu", "--slide", "--input-only"][..],
+            &["instantmenu", "--slide", "--password"][..],
+            &["instantmenu", "--slide", "--preselect", "1"][..],
+            &["instantmenu", "--slide", "--step", "0"][..],
+            &["instantmenu", "--slide", "--step", "-2"][..],
+            &["instantmenu", "--slide", "--big-step", "0"][..],
+        ] {
+            assert!(
+                Args::try_parse_from(bad).is_err(),
+                "{bad:?} should be rejected"
+            );
+        }
+        /* step >= 1 is fine, and min/max may be negative */
+        assert!(Args::try_parse_from(["instantmenu", "--slide", "--step", "3"]).is_ok());
     }
 }
 

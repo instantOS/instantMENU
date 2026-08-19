@@ -19,6 +19,8 @@ pub(super) enum Transition {
     /// Print a line and exit successfully (confirm, instant mode, commented
     /// mode).
     PrintAndExit(String),
+    /// Spawn a command detached and keep running (slide mode value change).
+    Spawn(String),
     /// Spawn a command detached and exit successfully (left/right commands).
     SpawnAndExit(String),
     /// Exit with this status.

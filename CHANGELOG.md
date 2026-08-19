@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--slide` slider mode (the old islide as a mode): `--min`, `--max`, `--value`, `--step`, `--big-step`, `--command`; Return prints the value, every change runs `--command` with the value appended
+
 ## [4.9.3](https://github.com/instantOS/instantMENU/compare/v4.9.2...v4.9.3) - 2026-08-19
 
 ### Other

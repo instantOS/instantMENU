@@ -60,7 +60,7 @@ impl Menu {
 /// '\n' or '\t' byte and cut at the first NUL like strdup would. The
 /// returned grid carries the -l/-g values adjusted for the item count.
 pub fn read_stdin(cfg: &Config) -> StdinItems {
-    if cfg.password || cfg.input_only {
+    if cfg.password || cfg.input_only || cfg.slide.is_some() {
         return StdinItems {
             items: Vec::new(),
             grid: GridShape {

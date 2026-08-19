@@ -284,15 +284,28 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
                 state: button_state,
                 ..
             } => {
-                if let WEnum::Value(wl_pointer::ButtonState::Pressed) = button_state {
-                    let Some(button) = evdev_button(button) else {
-                        return;
-                    };
-                    state.events.push_back(BackendEvent::ButtonPress {
-                        button,
-                        state: mods,
-                        pos: Point::new(state.pointer_x as i32, state.pointer_y as i32),
-                    });
+                let button_state = match button_state {
+                    WEnum::Value(s) => s,
+                    WEnum::Unknown(_) => return,
+                };
+                let Some(button) = evdev_button(button) else {
+                    return;
+                };
+                match button_state {
+                    wl_pointer::ButtonState::Pressed => {
+                        state.events.push_back(BackendEvent::ButtonPress {
+                            button,
+                            state: mods,
+                            pos: Point::new(state.pointer_x as i32, state.pointer_y as i32),
+                        });
+                    }
+                    wl_pointer::ButtonState::Released => {
+                        state.events.push_back(BackendEvent::ButtonRelease {
+                            button,
+                            pos: Point::new(state.pointer_x as i32, state.pointer_y as i32),
+                        });
+                    }
+                    _ => {}
                 }
             }
             /* wheel: map to the scroll buttons the menu core understands */

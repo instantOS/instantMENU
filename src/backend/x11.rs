@@ -178,6 +178,13 @@ impl X11Backend {
                     pos: Point::new(b.event_x as i32, b.event_y as i32),
                 })
             }
+            Event::ButtonRelease(b) => {
+                let button = mouse_button(b.detail)?;
+                Some(BackendEvent::ButtonRelease {
+                    button,
+                    pos: Point::new(b.event_x as i32, b.event_y as i32),
+                })
+            }
             Event::MotionNotify(m) => Some(BackendEvent::Motion {
                 time: m.time,
                 pos: Point::new(m.event_x as i32, m.event_y as i32),
@@ -361,6 +368,7 @@ impl Backend for X11Backend {
                     | EventMask::KEY_RELEASE
                     | EventMask::VISIBILITY_CHANGE
                     | EventMask::BUTTON_PRESS
+                    | EventMask::BUTTON_RELEASE
                     | EventMask::POINTER_MOTION,
             );
         self.connection

@@ -146,6 +146,10 @@ impl Menu {
     }
 
     pub(super) fn draw_menu(&mut self) {
+        if self.slider.is_some() {
+            self.draw_slide();
+            return;
+        }
         let font_height = self.renderer.font_height;
         let mut x = 0;
         let y = 0;

@@ -19,6 +19,7 @@ mod measure;
 mod mouse;
 mod paging;
 mod run;
+mod slide;
 mod transition;
 
 use std::io::Write;
@@ -33,6 +34,7 @@ use layout::Layout;
 use matcher::{MatchResult, Matcher};
 use measure::{Measure, TextMeasurer};
 use paging::{Paging, Selection};
+use slide::Slider;
 use transition::Transition;
 
 pub use input::{read_stdin, StdinItems};
@@ -59,6 +61,9 @@ pub struct Menu {
     pub(in crate::menu) layout: Layout,
     /// -l/-g as adjusted by stdin (item count), consumed by setup().
     pub(in crate::menu) stdin_grid: layout::GridShape,
+    /// --slide: Some(_) = slide mode; owns the value state and receives
+    /// events instead of the list machinery.
+    pub(in crate::menu) slider: Option<Slider>,
 
     /* runtime flags */
     /// -A alt-tab behaviour: toggled off by Alt+Space at runtime.
@@ -89,6 +94,7 @@ impl Menu {
                 lines: cfg.lines,
                 columns: cfg.columns,
             },
+            slider: cfg.slide.as_ref().map(Slider::new),
             cfg,
             renderer,
             backend,
@@ -129,6 +135,11 @@ impl Menu {
                 self.println(&line);
                 Some(ExitStatus::Success)
             }
+            Transition::Spawn(cmd) => {
+                animate::spawn_detached(&cmd);
+                self.draw_menu();
+                None
+            }
             Transition::SpawnAndExit(cmd) => {
                 animate::spawn_detached(&cmd);
                 Some(ExitStatus::Success)
@@ -148,7 +159,10 @@ impl Menu {
                 Some(ExitStatus::Success)
             }
             Transition::Exit(status) => Some(status),
-            Transition::Redraw | Transition::Print(_) | Transition::SpawnAndExit(_) => {
+            Transition::Redraw
+            | Transition::Print(_)
+            | Transition::Spawn(_)
+            | Transition::SpawnAndExit(_) => {
                 unreachable!("drawing/spawning transitions cannot occur before the window exists")
             }
         }

@@ -58,6 +58,10 @@ pub enum BackendEvent {
         state: u32,
         pos: Point,
     },
+    ButtonRelease {
+        button: MouseButton,
+        pos: Point,
+    },
     Motion {
         /// Server timestamp (ms) for the 60fps throttle.
         time: u32,
