@@ -89,6 +89,36 @@ def update_versions(version: str) -> None:
         text = re.sub(r"^pkgver=.*", f"pkgver={version}", read(path), flags=re.MULTILINE)
         text = re.sub(r"^pkgrel=.*", "pkgrel=1", text, flags=re.MULTILINE)
         write(path, text)
+    for path in ("packaging/arch/.SRCINFO", "packaging/arch-bin/.SRCINFO"):
+        text = re.sub(r"^(\s*pkgver = ).*", rf"\g<1>{version}", read(path), flags=re.MULTILINE)
+        text = re.sub(
+            r"^(\s*provides = instantmenu=).*",
+            rf"\g<1>{version}",
+            text,
+            flags=re.MULTILINE,
+        )
+        text = re.sub(
+            r"(instantMENU-|instantmenu-)(\d+\.\d+\.\d+)",
+            rf"\g<1>{version}",
+            text,
+        )
+        text = re.sub(
+            r"(refs/tags/v)(\d+\.\d+\.\d+)",
+            rf"\g<1>{version}",
+            text,
+        )
+        text = re.sub(r"(-v)(\d+\.\d+\.\d+)", rf"\g<1>{version}", text)
+        write(path, text)
+    replace_once(
+        "instantmenu.1",
+        r'^(\.TH instantmenu 1  "instantmenu )[^\"]+(".*)$',
+        rf"\g<1>{version}\g<2>",
+    )
+    replace_once(
+        "instantmenu.1",
+        r"^(\.SH VERSION\n)v[^\n]+",
+        rf"\g<1>v{version}",
+    )
 
 
 def clean_subject(subject: str) -> tuple[str, str]:

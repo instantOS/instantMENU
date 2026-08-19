@@ -45,8 +45,9 @@ jobs:
           ./target/debug/itest -e Cargo.toml > /dev/null
       - name: Check generated man page
         run: |
+          cp instantmenu.1 /tmp/instantmenu.1
           cargo run --locked --bin instantmenu-mangen
-          git diff --exit-code -- instantmenu.1
+          diff -u /tmp/instantmenu.1 instantmenu.1
       - name: Check package metadata
         run: |
           for directory in packaging/arch packaging/arch-bin; do
