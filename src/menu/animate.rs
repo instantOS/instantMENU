@@ -35,22 +35,15 @@ impl Menu {
 
             // bottom animation
             if selected_y + line_height < menu_height - 10 {
-                let h = ease_out_quint(t)
-                    * (menu_height - (line_height - 4) - selected_y) as f64;
+                let h = ease_out_quint(t) * (menu_height - (line_height - 4) - selected_y) as f64;
                 p.fill_rect(
-                    Rect::new(
-                        0,
-                        selected_y + (line_height - 4),
-                        menu_width,
-                        h as i32,
-                    ),
+                    Rect::new(0, selected_y + (line_height - 4), menu_width, h as i32),
                     ColorRole::Background,
                 );
             }
             // top animation
             let top_height = ease_out_quint(t) * selected_y as f64;
-            let top_y =
-                (selected_y + 4) as f64 - ease_out_quint(t) * (selected_y + 4) as f64;
+            let top_y = (selected_y + 4) as f64 - ease_out_quint(t) * (selected_y + 4) as f64;
             p.fill_rect(
                 Rect::new(0, top_y as i32, menu_width, top_height as i32),
                 ColorRole::Background,

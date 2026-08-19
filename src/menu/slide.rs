@@ -1,4 +1,4 @@
-//! Slide mode (`--slide`): the GUI slider ported from islide, following the
+//! Slide mode (`instantmenu slide`): the GUI slider ported from islide, following the
 //! instantCLI TUI semantics (steps, ninths, Home/End, drag-to-set).
 //!
 //! [`Slider`] is the pure state (value math only); the `impl Menu` block is

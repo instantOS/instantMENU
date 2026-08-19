@@ -345,12 +345,7 @@ impl Menu {
                 let mut p = Painter::new(&mut self.renderer, &mut self.canvas);
                 p.set_scheme(Scheme::Highlight);
                 p.draw_text(
-                    Rect::new(
-                        menu_width - arrow_width,
-                        0,
-                        arrow_width,
-                        bar_height,
-                    ),
+                    Rect::new(menu_width - arrow_width, 0, arrow_width, bar_height),
                     lpad,
                     RIGHT_GLYPH,
                 );

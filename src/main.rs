@@ -16,12 +16,19 @@ fn main() {
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     let args = cli::Args::parse();
 
+    /* menu-only options are meaningless in slide mode; reject them before
+     * anything is opened (clap cannot express this per-subcommand) */
+    if let Some(flag) = args.menu_only_option_in_subcommand() {
+        eprintln!("instantmenu: {flag} cannot be used with `slide`");
+        ExitStatus::Failure.exit();
+    }
+
     let mut cfg = Config::default();
     apply_flags(&args, &mut cfg);
     let (temp_font, color_temp) = apply_values(&args, &mut cfg);
 
-    /* --slide: validate the range and apply the slider defaults before
-     * anything is opened */
+    /* `slide` subcommand: validate the range and apply the slider defaults
+     * before anything is opened */
     if let Some(slide) = cfg.slide.as_mut() {
         if let Err(e) = slide.resolve() {
             eprintln!("instantmenu: {e}");
@@ -31,7 +38,7 @@ fn main() {
 
     /* open backend (wayland by default when WAYLAND_DISPLAY is set;
      * --backend x11/wayland forces the choice) */
-    let mut backend = backend::open(cfg.embed, args.backend).unwrap_or_else(|e| {
+    let mut backend = backend::open(cfg.embed, args.window.backend).unwrap_or_else(|e| {
         eprintln!("instantmenu: {e}");
         ExitStatus::Failure.exit();
     });
@@ -64,7 +71,7 @@ fn main() {
         required_chars.extend(item.text.chars());
     }
     for text in [
-        args.initial_text.as_deref(),
+        args.menu.initial_text.as_deref(),
         cfg.prompt.as_deref(),
         cfg.placeholder.as_deref(),
     ]
@@ -88,7 +95,7 @@ fn main() {
 
     /* -it: seed the input before the items are loaded (the argv-loop order),
      * with rejectnomatch off */
-    if let Some(t) = args.initial_text.clone() {
+    if let Some(t) = args.menu.initial_text.clone() {
         if let Some(status) = menu.initial_text(&t) {
             status.exit();
         }
@@ -104,56 +111,56 @@ fn main() {
 /// Boolean flags: applied before the value options they gate.
 fn apply_flags(args: &cli::Args, cfg: &mut Config) {
     /* boolean flags, port of the argument loop in main() */
-    if let Some(p) = args.position {
+    if let Some(p) = args.window.position {
         cfg.position = p;
     }
-    if args.reject_no_match {
+    if args.menu.reject_no_match {
         cfg.reject_no_match = true;
     }
-    if args.commented {
+    if args.menu.commented {
         cfg.commented = true;
         cfg.prompt = Some("prompts".to_string());
     }
-    if args.follow_cursor {
+    if args.window.follow_cursor {
         cfg.follow_cursor = true;
     }
-    if args.input_only {
+    if args.menu.input_only {
         cfg.input_only = true;
     }
-    if args.smart_case {
+    if args.menu.smart_case {
         cfg.smart_case = true;
     }
-    if let Some(m) = args.match_mode {
+    if let Some(m) = args.menu.match_mode {
         cfg.match_mode = m;
     }
-    if args.pre_match {
+    if args.menu.pre_match {
         cfg.pre_match = true;
     }
-    if args.space_confirm {
+    if args.menu.space_confirm {
         cfg.space_confirm = true;
     }
-    if args.full_height {
+    if args.menu.full_height {
         cfg.full_height = true;
     }
-    if args.insensitive {
+    if args.menu.insensitive {
         cfg.insensitive = true;
     }
-    if args.instant {
+    if args.menu.instant {
         cfg.instant = true;
     }
-    if args.password {
+    if args.menu.password {
         cfg.password = true;
     }
-    if args.no_grab {
+    if args.window.no_grab {
         cfg.no_grab = true;
     }
-    if args.alt_tab {
+    if args.menu.alt_tab {
         cfg.alt_tab = true;
     }
-    if args.managed {
+    if args.window.managed {
         cfg.managed = true;
     }
-    cfg.fast = args.fast;
+    cfg.fast = args.menu.fast;
 }
 
 /// Value options, plus the temporary font/color overrides applied after X
@@ -162,50 +169,50 @@ fn apply_values(
     args: &cli::Args,
     cfg: &mut Config,
 ) -> (Option<String>, Vec<(Scheme, ColorRole, String)>) {
-    if let Some(v) = args.toast {
+    if let Some(v) = args.menu.toast {
         cfg.toast = v;
     }
-    if let Some(c) = args.columns {
+    if let Some(c) = args.menu.columns {
         cfg.columns = c;
         if cfg.columns == 0 {
             cfg.columns = 1;
         }
-        if args.lines.is_none() {
+        if args.menu.lines.is_none() {
             cfg.lines = 1; /* C: -g sets lines=1 when unset (order-dependent) */
         }
     }
-    if let Some(l) = args.lines {
+    if let Some(l) = args.menu.lines {
         cfg.lines = l;
     }
-    if let Some(x) = args.x_offset {
+    if let Some(x) = args.window.x_offset {
         cfg.x_offset = x;
     }
-    if let Some(y) = args.y_offset {
+    if let Some(y) = args.window.y_offset {
         cfg.y_offset = y;
     }
-    if let Some(w) = args.width {
+    if let Some(w) = args.window.width {
         cfg.width = w;
     }
-    if let Some(m) = args.monitor {
+    if let Some(m) = args.window.monitor {
         cfg.monitor = m;
     }
-    if let Some(p) = &args.prompt {
+    if let Some(p) = &args.window.prompt {
         cfg.prompt = Some(p.clone());
     }
-    if let Some(q) = &args.placeholder {
+    if let Some(q) = &args.menu.placeholder {
         cfg.placeholder = Some(q.clone());
     }
-    if let Some(a) = args.animation {
+    if let Some(a) = args.menu.animation {
         cfg.frame_count = a;
         cfg.animated = true;
     }
-    if let Some(bw) = args.border_width {
+    if let Some(bw) = args.window.border_width {
         cfg.border_width = bw;
     }
-    if let Some(ps) = args.preselect {
+    if let Some(ps) = args.menu.preselect {
         cfg.preselected = ps;
     }
-    if let Some(h) = args.line_height {
+    if let Some(h) = args.window.line_height {
         /* C: only applied when !fullheight, then clamped to >= 8 */
         if !cfg.full_height {
             cfg.line_height = h.max(8);
@@ -213,38 +220,38 @@ fn apply_values(
             cfg.line_height = h;
         }
     }
-    if let Some(w) = args.embed {
+    if let Some(w) = args.window.embed {
         cfg.embed = Some(w);
     }
-    cfg.left_command = args.left_command.clone();
-    cfg.right_command = args.right_command.clone();
-    if args.slide {
+    cfg.left_command = args.menu.left_command.clone();
+    cfg.right_command = args.menu.right_command.clone();
+    if let Some(cli::Cmd::Slide(s)) = &args.subcommand {
         cfg.slide = Some(SlideSettings {
-            min: args.min,
-            max: args.max,
-            value: args.value,
-            step: args.step,
-            big_step: args.big_step,
-            command: args.command.clone(),
+            min: s.min,
+            max: s.max,
+            value: s.value,
+            step: s.step,
+            big_step: s.big_step,
+            command: s.command.clone(),
         });
     }
 
     /* temporary font/colors: applied AFTER X resources so the CLI wins */
-    let mut temp_font: Option<String> = args.font.clone();
-    if args.monospace {
+    let mut temp_font: Option<String> = args.window.font.clone();
+    if args.window.monospace {
         temp_font = Some("Fira Code Nerd Font:pixelsize=15".to_string());
     }
     let mut color_temp: Vec<(Scheme, ColorRole, String)> = Vec::new();
-    if let Some(c) = &args.normal_bg {
+    if let Some(c) = &args.window.normal_bg {
         color_temp.push((Scheme::Normal, ColorRole::Background, c.clone()));
     }
-    if let Some(c) = &args.normal_fg {
+    if let Some(c) = &args.window.normal_fg {
         color_temp.push((Scheme::Normal, ColorRole::Foreground, c.clone()));
     }
-    if let Some(c) = &args.selected_bg {
+    if let Some(c) = &args.window.selected_bg {
         color_temp.push((Scheme::Selected, ColorRole::Background, c.clone()));
     }
-    if let Some(c) = &args.selected_fg {
+    if let Some(c) = &args.window.selected_fg {
         color_temp.push((Scheme::Selected, ColorRole::Foreground, c.clone()));
     }
 

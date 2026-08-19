@@ -1,11 +1,18 @@
 //! Command line: clap with long options as the canonical surface and
 //! single-letter shorts for the common flags.
 //!
+//! The surface is split along two running modes. Menu mode is the default
+//! (`instantmenu`); slide mode is a subcommand (`instantmenu slide`). Window,
+//! geometry, font and color options are shared and live on the top level,
+//! where they may only appear *before* a subcommand. Menu-only options also
+//! live on the top level but are rejected at startup when a subcommand is
+//! given, and the slide-specific options live on the subcommand itself.
+//!
 //! Unlike the C `atoi`, numeric options parse strictly: a malformed number
 //! is an error, not silently 0. Options that take a negative value
 //! (`--width -1`, `--line-height -1`, ...) accept hyphen-prefixed values.
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 use crate::backend::BackendChoice;
 use crate::config::{MatchMode, Position};
@@ -15,8 +22,9 @@ const LONG_ABOUT: &str = concat!(
     "instantmenu reads a newline-separated list of items from stdin and ",
     "displays them in a menu. Selecting an item and pressing Return prints ",
     "it to stdout and exits; typing narrows the list to matching items.\n\n",
-    "With --slide it shows a value slider instead: Return prints the value ",
-    "and exits, every change runs --command with the value appended.",
+    "With the `slide` subcommand it shows a value slider instead: Return ",
+    "prints the value and exits, every change runs --command with the value ",
+    "appended.",
 );
 
 /// Keyboard bindings shown by `--help` and the generated man page.
@@ -35,7 +43,7 @@ const KEY_BINDINGS: &str = concat!(
     "  C-y paste primary  C-Y paste clipboard\n",
     "  M-b word start  M-f word end  M-g Home  M-G End  M-h Up\n",
     "  M-j page down  M-k page up  M-l Down  M-F4 quit\n",
-    "SLIDE MODE (--slide):\n",
+    "SLIDE MODE (`slide`):\n",
     "  Left h       decrease by --step        Right l    increase by --step\n",
     "  Down j       decrease by --big-step    Up k       increase by --big-step\n",
     "  plus/minus   change by 1               1..9, 0    jump to a ninth of the range\n",
@@ -45,6 +53,8 @@ const KEY_BINDINGS: &str = concat!(
     "  middle click reset to the initial value\n",
 );
 
+/// The top-level command. Menu mode is the default; pass a subcommand to run
+/// one of the other modes instead.
 #[derive(Parser, Debug)]
 #[command(
     name = "instantmenu",
@@ -52,21 +62,35 @@ const KEY_BINDINGS: &str = concat!(
     long_about = LONG_ABOUT,
     version = crate::config::VERSION,
     after_long_help = KEY_BINDINGS,
+    disable_help_subcommand = true,
 )]
 pub struct Args {
-    /// Backend to use: auto, x11 or wayland.
-    #[arg(long, value_enum, value_name = "BACKEND", default_value = "auto")]
-    pub backend: BackendChoice,
+    /// Window, geometry, font and color options shared by all modes.
+    #[command(flatten)]
+    pub window: WindowArgs,
 
-    /// Anchor the menu to a corner, edge or the center of the screen.
-    #[arg(
-        long,
-        value_enum,
-        value_name = "POSITION",
-        conflicts_with = "follow_cursor"
-    )]
-    pub position: Option<Position>,
+    /// Menu mode options.
+    #[command(flatten)]
+    pub menu: MenuArgs,
 
+    /// Running mode: menu (default) or slide.
+    #[command(subcommand)]
+    pub subcommand: Option<Cmd>,
+}
+
+impl Args {
+    /// The first menu-only option passed alongside a subcommand, if any.
+    ///
+    /// Menu-only options cannot be used when a subcommand like `slide` is active.
+    pub fn menu_only_option_in_subcommand(&self) -> Option<&'static str> {
+        self.subcommand.as_ref()?;
+        self.menu.active_flag()
+    }
+}
+
+/// Menu-specific options: only applicable when running the default menu mode.
+#[derive(clap::Args, Debug, Default, Clone)]
+pub struct MenuArgs {
     /// Reject input if it results in no matches.
     #[arg(long, short = 'r')]
     pub reject_no_match: bool,
@@ -93,80 +117,6 @@ pub struct Args {
     /// Activate instantASSIST mode (single-letter launcher).
     #[arg(long)]
     pub commented: bool,
-
-    /// Slide mode: show a value slider instead of a menu.
-    ///
-    /// Return prints the current value to stdout and exits; Escape exits
-    /// without printing. Every value change runs --command (if given) with
-    /// the value appended as its last argument.
-    #[arg(
-        long,
-        conflicts_with_all = [
-            "toast",
-            "commented",
-            "input_only",
-            "password",
-            "preselect"
-        ]
-    )]
-    pub slide: bool,
-
-    /// Minimum slider value (slide mode).
-    #[arg(
-        long,
-        requires = "slide",
-        value_name = "N",
-        allow_hyphen_values = true,
-        default_value_t = 0
-    )]
-    pub min: i32,
-
-    /// Maximum slider value (slide mode).
-    #[arg(
-        long,
-        requires = "slide",
-        value_name = "N",
-        allow_hyphen_values = true,
-        default_value_t = 100
-    )]
-    pub max: i32,
-
-    /// Initial slider value (slide mode).
-    ///
-    /// Defaults to the middle of the range; clamped into it.
-    #[arg(long, requires = "slide", value_name = "N", allow_hyphen_values = true)]
-    pub value: Option<i32>,
-
-    /// Small step for left/right (slide mode).
-    #[arg(
-        long,
-        requires = "slide",
-        value_name = "N",
-        value_parser = clap::value_parser!(i32).range(1..)
-    )]
-    pub step: Option<i32>,
-
-    /// Large step for up/down (slide mode).
-    ///
-    /// Defaults to a tenth of the range (at least 5).
-    #[arg(
-        long,
-        requires = "slide",
-        value_name = "N",
-        value_parser = clap::value_parser!(i32).range(1..)
-    )]
-    pub big_step: Option<i32>,
-
-    /// Command run on every value change (slide mode).
-    ///
-    /// Run through the shell with the current value appended as the last
-    /// argument.
-    #[arg(long, requires = "slide", value_name = "CMD")]
-    pub command: Option<String>,
-
-    /// Place the menu at the mouse position.
-    #[arg(long, conflicts_with = "position")]
-    pub follow_cursor: bool,
 
     /// Only display the input field, without the item list.
     #[arg(long)]
@@ -207,21 +157,9 @@ pub struct Args {
     #[arg(long)]
     pub password: bool,
 
-    /// Use a monospace font (Fira Code Nerd Font:pixelsize=15).
-    #[arg(long, conflicts_with = "font")]
-    pub monospace: bool,
-
-    /// Don't grab the keyboard.
-    #[arg(long)]
-    pub no_grab: bool,
-
     /// Alt-tab behaviour.
     #[arg(long)]
     pub alt_tab: bool,
-
-    /// Let instantmenu be managed by the window manager as a normal window.
-    #[arg(long)]
-    pub managed: bool,
 
     /// Execute this command on shift + right arrow.
     #[arg(long, value_name = "CMD")]
@@ -235,61 +173,26 @@ pub struct Args {
     /// Number of columns in grid mode (0 means 1).
     ///
     /// Implies one line per row unless --lines is given.
-    #[arg(long, short = 'g', value_name = "N", value_parser = clap::value_parser!(i32).range(0..))]
+    #[arg(
+        long,
+        short = 'g',
+        value_name = "N",
+        value_parser = clap::value_parser!(i32).range(0..)
+    )]
     pub columns: Option<i32>,
 
     /// Number of lines in a vertical list.
-    #[arg(long, short = 'l', value_name = "N", value_parser = clap::value_parser!(i32).range(0..))]
-    pub lines: Option<i32>,
-
-    /// Horizontal offset from the anchor position.
-    ///
-    /// Positive moves right, negative moves left.
-    #[arg(long, short = 'x', value_name = "N", allow_hyphen_values = true)]
-    pub x_offset: Option<i32>,
-
-    /// Vertical offset from the anchor position.
-    ///
-    /// Positive moves down, negative moves up.
-    #[arg(long, short = 'y', value_name = "N", allow_hyphen_values = true)]
-    pub y_offset: Option<i32>,
-
-    /// Make instantmenu this wide.
-    ///
-    /// A negative value adjusts the width to the longest line read from
-    /// stdin.
-    #[arg(long, short = 'w', value_name = "N", allow_hyphen_values = true)]
-    pub width: Option<i32>,
-
-    /// Select monitor by index.
-    ///
-    /// Monitor numbers start from 0. Use -1 for automatic selection.
     #[arg(
         long,
-        short = 'm',
+        short = 'l',
         value_name = "N",
-        allow_hyphen_values = true,
-        value_parser = clap::value_parser!(i32).range(-1..)
+        value_parser = clap::value_parser!(i32).range(0..)
     )]
-    pub monitor: Option<i32>,
-
-    /// Prompt added to the left of the input field.
-    #[arg(long, short = 'p', value_name = "TEXT")]
-    pub prompt: Option<String>,
+    pub lines: Option<i32>,
 
     /// Placeholder inside the input field.
     #[arg(long, value_name = "TEXT")]
     pub placeholder: Option<String>,
-
-    /// Font or font set (overrides the X resource and default).
-    #[arg(long, value_name = "FONT", conflicts_with = "monospace")]
-    pub font: Option<String>,
-
-    /// Minimum height of one menu line.
-    ///
-    /// At least 8 pixels.
-    #[arg(long, value_name = "N", allow_hyphen_values = true)]
-    pub line_height: Option<i32>,
 
     /// Animation duration in frames.
     #[arg(
@@ -299,44 +202,6 @@ pub struct Args {
         value_parser = clap::value_parser!(i32).range(0..)
     )]
     pub animation: Option<i32>,
-
-    /// Normal background color.
-    ///
-    /// Supports #RGB, #RRGGBB and X color names.
-    #[arg(long, value_name = "COLOR")]
-    pub normal_bg: Option<String>,
-
-    /// Normal foreground color.
-    ///
-    /// Supports #RGB, #RRGGBB and X color names.
-    #[arg(long, value_name = "COLOR")]
-    pub normal_fg: Option<String>,
-
-    /// Selected background color.
-    ///
-    /// Supports #RGB, #RRGGBB and X color names.
-    #[arg(long, value_name = "COLOR")]
-    pub selected_bg: Option<String>,
-
-    /// Selected foreground color.
-    ///
-    /// Supports #RGB, #RRGGBB and X color names.
-    #[arg(long, value_name = "COLOR")]
-    pub selected_fg: Option<String>,
-
-    /// Embedding window id (X11 only).
-    #[arg(long, value_name = "ID", value_parser = parse_window_id)]
-    pub embed: Option<u32>,
-
-    /// Border width.
-    ///
-    /// Adds a border around the menu.
-    #[arg(
-        long,
-        value_name = "N",
-        value_parser = clap::value_parser!(i32).range(0..)
-    )]
-    pub border_width: Option<i32>,
 
     /// Preselected item index.
     ///
@@ -349,6 +214,299 @@ pub struct Args {
     pub initial_text: Option<String>,
 }
 
+impl MenuArgs {
+    /// Return the flag name of the first present menu-only option, if any.
+    pub fn active_flag(&self) -> Option<&'static str> {
+        if self.reject_no_match {
+            return Some("--reject-no-match");
+        }
+        if self.fast {
+            return Some("--fast");
+        }
+        if self.toast.is_some() {
+            return Some("--toast");
+        }
+        if self.commented {
+            return Some("--commented");
+        }
+        if self.input_only {
+            return Some("--input-only");
+        }
+        if self.smart_case {
+            return Some("--smart-case");
+        }
+        if self.match_mode.is_some() {
+            return Some("--match-mode");
+        }
+        if self.pre_match {
+            return Some("--pre-match");
+        }
+        if self.space_confirm {
+            return Some("--space-confirm");
+        }
+        if self.full_height {
+            return Some("--full-height");
+        }
+        if self.insensitive {
+            return Some("--insensitive");
+        }
+        if self.instant {
+            return Some("--instant");
+        }
+        if self.password {
+            return Some("--password");
+        }
+        if self.alt_tab {
+            return Some("--alt-tab");
+        }
+        if self.right_command.is_some() {
+            return Some("--right-command");
+        }
+        if self.left_command.is_some() {
+            return Some("--left-command");
+        }
+        if self.columns.is_some() {
+            return Some("--columns");
+        }
+        if self.lines.is_some() {
+            return Some("--lines");
+        }
+        if self.placeholder.is_some() {
+            return Some("--placeholder");
+        }
+        if self.animation.is_some() {
+            return Some("--animation");
+        }
+        if self.preselect.is_some() {
+            return Some("--preselect");
+        }
+        if self.initial_text.is_some() {
+            return Some("--initial-text");
+        }
+        None
+    }
+}
+
+/// Window, geometry, font and color options shared by menu and slide modes.
+#[derive(clap::Args, Debug, Clone)]
+pub struct WindowArgs {
+    /// Backend to use: auto, x11 or wayland.
+    #[arg(
+        long,
+        value_enum,
+        value_name = "BACKEND",
+        default_value = "auto",
+        global = true
+    )]
+    pub backend: BackendChoice,
+
+    /// Anchor the menu to a corner, edge or the center of the screen.
+    #[arg(
+        long,
+        value_enum,
+        value_name = "POSITION",
+        conflicts_with = "follow_cursor",
+        global = true
+    )]
+    pub position: Option<Position>,
+
+    /// Place the menu at the mouse position.
+    #[arg(long, conflicts_with = "position", global = true)]
+    pub follow_cursor: bool,
+
+    /// Use a monospace font (Fira Code Nerd Font:pixelsize=15).
+    #[arg(long, conflicts_with = "font", global = true)]
+    pub monospace: bool,
+
+    /// Don't grab the keyboard.
+    #[arg(long, global = true)]
+    pub no_grab: bool,
+
+    /// Let instantmenu be managed by the window manager as a normal window.
+    #[arg(long, global = true)]
+    pub managed: bool,
+
+    /// Horizontal offset from the anchor position.
+    ///
+    /// Positive moves right, negative moves left.
+    #[arg(
+        long,
+        short = 'x',
+        value_name = "N",
+        allow_hyphen_values = true,
+        global = true
+    )]
+    pub x_offset: Option<i32>,
+
+    /// Vertical offset from the anchor position.
+    ///
+    /// Positive moves down, negative moves up.
+    #[arg(
+        long,
+        short = 'y',
+        value_name = "N",
+        allow_hyphen_values = true,
+        global = true
+    )]
+    pub y_offset: Option<i32>,
+
+    /// Make instantmenu this wide.
+    ///
+    /// A negative value adjusts the width to the longest line read from
+    /// stdin.
+    #[arg(
+        long,
+        short = 'w',
+        value_name = "N",
+        allow_hyphen_values = true,
+        global = true
+    )]
+    pub width: Option<i32>,
+
+    /// Select monitor by index.
+    ///
+    /// Monitor numbers start from 0. Use -1 for automatic selection.
+    #[arg(
+        long,
+        short = 'm',
+        value_name = "N",
+        allow_hyphen_values = true,
+        value_parser = clap::value_parser!(i32).range(-1..),
+        global = true
+    )]
+    pub monitor: Option<i32>,
+
+    /// Prompt added to the left of the input field (menu mode) or the
+    /// slider label (slide mode).
+    #[arg(long, short = 'p', value_name = "TEXT", global = true)]
+    pub prompt: Option<String>,
+
+    /// Font or font set (overrides the X resource and default).
+    #[arg(long, value_name = "FONT", conflicts_with = "monospace", global = true)]
+    pub font: Option<String>,
+
+    /// Minimum height of one menu line.
+    ///
+    /// At least 8 pixels.
+    #[arg(long, value_name = "N", allow_hyphen_values = true, global = true)]
+    pub line_height: Option<i32>,
+
+    /// Normal background color.
+    ///
+    /// Supports #RGB, #RRGGBB and X color names.
+    #[arg(long, value_name = "COLOR", global = true)]
+    pub normal_bg: Option<String>,
+
+    /// Normal foreground color.
+    ///
+    /// Supports #RGB, #RRGGBB and X color names.
+    #[arg(long, value_name = "COLOR", global = true)]
+    pub normal_fg: Option<String>,
+
+    /// Selected background color.
+    ///
+    /// Supports #RGB, #RRGGBB and X color names.
+    #[arg(long, value_name = "COLOR", global = true)]
+    pub selected_bg: Option<String>,
+
+    /// Selected foreground color.
+    ///
+    /// Supports #RGB, #RRGGBB and X color names.
+    #[arg(long, value_name = "COLOR", global = true)]
+    pub selected_fg: Option<String>,
+
+    /// Embedding window id (X11 only).
+    #[arg(long, value_name = "ID", value_parser = parse_window_id, global = true)]
+    pub embed: Option<u32>,
+
+    /// Border width.
+    ///
+    /// Adds a border around the menu.
+    #[arg(
+        long,
+        value_name = "N",
+        value_parser = clap::value_parser!(i32).range(0..),
+        global = true
+    )]
+    pub border_width: Option<i32>,
+}
+
+/// Parse a window id for `--embed`: decimal, or 0x-prefixed hex like the C
+/// `strtol`, but strict — garbage is an error instead of silently becoming 0.
+fn parse_window_id(s: &str) -> Result<u32, String> {
+    let t = s.trim();
+    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        u32::from_str_radix(hex, 16).map_err(|_| format!("invalid window id: `{s}`"))
+    } else {
+        t.parse::<u32>()
+            .map_err(|_| format!("invalid window id: `{s}`"))
+    }
+}
+
+/// A non-default running mode, selected with a subcommand.
+#[derive(Subcommand, Debug)]
+pub enum Cmd {
+    /// Slide mode: show a value slider instead of a menu.
+    ///
+    /// Return prints the current value to stdout and exits; Escape exits
+    /// without printing. Every value change runs --command (if given) with
+    /// the value appended as its last argument.
+    Slide(SlideArgs),
+}
+
+/// Options for [`Cmd::Slide`] — the value slider.
+#[derive(clap::Args, Debug)]
+pub struct SlideArgs {
+    /// Minimum slider value.
+    #[arg(
+        long,
+        value_name = "N",
+        allow_hyphen_values = true,
+        default_value_t = 0
+    )]
+    pub min: i32,
+
+    /// Maximum slider value.
+    #[arg(
+        long,
+        value_name = "N",
+        allow_hyphen_values = true,
+        default_value_t = 100
+    )]
+    pub max: i32,
+
+    /// Initial slider value.
+    ///
+    /// Defaults to the middle of the range; clamped into it.
+    #[arg(long, value_name = "N", allow_hyphen_values = true)]
+    pub value: Option<i32>,
+
+    /// Small step for left/right.
+    #[arg(
+        long,
+        value_name = "N",
+        value_parser = clap::value_parser!(i32).range(1..)
+    )]
+    pub step: Option<i32>,
+
+    /// Large step for up/down.
+    ///
+    /// Defaults to a tenth of the range (at least 5).
+    #[arg(
+        long,
+        value_name = "N",
+        value_parser = clap::value_parser!(i32).range(1..)
+    )]
+    pub big_step: Option<i32>,
+
+    /// Command run on every value change.
+    ///
+    /// Run through the shell with the current value appended as the last
+    /// argument.
+    #[arg(long, value_name = "CMD")]
+    pub command: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,13 +516,13 @@ mod tests {
         use crate::backend::BackendChoice;
 
         let a = Args::try_parse_from(["instantmenu"]).unwrap();
-        assert_eq!(a.backend, BackendChoice::Auto);
+        assert_eq!(a.window.backend, BackendChoice::Auto);
         let a = Args::try_parse_from(["instantmenu", "--backend", "x11"]).unwrap();
-        assert_eq!(a.backend, BackendChoice::X11);
+        assert_eq!(a.window.backend, BackendChoice::X11);
         let a = Args::try_parse_from(["instantmenu", "--backend", "wayland"]).unwrap();
-        assert_eq!(a.backend, BackendChoice::Wayland);
+        assert_eq!(a.window.backend, BackendChoice::Wayland);
         let a = Args::try_parse_from(["instantmenu", "--backend", "auto"]).unwrap();
-        assert_eq!(a.backend, BackendChoice::Auto);
+        assert_eq!(a.window.backend, BackendChoice::Auto);
         assert!(Args::try_parse_from(["instantmenu", "--backend", "xorg"]).is_err());
         assert!(Args::try_parse_from(["instantmenu", "--backend"]).is_err());
     }
@@ -413,8 +571,8 @@ mod tests {
     #[test]
     fn negative_numbers_accepted() {
         let a = Args::try_parse_from(["instantmenu", "-w", "-1", "--preselect", "-2"]).unwrap();
-        assert_eq!(a.width, Some(-1));
-        assert_eq!(a.preselect, Some(-2));
+        assert_eq!(a.window.width, Some(-1));
+        assert_eq!(a.menu.preselect, Some(-2));
     }
 
     #[test]
@@ -452,10 +610,10 @@ mod tests {
                 .is_err()
         );
         let a = Args::try_parse_from(["instantmenu", "--position", "bottom"]).unwrap();
-        assert_eq!(a.position, Some(Position::Bottom));
+        assert_eq!(a.window.position, Some(Position::Bottom));
         let a = Args::try_parse_from(["instantmenu", "--follow-cursor"]).unwrap();
-        assert_eq!(a.position, None);
-        assert!(a.follow_cursor);
+        assert_eq!(a.window.position, None);
+        assert!(a.window.follow_cursor);
     }
 
     #[test]
@@ -472,16 +630,16 @@ mod tests {
             ("bottom-right", Position::BottomRight),
         ] {
             let a = Args::try_parse_from(["instantmenu", "--position", value]).unwrap();
-            assert_eq!(a.position, Some(expected), "{value}");
+            assert_eq!(a.window.position, Some(expected), "{value}");
         }
     }
 
     #[test]
     fn match_mode_parses() {
         let a = Args::try_parse_from(["instantmenu", "--match-mode", "exact"]).unwrap();
-        assert_eq!(a.match_mode, Some(MatchMode::Exact));
+        assert_eq!(a.menu.match_mode, Some(MatchMode::Exact));
         let a = Args::try_parse_from(["instantmenu", "--match-mode", "dmenu"]).unwrap();
-        assert_eq!(a.match_mode, Some(MatchMode::Dmenu));
+        assert_eq!(a.menu.match_mode, Some(MatchMode::Dmenu));
         assert!(Args::try_parse_from(["instantmenu", "--match-mode", "fuzzy"]).is_ok());
         /* the old spellings are gone */
         assert!(Args::try_parse_from(["instantmenu", "-F"]).is_err());
@@ -509,7 +667,7 @@ mod tests {
     #[test]
     fn monitor_automatic_is_accepted() {
         let a = Args::try_parse_from(["instantmenu", "-m", "-1"]).unwrap();
-        assert_eq!(a.monitor, Some(-1));
+        assert_eq!(a.window.monitor, Some(-1));
     }
 
     #[test]
@@ -524,15 +682,20 @@ mod tests {
 
     #[test]
     fn slide_args_parse() {
-        let a = Args::try_parse_from(["instantmenu", "--slide"]).unwrap();
-        assert!(a.slide);
-        assert_eq!(a.min, 0);
-        assert_eq!(a.max, 100);
-        assert_eq!(a.value, None);
+        let a = Args::try_parse_from(["instantmenu", "slide"]).unwrap();
+        let Some(Cmd::Slide(s)) = a.subcommand.as_ref() else {
+            panic!("expected the slide subcommand");
+        };
+        assert_eq!(s.min, 0);
+        assert_eq!(s.max, 100);
+        assert_eq!(s.value, None);
 
+        /* shared flags can appear before or after the subcommand */
         let a = Args::try_parse_from([
             "instantmenu",
-            "--slide",
+            "-p",
+            "Brightness",
+            "slide",
             "--min",
             "-50",
             "--max",
@@ -545,20 +708,44 @@ mod tests {
             "10",
             "--command",
             "brightnessctl set",
-            "-p",
-            "Brightness",
         ])
         .unwrap();
-        assert_eq!(a.min, -50);
-        assert_eq!(a.max, 50);
-        assert_eq!(a.value, Some(-10));
-        assert_eq!(a.step, Some(2));
-        assert_eq!(a.big_step, Some(10));
-        assert_eq!(a.command.as_deref(), Some("brightnessctl set"));
+        assert_eq!(a.window.prompt.as_deref(), Some("Brightness"));
+        let Some(Cmd::Slide(s)) = a.subcommand.as_ref() else {
+            panic!("expected the slide subcommand");
+        };
+        assert_eq!(s.min, -50);
+        assert_eq!(s.max, 50);
+        assert_eq!(s.value, Some(-10));
+        assert_eq!(s.step, Some(2));
+        assert_eq!(s.big_step, Some(10));
+        assert_eq!(s.command.as_deref(), Some("brightnessctl set"));
+
+        /* flags after the subcommand also work */
+        let a = Args::try_parse_from([
+            "instantmenu",
+            "slide",
+            "-p",
+            "Volume",
+            "--width",
+            "400",
+            "--min",
+            "0",
+            "--max",
+            "100",
+        ])
+        .unwrap();
+        assert_eq!(a.window.prompt.as_deref(), Some("Volume"));
+        assert_eq!(a.window.width, Some(400));
+        let Some(Cmd::Slide(s)) = a.subcommand.as_ref() else {
+            panic!("expected the slide subcommand");
+        };
+        assert_eq!(s.min, 0);
+        assert_eq!(s.max, 100);
     }
 
     #[test]
-    fn slide_options_require_slide() {
+    fn slide_options_rejected_without_the_slide_subcommand() {
         for bad in [
             &["instantmenu", "--max"][..],
             &["instantmenu", "--min", "0"][..],
@@ -569,22 +756,17 @@ mod tests {
         ] {
             assert!(
                 Args::try_parse_from(bad).is_err(),
-                "{bad:?} should require --slide"
+                "{bad:?} should require the `slide` subcommand"
             );
         }
     }
 
     #[test]
-    fn slide_rejects_contradictory_modes_and_steps() {
+    fn slide_bad_steps_rejected() {
         for bad in [
-            &["instantmenu", "--slide", "--toast", "5"][..],
-            &["instantmenu", "--slide", "--commented"][..],
-            &["instantmenu", "--slide", "--input-only"][..],
-            &["instantmenu", "--slide", "--password"][..],
-            &["instantmenu", "--slide", "--preselect", "1"][..],
-            &["instantmenu", "--slide", "--step", "0"][..],
-            &["instantmenu", "--slide", "--step", "-2"][..],
-            &["instantmenu", "--slide", "--big-step", "0"][..],
+            &["instantmenu", "slide", "--step", "0"][..],
+            &["instantmenu", "slide", "--step", "-2"][..],
+            &["instantmenu", "slide", "--big-step", "0"][..],
         ] {
             assert!(
                 Args::try_parse_from(bad).is_err(),
@@ -592,18 +774,103 @@ mod tests {
             );
         }
         /* step >= 1 is fine, and min/max may be negative */
-        assert!(Args::try_parse_from(["instantmenu", "--slide", "--step", "3"]).is_ok());
+        assert!(Args::try_parse_from(["instantmenu", "slide", "--step", "3"]).is_ok());
     }
-}
 
-/// Parse a window id for `--embed`: decimal, or 0x-prefixed hex like the C
-/// `strtol`, but strict — garbage is an error instead of silently becoming 0.
-fn parse_window_id(s: &str) -> Result<u32, String> {
-    let t = s.trim();
-    if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-        u32::from_str_radix(hex, 16).map_err(|_| format!("invalid window id: `{s}`"))
-    } else {
-        t.parse::<u32>()
-            .map_err(|_| format!("invalid window id: `{s}`"))
+    #[test]
+    fn shared_flags_apply_before_and_after_slide() {
+        /* shared flags before the subcommand */
+        let a = Args::try_parse_from(["instantmenu", "--width", "600", "--prompt", "B", "slide"])
+            .unwrap();
+        assert_eq!(a.window.width, Some(600));
+        assert_eq!(a.window.prompt.as_deref(), Some("B"));
+        assert!(matches!(a.subcommand, Some(Cmd::Slide(_))));
+        assert_eq!(a.menu_only_option_in_subcommand(), None);
+
+        /* shared flags after the subcommand */
+        let a = Args::try_parse_from(["instantmenu", "slide", "--width", "600", "--prompt", "B"])
+            .unwrap();
+        assert_eq!(a.window.width, Some(600));
+        assert_eq!(a.window.prompt.as_deref(), Some("B"));
+        assert!(matches!(a.subcommand, Some(Cmd::Slide(_))));
+        assert_eq!(a.menu_only_option_in_subcommand(), None);
+    }
+
+    #[test]
+    fn menu_only_flags_are_rejected_in_slide_mode() {
+        for (argv, flag) in [
+            (
+                &["instantmenu", "--reject-no-match", "slide"][..],
+                "--reject-no-match",
+            ),
+            (&["instantmenu", "--fast", "slide"][..], "--fast"),
+            (&["instantmenu", "--toast", "5", "slide"][..], "--toast"),
+            (&["instantmenu", "--commented", "slide"][..], "--commented"),
+            (
+                &["instantmenu", "--input-only", "slide"][..],
+                "--input-only",
+            ),
+            (
+                &["instantmenu", "--smart-case", "slide"][..],
+                "--smart-case",
+            ),
+            (
+                &["instantmenu", "--match-mode", "fuzzy", "slide"][..],
+                "--match-mode",
+            ),
+            (&["instantmenu", "--pre-match", "slide"][..], "--pre-match"),
+            (
+                &["instantmenu", "--space-confirm", "slide"][..],
+                "--space-confirm",
+            ),
+            (
+                &["instantmenu", "--full-height", "slide"][..],
+                "--full-height",
+            ),
+            (
+                &["instantmenu", "--insensitive", "slide"][..],
+                "--insensitive",
+            ),
+            (&["instantmenu", "--instant", "slide"][..], "--instant"),
+            (&["instantmenu", "--password", "slide"][..], "--password"),
+            (&["instantmenu", "--alt-tab", "slide"][..], "--alt-tab"),
+            (
+                &["instantmenu", "--right-command", "true", "slide"][..],
+                "--right-command",
+            ),
+            (
+                &["instantmenu", "--left-command", "true", "slide"][..],
+                "--left-command",
+            ),
+            (&["instantmenu", "--columns", "2", "slide"][..], "--columns"),
+            (&["instantmenu", "--lines", "3", "slide"][..], "--lines"),
+            (
+                &["instantmenu", "--placeholder", "x", "slide"][..],
+                "--placeholder",
+            ),
+            (
+                &["instantmenu", "--animation", "5", "slide"][..],
+                "--animation",
+            ),
+            (
+                &["instantmenu", "--preselect", "1", "slide"][..],
+                "--preselect",
+            ),
+            (
+                &["instantmenu", "--initial-text", "x", "slide"][..],
+                "--initial-text",
+            ),
+        ] {
+            let a = Args::try_parse_from(argv).unwrap();
+            assert_eq!(a.menu_only_option_in_subcommand(), Some(flag), "{argv:?}");
+        }
+
+        /* menu-only flags after slide are rejected by clap parser */
+        assert!(Args::try_parse_from(["instantmenu", "slide", "--lines", "3"]).is_err());
+        assert!(Args::try_parse_from(["instantmenu", "slide", "--password"]).is_err());
+
+        /* menu-only flags are fine without a subcommand */
+        let a = Args::try_parse_from(["instantmenu", "--insensitive"]).unwrap();
+        assert_eq!(a.menu_only_option_in_subcommand(), None);
     }
 }

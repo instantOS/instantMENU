@@ -234,11 +234,7 @@ impl Renderer {
             self.scheme.bg
         };
         if accent {
-            self.fill_rect(
-                canvas,
-                Rect::new(x, y, w, h - ACCENT_STRIP_HEIGHT),
-                fill,
-            );
+            self.fill_rect(canvas, Rect::new(x, y, w, h - ACCENT_STRIP_HEIGHT), fill);
             self.fill_rect(
                 canvas,
                 Rect::new(x, y + h - ACCENT_STRIP_HEIGHT, w, ACCENT_STRIP_HEIGHT),
@@ -335,12 +331,7 @@ impl Renderer {
         // vertical centering like drw_text:
         // ty = y + (h - usedfont->h)/2 + ascent, here the buffer baseline sits
         // at ascent within font_height rows.
-        let y_off = y + (h - self.font_height) / 2
-            - if accent {
-                ACCENT_TEXT_Y_OFFSET
-            } else {
-                0
-            };
+        let y_off = y + (h - self.font_height) / 2 - if accent { ACCENT_TEXT_Y_OFFSET } else { 0 };
 
         layout.buffer.draw(
             &mut self.font_system,

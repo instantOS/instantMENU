@@ -61,8 +61,8 @@ pub struct Menu {
     pub(in crate::menu) layout: Layout,
     /// -l/-g as adjusted by stdin (item count), consumed by setup().
     pub(in crate::menu) stdin_grid: layout::GridShape,
-    /// --slide: Some(_) = slide mode; owns the value state and receives
-    /// events instead of the list machinery.
+    /// `slide` subcommand: Some(_) = slide mode; owns the value state and
+    /// receives events instead of the list machinery.
     pub(in crate::menu) slider: Option<Slider>,
 
     /* runtime flags */

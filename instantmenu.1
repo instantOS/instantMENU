@@ -4,11 +4,11 @@
 .SH NAME
 instantmenu \- A dynamic menu for X11 and Wayland (instantMENU, Rust port)
 .SH SYNOPSIS
-\fBinstantmenu\fR [\fB\-\-backend\fR] [\fB\-\-position\fR] [\fB\-r\fR|\fB\-\-reject\-no\-match\fR] [\fB\-f\fR|\fB\-\-fast\fR] [\fB\-\-toast\fR] [\fB\-\-commented\fR] [\fB\-\-slide\fR] [\fB\-\-min\fR] [\fB\-\-max\fR] [\fB\-\-value\fR] [\fB\-\-step\fR] [\fB\-\-big\-step\fR] [\fB\-\-command\fR] [\fB\-\-follow\-cursor\fR] [\fB\-\-input\-only\fR] [\fB\-s\fR|\fB\-\-smart\-case\fR] [\fB\-\-match\-mode\fR] [\fB\-\-pre\-match\fR] [\fB\-\-space\-confirm\fR] [\fB\-\-full\-height\fR] [\fB\-i\fR|\fB\-\-insensitive\fR] [\fB\-n\fR|\fB\-\-instant\fR] [\fB\-\-password\fR] [\fB\-\-monospace\fR] [\fB\-\-no\-grab\fR] [\fB\-\-alt\-tab\fR] [\fB\-\-managed\fR] [\fB\-\-right\-command\fR] [\fB\-\-left\-command\fR] [\fB\-g\fR|\fB\-\-columns\fR] [\fB\-l\fR|\fB\-\-lines\fR] [\fB\-x\fR|\fB\-\-x\-offset\fR] [\fB\-y\fR|\fB\-\-y\-offset\fR] [\fB\-w\fR|\fB\-\-width\fR] [\fB\-m\fR|\fB\-\-monitor\fR] [\fB\-p\fR|\fB\-\-prompt\fR] [\fB\-\-placeholder\fR] [\fB\-\-font\fR] [\fB\-\-line\-height\fR] [\fB\-a\fR|\fB\-\-animation\fR] [\fB\-\-normal\-bg\fR] [\fB\-\-normal\-fg\fR] [\fB\-\-selected\-bg\fR] [\fB\-\-selected\-fg\fR] [\fB\-\-embed\fR] [\fB\-\-border\-width\fR] [\fB\-\-preselect\fR] [\fB\-\-initial\-text\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR]
+\fBinstantmenu\fR [\fB\-\-backend\fR] [\fB\-\-position\fR] [\fB\-\-follow\-cursor\fR] [\fB\-\-monospace\fR] [\fB\-\-no\-grab\fR] [\fB\-\-managed\fR] [\fB\-x\fR|\fB\-\-x\-offset\fR] [\fB\-y\fR|\fB\-\-y\-offset\fR] [\fB\-w\fR|\fB\-\-width\fR] [\fB\-m\fR|\fB\-\-monitor\fR] [\fB\-p\fR|\fB\-\-prompt\fR] [\fB\-\-font\fR] [\fB\-\-line\-height\fR] [\fB\-\-normal\-bg\fR] [\fB\-\-normal\-fg\fR] [\fB\-\-selected\-bg\fR] [\fB\-\-selected\-fg\fR] [\fB\-\-embed\fR] [\fB\-\-border\-width\fR] [\fB\-r\fR|\fB\-\-reject\-no\-match\fR] [\fB\-f\fR|\fB\-\-fast\fR] [\fB\-\-toast\fR] [\fB\-\-commented\fR] [\fB\-\-input\-only\fR] [\fB\-s\fR|\fB\-\-smart\-case\fR] [\fB\-\-match\-mode\fR] [\fB\-\-pre\-match\fR] [\fB\-\-space\-confirm\fR] [\fB\-\-full\-height\fR] [\fB\-i\fR|\fB\-\-insensitive\fR] [\fB\-n\fR|\fB\-\-instant\fR] [\fB\-\-password\fR] [\fB\-\-alt\-tab\fR] [\fB\-\-right\-command\fR] [\fB\-\-left\-command\fR] [\fB\-g\fR|\fB\-\-columns\fR] [\fB\-l\fR|\fB\-\-lines\fR] [\fB\-\-placeholder\fR] [\fB\-a\fR|\fB\-\-animation\fR] [\fB\-\-preselect\fR] [\fB\-\-initial\-text\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIsubcommands\fR]
 .SH DESCRIPTION
 instantmenu reads a newline\-separated list of items from stdin and displays them in a menu. Selecting an item and pressing Return prints it to stdout and exits; typing narrows the list to matching items.
 .PP
-With \-\-slide it shows a value slider instead: Return prints the value and exits, every change runs \-\-command with the value appended.
+With the `slide` subcommand it shows a value slider instead: Return prints the value and exits, every change runs \-\-command with the value appended.
 .SH OPTIONS
 .TP
 \fB\-\-backend\fR \fI<BACKEND>\fR [default: auto]
@@ -53,6 +53,77 @@ bottom: Bottom edge, centered horizontally
 bottom\-right: Bottom\-right corner
 .RE
 .TP
+\fB\-\-follow\-cursor\fR
+Place the menu at the mouse position
+.TP
+\fB\-\-monospace\fR
+Use a monospace font (Fira Code Nerd Font:pixelsize=15)
+.TP
+\fB\-\-no\-grab\fR
+Don\*(Aqt grab the keyboard
+.TP
+\fB\-\-managed\fR
+Let instantmenu be managed by the window manager as a normal window
+.TP
+\fB\-x\fR, \fB\-\-x\-offset\fR \fI<N>\fR
+Horizontal offset from the anchor position.
+
+Positive moves right, negative moves left.
+.TP
+\fB\-y\fR, \fB\-\-y\-offset\fR \fI<N>\fR
+Vertical offset from the anchor position.
+
+Positive moves down, negative moves up.
+.TP
+\fB\-w\fR, \fB\-\-width\fR \fI<N>\fR
+Make instantmenu this wide.
+
+A negative value adjusts the width to the longest line read from stdin.
+.TP
+\fB\-m\fR, \fB\-\-monitor\fR \fI<N>\fR
+Select monitor by index.
+
+Monitor numbers start from 0. Use \-1 for automatic selection.
+.TP
+\fB\-p\fR, \fB\-\-prompt\fR \fI<TEXT>\fR
+Prompt added to the left of the input field (menu mode) or the slider label (slide mode)
+.TP
+\fB\-\-font\fR \fI<FONT>\fR
+Font or font set (overrides the X resource and default)
+.TP
+\fB\-\-line\-height\fR \fI<N>\fR
+Minimum height of one menu line.
+
+At least 8 pixels.
+.TP
+\fB\-\-normal\-bg\fR \fI<COLOR>\fR
+Normal background color.
+
+Supports #RGB, #RRGGBB and X color names.
+.TP
+\fB\-\-normal\-fg\fR \fI<COLOR>\fR
+Normal foreground color.
+
+Supports #RGB, #RRGGBB and X color names.
+.TP
+\fB\-\-selected\-bg\fR \fI<COLOR>\fR
+Selected background color.
+
+Supports #RGB, #RRGGBB and X color names.
+.TP
+\fB\-\-selected\-fg\fR \fI<COLOR>\fR
+Selected foreground color.
+
+Supports #RGB, #RRGGBB and X color names.
+.TP
+\fB\-\-embed\fR \fI<ID>\fR
+Embedding window id (X11 only)
+.TP
+\fB\-\-border\-width\fR \fI<N>\fR
+Border width.
+
+Adds a border around the menu.
+.TP
 \fB\-r\fR, \fB\-\-reject\-no\-match\fR
 Reject input if it results in no matches
 .TP
@@ -68,38 +139,6 @@ The menu draws itself, waits the given time, then exits without a selection.
 .TP
 \fB\-\-commented\fR
 Activate instantASSIST mode (single\-letter launcher)
-.TP
-\fB\-\-slide\fR
-Slide mode: show a value slider instead of a menu.
-
-Return prints the current value to stdout and exits; Escape exits without printing. Every value change runs \-\-command (if given) with the value appended as its last argument.
-.TP
-\fB\-\-min\fR \fI<N>\fR [default: 0]
-Minimum slider value (slide mode)
-.TP
-\fB\-\-max\fR \fI<N>\fR [default: 100]
-Maximum slider value (slide mode)
-.TP
-\fB\-\-value\fR \fI<N>\fR
-Initial slider value (slide mode).
-
-Defaults to the middle of the range; clamped into it.
-.TP
-\fB\-\-step\fR \fI<N>\fR
-Small step for left/right (slide mode)
-.TP
-\fB\-\-big\-step\fR \fI<N>\fR
-Large step for up/down (slide mode).
-
-Defaults to a tenth of the range (at least 5).
-.TP
-\fB\-\-command\fR \fI<CMD>\fR
-Command run on every value change (slide mode).
-
-Run through the shell with the current value appended as the last argument.
-.TP
-\fB\-\-follow\-cursor\fR
-Place the menu at the mouse position
 .TP
 \fB\-\-input\-only\fR
 Only display the input field, without the item list
@@ -142,17 +181,8 @@ Instantly select the only match
 \fB\-\-password\fR
 Display input as dots
 .TP
-\fB\-\-monospace\fR
-Use a monospace font (Fira Code Nerd Font:pixelsize=15)
-.TP
-\fB\-\-no\-grab\fR
-Don\*(Aqt grab the keyboard
-.TP
 \fB\-\-alt\-tab\fR
 Alt\-tab behaviour
-.TP
-\fB\-\-managed\fR
-Let instantmenu be managed by the window manager as a normal window
 .TP
 \fB\-\-right\-command\fR \fI<CMD>\fR
 Execute this command on shift + right arrow
@@ -168,70 +198,11 @@ Implies one line per row unless \-\-lines is given.
 \fB\-l\fR, \fB\-\-lines\fR \fI<N>\fR
 Number of lines in a vertical list
 .TP
-\fB\-x\fR, \fB\-\-x\-offset\fR \fI<N>\fR
-Horizontal offset from the anchor position.
-
-Positive moves right, negative moves left.
-.TP
-\fB\-y\fR, \fB\-\-y\-offset\fR \fI<N>\fR
-Vertical offset from the anchor position.
-
-Positive moves down, negative moves up.
-.TP
-\fB\-w\fR, \fB\-\-width\fR \fI<N>\fR
-Make instantmenu this wide.
-
-A negative value adjusts the width to the longest line read from stdin.
-.TP
-\fB\-m\fR, \fB\-\-monitor\fR \fI<N>\fR
-Select monitor by index.
-
-Monitor numbers start from 0. Use \-1 for automatic selection.
-.TP
-\fB\-p\fR, \fB\-\-prompt\fR \fI<TEXT>\fR
-Prompt added to the left of the input field
-.TP
 \fB\-\-placeholder\fR \fI<TEXT>\fR
 Placeholder inside the input field
 .TP
-\fB\-\-font\fR \fI<FONT>\fR
-Font or font set (overrides the X resource and default)
-.TP
-\fB\-\-line\-height\fR \fI<N>\fR
-Minimum height of one menu line.
-
-At least 8 pixels.
-.TP
 \fB\-a\fR, \fB\-\-animation\fR \fI<N>\fR
 Animation duration in frames
-.TP
-\fB\-\-normal\-bg\fR \fI<COLOR>\fR
-Normal background color.
-
-Supports #RGB, #RRGGBB and X color names.
-.TP
-\fB\-\-normal\-fg\fR \fI<COLOR>\fR
-Normal foreground color.
-
-Supports #RGB, #RRGGBB and X color names.
-.TP
-\fB\-\-selected\-bg\fR \fI<COLOR>\fR
-Selected background color.
-
-Supports #RGB, #RRGGBB and X color names.
-.TP
-\fB\-\-selected\-fg\fR \fI<COLOR>\fR
-Selected foreground color.
-
-Supports #RGB, #RRGGBB and X color names.
-.TP
-\fB\-\-embed\fR \fI<ID>\fR
-Embedding window id (X11 only)
-.TP
-\fB\-\-border\-width\fR \fI<N>\fR
-Border width.
-
-Adds a border around the menu.
 .TP
 \fB\-\-preselect\fR \fI<N>\fR
 Preselected item index.
@@ -246,6 +217,39 @@ Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 \fB\-V\fR, \fB\-\-version\fR
 Print version
+.SH SUBCOMMANDS
+.SS instantmenu slide
+Slide mode: show a value slider instead of a menu.
+
+Return prints the current value to stdout and exits; Escape exits without printing. Every value change runs --command (if given) with the value appended as its last argument.
+.TP
+\fB\-\-min\fR \fI<N>\fR [default: 0]
+Minimum slider value
+.TP
+\fB\-\-max\fR \fI<N>\fR [default: 100]
+Maximum slider value
+.TP
+\fB\-\-value\fR \fI<N>\fR
+Initial slider value.
+
+Defaults to the middle of the range; clamped into it.
+.TP
+\fB\-\-step\fR \fI<N>\fR
+Small step for left/right
+.TP
+\fB\-\-big\-step\fR \fI<N>\fR
+Large step for up/down.
+
+Defaults to a tenth of the range (at least 5).
+.TP
+\fB\-\-command\fR \fI<CMD>\fR
+Command run on every value change.
+
+Run through the shell with the current value appended as the last argument.
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+
 .SH EXTRA
 KEYBOARD CONTROL:
   Tab          copy the selected item to the input field
@@ -261,7 +265,7 @@ KEYBOARD CONTROL:
   C\-y paste primary  C\-Y paste clipboard
   M\-b word start  M\-f word end  M\-g Home  M\-G End  M\-h Up
   M\-j page down  M\-k page up  M\-l Down  M\-F4 quit
-SLIDE MODE (\-\-slide):
+SLIDE MODE (`slide`):
   Left h       decrease by \-\-step        Right l    increase by \-\-step
   Down j       decrease by \-\-big\-step    Up k       increase by \-\-big\-step
   plus/minus   change by 1               1..9, 0    jump to a ninth of the range

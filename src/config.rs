@@ -44,9 +44,10 @@ pub enum MatchMode {
     Exact,
 }
 
-/// `--slide` settings as given on the command line, before defaults are
-/// applied. `Config::slide` being `Some` is what puts the menu in slide
-/// mode; `resolve` fills in the defaults and rejects empty/inverted ranges.
+/// Slide settings as given on the command line (`instantmenu slide`), before
+/// defaults are applied. `Config::slide` being `Some` is what puts the menu
+/// in slide mode; `resolve` fills in the defaults and rejects
+/// empty/inverted ranges.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlideSettings {
     /// Minimum value (`--min`, default 0).
@@ -200,7 +201,7 @@ pub struct Config {
     pub embed: Option<u32>,
     /* -f; grab keyboard before reading stdin */
     pub fast: bool,
-    /* --slide option; Some(_) = slide mode with these settings */
+    /* `slide` subcommand; Some(_) = slide mode with these settings */
     pub slide: Option<SlideSettings>,
 }
 
