@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.9.2](https://github.com/instantOS/instantMENU/compare/v4.9.1...v4.9.2) - 2026-08-19
+
+### Other
+
+- fix deps
+
 ## [4.9.1](https://github.com/instantOS/instantMENU/compare/HEAD...v4.9.1) - 2026-08-19
 
 ### Fixed

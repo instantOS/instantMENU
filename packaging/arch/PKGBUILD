@@ -1,6 +1,6 @@
 # Maintainer: instantOS <hello@instantos.io>
 pkgname=instantmenu
-pkgver=4.9.1
+pkgver=4.9.2
 pkgrel=1
 pkgdesc="A dynamic menu for X11 and Wayland"
 arch=('x86_64')
