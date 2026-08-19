@@ -1,7 +1,7 @@
 //! Mouse handling: hover selection, button presses and paste.
 
 use super::Menu;
-use crate::backend::{MouseButton, CONTROL_MASK, SHIFT_MASK};
+use crate::backend::MouseButton;
 
 impl Menu {
     /// x offset after the prompt (0 when there is no prompt).
@@ -39,17 +39,14 @@ impl Menu {
 
     /// Column/grid hover selection: hit-test the same cell layout as draw_grid.
     fn hover_columns(&mut self, ev_x: i32, ev_y: i32, x: i32) {
-        let row_height = self.bar_height;
-        let column_width = self.menu_width / self.cfg.columns;
         let start = self.current.unwrap_or(0);
         let end = self.next.unwrap_or(self.matches.len());
         for (i, pos) in (start..end).enumerate() {
-            let check_x = x + (i as i32 / self.cfg.lines) * column_width;
-            let check_y = (i as i32 % self.cfg.lines + 1) * row_height;
-            if ev_y >= check_y
-                && ev_y <= check_y + row_height
-                && ev_x >= check_x
-                && ev_x <= check_x + column_width
+            let (item_x, item_y, column_width) = self.grid_cell_rect(i, x, 0);
+            if ev_y >= item_y
+                && ev_y <= item_y + self.bar_height
+                && ev_x >= item_x
+                && ev_x <= item_x + column_width
             {
                 if self.selected == Some(pos) {
                     return;
@@ -81,17 +78,9 @@ impl Menu {
     }
 
     /// Horizontal list hover selection.
-    fn hover_horizontal(&mut self, ev_x: i32, mut x: i32) {
-        x += self.input_width;
-        let mut arrow_width = self.text_width("<");
-        let start = self.current.unwrap_or(0);
-        let end = self.next.unwrap_or(self.matches.len());
-        for pos in start..end {
-            x += arrow_width;
-            let item_text = self.items[self.matches[pos]].text.clone();
-            let right_arrow_width = self.text_width(">");
-            arrow_width = self.text_width(&item_text).min(self.menu_width - x - right_arrow_width);
-            if ev_x >= x && ev_x <= x + arrow_width {
+    fn hover_horizontal(&mut self, ev_x: i32, x: i32) {
+        for (pos, item_x, item_width) in self.horizontal_item_rects(x) {
+            if ev_x >= item_x && ev_x <= item_x + item_width {
                 if self.selected == Some(pos) {
                     return;
                 }
@@ -116,7 +105,7 @@ impl Menu {
             MouseButton::Left => self.left_click(state, ev_x, ev_y, x, w),
             /* middle-mouse click: paste selection */
             MouseButton::Middle => {
-                self.backend.request_selection(state & SHIFT_MASK != 0);
+                self.request_paste(state);
                 self.draw_menu();
             }
             /* scroll up */
@@ -148,7 +137,7 @@ impl Menu {
         /* left-click on input: clear input,
          * NOTE: if there is no left-arrow the space for < is reserved so
          *       add that to the input width */
-        let _arrow_width = self.text_width("");
+        let command_cell_width = self.command_cell_width();
         let input_hit = (self.cfg.lines <= 0
             && ev_x >= 0
             && ev_x
@@ -160,9 +149,9 @@ impl Menu {
                     })
             || (self.cfg.lines > 0 && ev_y >= y && ev_y <= y + row_height);
         if input_hit {
-            if self.cfg.left_command.is_some() && ev_x < self.text_width("") {
+            if self.cfg.left_command.is_some() && ev_x < command_cell_width {
                 self.trigger_command(0);
-            } else if ev_x > self.menu_width - self.text_width("") {
+            } else if ev_x > self.menu_width - command_cell_width {
                 self.trigger_command(1);
             } else {
                 let cursor = self.cursor as i32;
@@ -181,30 +170,20 @@ impl Menu {
 
     /// left-click on a vertical list item.
     fn vertical_click(&mut self, state: u32) {
-        let item = self.selected_text();
-        if let Some(text) = &item {
-            if text.starts_with('>') {
-                return;
-            }
+        if self.selected_is_comment() {
+            return;
         }
-        self.animate_selection();
-        let out = item.unwrap_or_else(|| self.text.clone());
-        self.println(&out);
-        if state & CONTROL_MASK == 0 {
-            std::process::exit(0);
-        }
-        if let Some(s) = self.selected {
-            self.items[self.matches[s]].already_output = true;
-        }
+        let out = self.selected_text().unwrap_or_else(|| self.text.clone());
+        self.confirm(&out, state);
         self.draw_menu();
     }
 
     /// left-click on the horizontal list: arrows and items.
-    fn horizontal_click(&mut self, state: u32, ev_x: i32, mut x: i32) {
-        x += self.input_width;
-        let mut arrow_width = self.text_width("<");
+    fn horizontal_click(&mut self, state: u32, ev_x: i32, x: i32) {
+        let arrow_width = self.text_width("<");
+        let left_arrow_x = x + self.input_width;
         if self.prev != 0 || self.current.map(|c| c > 0).unwrap_or(false) {
-            if ev_x >= x && ev_x <= x + arrow_width {
+            if ev_x >= left_arrow_x && ev_x <= left_arrow_x + arrow_width {
                 self.selected = self.current;
                 self.current = Some(self.prev);
                 self.calc_offsets();
@@ -212,35 +191,27 @@ impl Menu {
                 return;
             }
         }
-        let start = self.current.unwrap_or(0);
-        let end = self.next.unwrap_or(self.matches.len());
-        for pos in start..end {
-            x += arrow_width;
-            let item_text = self.items[self.matches[pos]].text.clone();
-            let right_arrow_width = self.text_width(">");
-            arrow_width = self.text_width(&item_text).min(self.menu_width - x - right_arrow_width);
-            if ev_x >= x && ev_x <= x + arrow_width {
-                if let Some(text) = self.selected_text() {
-                    if item_text.starts_with('>') && !text.is_empty() {
-                        break;
-                    }
-                }
-                self.animate_selection();
-                self.println(&item_text);
-                if state & CONTROL_MASK == 0 {
-                    std::process::exit(0);
+        for (pos, item_x, item_width) in self.horizontal_item_rects(x) {
+            if ev_x >= item_x && ev_x <= item_x + item_width {
+                let item_text = self.items[self.matches[pos]].text.clone();
+                if item_text.starts_with('>')
+                    && self.selected_text_ref().is_some_and(|t| !t.is_empty())
+                {
+                    break;
                 }
                 self.selected = Some(pos);
-                self.items[self.matches[pos]].already_output = true;
+                self.confirm(&item_text, state);
                 self.draw_menu();
                 return;
             }
         }
         /* left-click on right arrow */
         let right_arrow_width = self.text_width(">");
-        arrow_width = right_arrow_width;
-        x = self.menu_width - arrow_width;
-        if self.next.is_some() && ev_x >= x && ev_x <= x + arrow_width {
+        let right_arrow_x = self.menu_width - right_arrow_width;
+        if self.next.is_some()
+            && ev_x >= right_arrow_x
+            && ev_x <= right_arrow_x + right_arrow_width
+        {
             let next = self.next.unwrap();
             self.selected = Some(next);
             self.current = Some(next);

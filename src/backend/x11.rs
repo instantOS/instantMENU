@@ -14,11 +14,8 @@ use x11rb::xcb_ffi::XCBConnection;
 use xkbcommon::xkb::x11 as xkbx11;
 use xkbcommon::xkb::{self, Keycode, KeyDirection};
 
-use super::{intersect_area, Backend, BackendEvent, MonitorInfo, MouseButton};
+use super::{intersect_area, Backend, BackendEvent, MonitorInfo, MouseButton, XKB_OFFSET};
 use crate::render::{Canvas, Color};
-
-/// X11 keycode -> xkb keycode offset.
-const XKB_OFFSET: u32 = 8;
 
 pub struct X11Backend {
     connection: XCBConnection,

@@ -55,6 +55,53 @@ pub enum ItemCategory {
     Icon,
 }
 
+impl ItemCategory {
+    /// `>`-prefixed items are comments: they can not be selected/activated.
+    pub fn is_comment(self) -> bool {
+        matches!(self, ItemCategory::Comment | ItemCategory::ColoredComment)
+    }
+
+    /// The category an item text's `>`/`>>`/`:` prefix selects, plus the
+    /// scheme its prefix implies (None = plain item; the scheme then depends
+    /// on selection/output state).
+    pub fn from_prefix(text: &str, is_selected: bool) -> (ItemCategory, Option<Scheme>) {
+        let bytes = text.as_bytes();
+        if bytes.first() == Some(&b'>') {
+            if bytes.get(1) == Some(&b'>') {
+                match colored_scheme(bytes.get(2)) {
+                    Some(s) => (ItemCategory::ColoredComment, Some(s)),
+                    None => (ItemCategory::Comment, Some(Scheme::Normal)),
+                }
+            } else {
+                (ItemCategory::Comment, Some(Scheme::Normal))
+            }
+        } else if bytes.first() == Some(&b':') {
+            match colored_scheme(bytes.get(1)) {
+                /* a selected `:c ` item with an unknown color code falls
+                 * back to a plain selected item */
+                Some(s) if is_selected => (ItemCategory::Colored, Some(s)),
+                Some(_) => (ItemCategory::Colored, None),
+                None if is_selected => (ItemCategory::Normal, None),
+                None => (ItemCategory::Colored, None),
+            }
+        } else {
+            (ItemCategory::Normal, None)
+        }
+    }
+}
+
+/// The scheme for a `>>`/`:` color code: r/g/y/h/b.
+fn colored_scheme(code: Option<&u8>) -> Option<Scheme> {
+    match code {
+        Some(b'r') => Some(Scheme::Red),
+        Some(b'g') => Some(Scheme::Green),
+        Some(b'y') => Some(Scheme::Yellow),
+        Some(b'h') => Some(Scheme::Highlight),
+        Some(b'b') => Some(Scheme::Selected),
+        _ => None,
+    }
+}
+
 /// Port of `outputoffset`: how many chars of the item text are skipped when
 /// drawing, by category.
 pub fn output_offset(category: ItemCategory) -> usize {
@@ -86,4 +133,60 @@ impl ColorRole {
             ColorRole::Detail => "detail",
         }
     }
+}
+
+/// Process exit status: 0 = success, 1 = failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitStatus {
+    Success,
+    Failure,
+}
+
+impl ExitStatus {
+    /// The process exit code.
+    pub fn code(self) -> i32 {
+        match self {
+            ExitStatus::Success => 0,
+            ExitStatus::Failure => 1,
+        }
+    }
+
+    /// Exit the process with this status.
+    pub fn exit(self) -> ! {
+        std::process::exit(self.code());
+    }
+}
+
+/// Left or right: the command cell / word side an action targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Left,
+    Right,
+}
+
+/// Movement direction for cursor / word-edge navigation (the +1/-1 steps of
+/// the C `nextrune`/`movewordedge`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Forward,
+    Backward,
+}
+
+impl Direction {
+    /// The +1 (forward) / -1 (backward) char step this direction is.
+    pub fn step(self) -> isize {
+        match self {
+            Direction::Forward => 1,
+            Direction::Backward => -1,
+        }
+    }
+}
+
+/// A text edit: insert a string at the cursor, or delete `n` bytes before
+/// it. The signed-n `insert()` of the C code split into readable forms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditOp<'a> {
+    Insert(&'a str),
+    /// Delete `n` bytes before the cursor (clamped at the text start).
+    Delete(usize),
 }

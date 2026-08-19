@@ -1,7 +1,19 @@
 //! Menu drawing: `draw_item` and `draw_menu`.
 
-use super::Menu;
+use super::{Menu, LEFT_GLYPH, RIGHT_GLYPH};
 use crate::enums::{output_offset, ItemCategory, Scheme};
+
+/// Map a color-prefix byte (`r`/`g`/`y`/`h`/`b`) to its scheme.
+fn color_scheme_for(byte: u8) -> Option<Scheme> {
+    match byte {
+        b'r' => Some(Scheme::Red),
+        b'g' => Some(Scheme::Green),
+        b'y' => Some(Scheme::Yellow),
+        b'h' => Some(Scheme::Highlight),
+        b'b' => Some(Scheme::Selected),
+        _ => None,
+    }
+}
 
 impl Menu {
     /// recalculate_numbers
@@ -86,15 +98,7 @@ impl Menu {
         if bytes.first() == Some(&b'>') {
             if bytes.get(1) == Some(&b'>') {
                 category = ItemCategory::ColoredComment;
-                let scheme = match bytes.get(2) {
-                    Some(b'r') => Some(Scheme::Red),
-                    Some(b'g') => Some(Scheme::Green),
-                    Some(b'y') => Some(Scheme::Yellow),
-                    Some(b'h') => Some(Scheme::Highlight),
-                    Some(b'b') => Some(Scheme::Selected),
-                    _ => None,
-                };
-                match scheme {
+                match bytes.get(2).copied().and_then(color_scheme_for) {
                     Some(s) => self.renderer.set_scheme(s),
                     None => {
                         category = ItemCategory::Comment;
@@ -108,14 +112,13 @@ impl Menu {
         } else if bytes.first() == Some(&b':') {
             category = ItemCategory::Colored;
             if is_selected {
-                let scheme = match bytes.get(1) {
-                    Some(b'r') => Some(Scheme::Red),
-                    Some(b'g') => Some(Scheme::Green),
-                    Some(b'y') => Some(Scheme::Yellow),
-                    Some(b'b') => Some(Scheme::Selected),
-                    _ => None,
-                };
-                match scheme {
+                // the C `:x` branch has no `h` highlight case
+                match bytes
+                    .get(1)
+                    .copied()
+                    .filter(|&b| b != b'h')
+                    .and_then(color_scheme_for)
+                {
                     Some(s) => self.renderer.set_scheme(s),
                     None => {
                         self.renderer.set_scheme(Scheme::Selected);
@@ -141,7 +144,6 @@ impl Menu {
     /// Draw the icon of a `:X ` item; returns the horizontal padding it used.
     fn draw_icon(&mut self, text: &str, is_selected: bool, x: i32, y: i32) -> i32 {
         let temp_padding = self.renderer.font_height * 3;
-        self.cfg.animated = true;
         // draw the icon (the three bytes after the ":X " prefix)
         let end = (3..=6)
             .rev()
@@ -169,7 +171,7 @@ impl Menu {
         let font_height = self.renderer.font_height;
         let mut x = 0;
         let y = 0;
-        let arrow_width = self.text_width("");
+        let arrow_width = self.command_cell_width();
 
         self.update_commented_prompt();
 
@@ -318,23 +320,21 @@ impl Menu {
     fn draw_grid(&mut self, x: i32, y: i32) {
         let start = self.current.unwrap_or(0);
         let end = self.next.unwrap_or(self.matches.len());
-        let column_width = (self.menu_width - x) / self.cfg.columns;
         for (i, pos) in (start..end).enumerate() {
-            let item_x = x + (i as i32 / self.cfg.lines) * column_width;
-            let item_y = y + ((i as i32 % self.cfg.lines) + 1) * self.bar_height;
+            let (item_x, item_y, column_width) = self.grid_cell_rect(i, x, y);
             self.draw_item(pos, item_x, item_y, column_width);
         }
     }
 
     /// Draw the horizontal list of items with the paging arrows.
-    fn draw_horizontal_list(&mut self, mut x: i32) {
-        x += self.input_width;
-        let mut arrow_width = self.text_width("<");
+    fn draw_horizontal_list(&mut self, x: i32) {
+        let left_arrow_x = x + self.input_width;
+        let arrow_width = self.text_width("<");
         if self.current.map(|c| c > 0).unwrap_or(false) {
             self.renderer.set_scheme(Scheme::Normal);
             self.renderer.text(
                 &mut self.canvas,
-                x,
+                left_arrow_x,
                 0,
                 arrow_width,
                 self.bar_height,
@@ -344,19 +344,13 @@ impl Menu {
                 false,
             );
         }
-        x += arrow_width;
 
-        let start = self.current.unwrap_or(0);
-        let end = self.next.unwrap_or(self.matches.len());
-        for pos in start..end {
-            let budget = self.menu_width - x - self.text_width(">") - self.text_width(&self.numbers.clone());
-            let text = self.items[self.matches[pos]].text.clone();
-            let item_width = self.text_width_clamp(&text, budget);
-            x = self.draw_item(pos, x, 0, item_width);
+        for (pos, item_x, item_width) in self.horizontal_item_rects(x) {
+            self.draw_item(pos, item_x, 0, item_width);
         }
 
         if self.next.is_some() {
-            arrow_width = self.text_width(">");
+            let arrow_width = self.text_width(">");
             self.renderer.set_scheme(Scheme::Normal);
             if self.show_numbers {
                 let numbers = self.numbers.clone();
@@ -405,7 +399,7 @@ impl Menu {
                     arrow_width,
                     self.bar_height,
                     self.renderer.horizontal_padding / 2,
-                    "",
+                    LEFT_GLYPH,
                     false,
                     false,
                 );
@@ -419,7 +413,7 @@ impl Menu {
                     arrow_width,
                     self.bar_height,
                     self.renderer.horizontal_padding / 2,
-                    "",
+                    RIGHT_GLYPH,
                     false,
                     false,
                 );

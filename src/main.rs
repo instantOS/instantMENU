@@ -175,6 +175,7 @@ fn apply_values(args: &cli::Args, cfg: &mut Config) -> (Option<String>, Vec<(Sch
     }
     if let Some(a) = args.animation {
         cfg.frame_count = a;
+        cfg.animated = true;
     }
     if let Some(bw) = args.border_width {
         cfg.border_width = bw;

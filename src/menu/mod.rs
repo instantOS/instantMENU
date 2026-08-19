@@ -17,12 +17,17 @@ mod run;
 
 use std::io::Write;
 
-use crate::backend::Backend;
+use crate::backend::{Backend, CONTROL_MASK, SHIFT_MASK};
 use crate::config::Config;
 use crate::render::{Canvas, Renderer};
 
 /// sizeof text in the C version (BUFSIZ) minus the terminator.
 const TEXT_MAX: usize = 8192 - 1;
+
+/// FontAwesome glyphs drawn in the left/right command cells (U+F0A0 / U+F0A1
+/// in the C version).
+const LEFT_GLYPH: &str = "\u{f0a0}";
+const RIGHT_GLYPH: &str = "\u{f0a1}";
 
 pub struct Menu {
     pub cfg: Config,
@@ -114,8 +119,95 @@ impl Menu {
     /* ── helpers over the matches list ─────────────────────────────────── */
 
     fn selected_text(&self) -> Option<String> {
-        self.selected
-            .map(|pos| self.items[self.matches[pos]].text.clone())
+        self.selected_text_ref().map(str::to_owned)
+    }
+
+    /// Borrowed view of the selected item's text.
+    fn selected_text_ref(&self) -> Option<&str> {
+        self.selected.map(|pos| self.items[self.matches[pos]].text.as_str())
+    }
+
+    /// The selected item is a non-selectable comment (starts with '>').
+    fn selected_is_comment(&self) -> bool {
+        self.selected_text_ref().is_some_and(|t| t.starts_with('>'))
+    }
+
+    /// Move the selection one item forward, paging when it crosses `next`.
+    fn select_next(&mut self) {
+        if let Some(s) = self.selected {
+            if s + 1 < self.matches.len() {
+                let next_selection = s + 1;
+                self.selected = Some(next_selection);
+                if Some(next_selection) == self.next {
+                    self.current = self.next;
+                    self.calc_offsets();
+                }
+            }
+        }
+    }
+
+    /// Move the selection one item backward, paging when it crosses `prev`.
+    fn select_prev(&mut self) {
+        if let Some(s) = self.selected {
+            if s > 0 {
+                let next_selection = s - 1;
+                if Some(next_selection + 1) == self.current {
+                    self.current = Some(self.prev);
+                    self.calc_offsets();
+                }
+                self.selected = Some(next_selection);
+            }
+        }
+    }
+
+    /// Confirm the selection: animate, print, exit unless Ctrl is held, and
+    /// mark the item as already output.
+    fn confirm(&mut self, out: &str, state: u32) {
+        self.animate_selection();
+        self.println(out);
+        if state & CONTROL_MASK == 0 {
+            self.finish(0);
+        }
+        if let Some(pos) = self.selected {
+            self.items[self.matches[pos]].already_output = true;
+        }
+    }
+
+    /// Ask the backend for the primary selection (clipboard when Shift is
+    /// held) — shared by Ctrl-v/Ctrl-y and middle-click paste.
+    fn request_paste(&mut self, state: u32) {
+        self.backend.request_selection(state & SHIFT_MASK != 0);
+    }
+
+    /// Width reserved for the left/right command cells (C's `arrowwidth`).
+    fn command_cell_width(&mut self) -> i32 {
+        self.text_width(RIGHT_GLYPH)
+    }
+
+    /// Visible horizontal-list items as `(match_pos, x, width)` rects. The
+    /// single source of truth for drawing and hit-testing the horizontal list.
+    fn horizontal_item_rects(&mut self, x: i32) -> Vec<(usize, i32, i32)> {
+        let start = self.current.unwrap_or(0);
+        let end = self.next.unwrap_or(self.matches.len());
+        let numbers = self.numbers.clone();
+        let mut x = x + self.input_width + self.text_width("<");
+        let mut rects = Vec::with_capacity(end.saturating_sub(start));
+        for pos in start..end {
+            let text = self.items[self.matches[pos]].text.clone();
+            let budget = self.menu_width - x - self.text_width(">") - self.text_width(&numbers);
+            let width = self.text_width_clamp(&text, budget);
+            rects.push((pos, x, width));
+            x += width;
+        }
+        rects
+    }
+
+    /// Grid cell rect for the i-th visible item (shared by draw + hover).
+    fn grid_cell_rect(&self, i: usize, x: i32, y: i32) -> (i32, i32, i32) {
+        let column_width = (self.menu_width - x) / self.cfg.columns;
+        let cell_x = x + (i as i32 / self.cfg.lines) * column_width;
+        let cell_y = y + ((i as i32 % self.cfg.lines) + 1) * self.bar_height;
+        (cell_x, cell_y, column_width)
     }
 
     /// TEXTW macro

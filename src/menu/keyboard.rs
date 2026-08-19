@@ -11,15 +11,7 @@ impl Menu {
     fn select_number(&mut self, number: usize, state: u32) {
         self.selected = self.current;
         for _ in 0..number {
-            if let Some(s) = self.selected {
-                if s + 1 < self.matches.len() {
-                    self.selected = Some(s + 1);
-                    if self.selected == self.next {
-                        self.current = self.next;
-                        self.calc_offsets();
-                    }
-                }
-            }
+            self.select_next();
         }
         let state = state ^ CONTROL_MASK;
         self.handle_return(state);
@@ -29,30 +21,20 @@ impl Menu {
     /// remaps.
     fn handle_return(&mut self, state: u32) {
         // non-selectable comment
-        if let Some(text) = self.selected_text() {
-            if text.starts_with('>') {
-                return;
-            }
+        if self.selected_is_comment() {
+            return;
         }
-        self.animate_selection();
 
         // puts((sel && !(state & ShiftMask & (!reject_no_match))) ? sel->text : text):
         // with reject_no_match off, shift+return prints the raw input instead
         // of the selection.
         let shift_suppresses = (state & SHIFT_MASK != 0) && !self.cfg.reject_no_match;
-        let print_selection = self.selected_text().is_some() && !shift_suppresses;
-        let out = if print_selection {
+        let out = if self.selected_text().is_some() && !shift_suppresses {
             self.selected_text().unwrap_or_default()
         } else {
             self.text.clone()
         };
-        self.println(&out);
-        if state & CONTROL_MASK == 0 {
-            self.finish(0);
-        }
-        if let Some(pos) = self.selected {
-            self.items[self.matches[pos]].already_output = true;
-        }
+        self.confirm(&out, state);
     }
 
     /// key_release — alt-tab release handling.
@@ -70,22 +52,11 @@ impl Menu {
             if state & SHIFT_MASK != 0 {
                 return;
             }
-            if let Some(text) = self.selected_text() {
-                if text.starts_with('>') {
-                    return;
-                }
+            if self.selected_is_comment() {
+                return;
             }
-            let out = match self.selected_text() {
-                Some(t) => t,
-                None => self.text.clone(),
-            };
-            self.println(&out);
-            if state & CONTROL_MASK == 0 {
-                self.finish(0);
-            }
-            if let Some(pos) = self.selected {
-                self.items[self.matches[pos]].already_output = true;
-            }
+            let out = self.selected_text().unwrap_or_else(|| self.text.clone());
+            self.confirm(&out, state);
         }
     }
 
@@ -149,7 +120,7 @@ impl Menu {
             }
             s if s == ks::KEY_v => {
                 /* paste clipboard */
-                self.backend.request_selection(state & SHIFT_MASK != 0);
+                self.request_paste(state);
                 self.draw_menu();
                 return None;
             }
@@ -168,7 +139,7 @@ impl Menu {
             }
             s if s == ks::KEY_y || s == ks::KEY_Y => {
                 /* paste selection */
-                self.backend.request_selection(state & SHIFT_MASK != 0);
+                self.request_paste(state);
                 return None;
             }
             s if s == ks::KEY_Left || s == ks::KEY_KP_Left => {
@@ -235,13 +206,8 @@ impl Menu {
                     // wrap to the last item
                     self.selected = Some(self.matches.len() - 1);
                     self.calc_offsets();
-                } else if s > 0 {
-                    let next_selection = s - 1;
-                    self.selected = Some(next_selection);
-                    if Some(next_selection + 1) == self.current {
-                        self.current = Some(self.prev);
-                        self.calc_offsets();
-                    }
+                } else {
+                    self.select_prev();
                 }
             }
         }
@@ -284,13 +250,8 @@ impl Menu {
                         self.selected = Some(0);
                         self.current = Some(0);
                         self.calc_offsets();
-                    } else if s + 1 < self.matches.len() {
-                        let next_selection = s + 1;
-                        self.selected = Some(next_selection);
-                        if Some(next_selection) == self.next {
-                            self.current = self.next;
-                            self.calc_offsets();
-                        }
+                    } else {
+                        self.select_next();
                     }
                 }
             }
@@ -515,29 +476,11 @@ impl Menu {
 
     /// Up navigation shared by XK_Up and the XK_Left fallthrough.
     fn nav_up(&mut self) {
-        if let Some(s) = self.selected {
-            if s > 0 {
-                let next_selection = s - 1;
-                if Some(next_selection + 1) == self.current {
-                    self.current = Some(self.prev);
-                    self.calc_offsets();
-                }
-                self.selected = Some(next_selection);
-            }
-        }
+        self.select_prev();
     }
 
     /// Down navigation shared by XK_Down and the XK_Right fallthrough.
     fn nav_down(&mut self) {
-        if let Some(s) = self.selected {
-            if s + 1 < self.matches.len() {
-                let next_selection = s + 1;
-                self.selected = Some(next_selection);
-                if Some(next_selection) == self.next {
-                    self.current = self.next;
-                    self.calc_offsets();
-                }
-            }
-        }
+        self.select_next();
     }
 }

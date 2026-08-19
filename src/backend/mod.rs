@@ -142,6 +142,9 @@ pub const MOD3_MASK: u32 = 1 << 5;
 pub const MOD4_MASK: u32 = 1 << 6;
 pub const MOD5_MASK: u32 = 1 << 7;
 
+/// Offset added to X11/evdev keycodes to get an xkb keycode.
+pub const XKB_OFFSET: u32 = 8;
+
 /// Open the backend: Wayland when WAYLAND_DISPLAY is set, else X11.
 /// `embed` is the `-W` window id (X11 only; ignored on Wayland).
 pub fn open(embed: Option<u32>) -> Result<Box<dyn Backend>, String> {

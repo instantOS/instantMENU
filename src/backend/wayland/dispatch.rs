@@ -18,9 +18,9 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 };
 use xkbcommon::xkb::{Keycode, KeyDirection};
 
-use crate::backend::MouseButton;
+use crate::backend::{MouseButton, XKB_OFFSET};
 use super::selection::{load_keymap, x11_mask};
-use super::{BackendEvent, EventState, MonitorInfo, OfferTracker, OutputEntry, XKB_OFFSET};
+use super::{BackendEvent, EventState, MonitorInfo, OfferTracker, OutputEntry};
 
 macro_rules! noop_dispatch {
     ($($ty:ty),* $(,)?) => {

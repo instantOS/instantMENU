@@ -24,15 +24,7 @@ impl Menu {
 
             if preselected != 0 {
                 for _ in 0..preselected {
-                    if let Some(s) = self.selected {
-                        if s + 1 < self.matches.len() {
-                            self.selected = Some(s + 1);
-                            if self.selected == self.next {
-                                self.current = self.next;
-                                self.calc_offsets();
-                            }
-                        }
-                    }
+                    self.select_next();
                 }
                 self.draw_menu();
                 preselected = 0;

@@ -31,9 +31,6 @@ use selection::pump_offer;
 use super::{Backend, BackendEvent, MonitorInfo};
 use crate::render::{Canvas, Color};
 
-/// xkb keycode = evdev keycode + 8; wayland delivers evdev keycodes.
-const XKB_OFFSET: u32 = 8;
-
 pub struct WaylandBackend {
     connection: Connection,
     queue: EventQueue<EventState>,
