@@ -455,7 +455,7 @@ pub enum Cmd {
 }
 
 /// Options for [`Cmd::Slide`] — the value slider.
-#[derive(clap::Args, Debug)]
+#[derive(clap::Args, Debug, Clone)]
 pub struct SlideArgs {
     /// Minimum slider value.
     #[arg(
@@ -502,9 +502,20 @@ pub struct SlideArgs {
     /// Command run on every value change.
     ///
     /// Run through the shell with the current value appended as the last
-    /// argument.
-    #[arg(long, value_name = "CMD")]
+    /// argument. Can be given as a positional argument or via --command.
+    #[arg(value_name = "COMMAND")]
     pub command: Option<String>,
+
+    /// Command run on every value change (flag form of `COMMAND`).
+    #[arg(long = "command", value_name = "CMD", conflicts_with = "command")]
+    pub command_flag: Option<String>,
+}
+
+impl SlideArgs {
+    /// Return the command from either the positional argument or the `--command` flag.
+    pub fn resolved_command(&self) -> Option<String> {
+        self.command.clone().or_else(|| self.command_flag.clone())
+    }
 }
 
 #[cfg(test)]
@@ -690,7 +701,7 @@ mod tests {
         assert_eq!(s.max, 100);
         assert_eq!(s.value, None);
 
-        /* shared flags can appear before or after the subcommand */
+        /* positional command */
         let a = Args::try_parse_from([
             "instantmenu",
             "-p",
@@ -706,7 +717,6 @@ mod tests {
             "2",
             "--big-step",
             "10",
-            "--command",
             "brightnessctl set",
         ])
         .unwrap();
@@ -720,6 +730,21 @@ mod tests {
         assert_eq!(s.step, Some(2));
         assert_eq!(s.big_step, Some(10));
         assert_eq!(s.command.as_deref(), Some("brightnessctl set"));
+        assert_eq!(s.resolved_command().as_deref(), Some("brightnessctl set"));
+
+        /* --command flag compatibility */
+        let a = Args::try_parse_from(["instantmenu", "slide", "--command", "brightnessctl set"])
+            .unwrap();
+        let Some(Cmd::Slide(s)) = a.subcommand.as_ref() else {
+            panic!("expected the slide subcommand");
+        };
+        assert_eq!(s.command_flag.as_deref(), Some("brightnessctl set"));
+        assert_eq!(s.resolved_command().as_deref(), Some("brightnessctl set"));
+
+        /* positional and flag cannot both be passed */
+        assert!(
+            Args::try_parse_from(["instantmenu", "slide", "cmd1", "--command", "cmd2",]).is_err()
+        );
 
         /* flags after the subcommand also work */
         let a = Args::try_parse_from([
@@ -733,6 +758,7 @@ mod tests {
             "0",
             "--max",
             "100",
+            "pamixer --set-volume",
         ])
         .unwrap();
         assert_eq!(a.window.prompt.as_deref(), Some("Volume"));
@@ -742,6 +768,10 @@ mod tests {
         };
         assert_eq!(s.min, 0);
         assert_eq!(s.max, 100);
+        assert_eq!(
+            s.resolved_command().as_deref(),
+            Some("pamixer --set-volume")
+        );
     }
 
     #[test]

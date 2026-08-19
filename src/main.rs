@@ -232,7 +232,7 @@ fn apply_values(
             value: s.value,
             step: s.step,
             big_step: s.big_step,
-            command: s.command.clone(),
+            command: s.resolved_command(),
         });
     }
 

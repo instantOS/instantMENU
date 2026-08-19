@@ -52,7 +52,7 @@ fn render(cmd: &clap::Command) -> io::Result<String> {
             .collect();
 
         if !specific_args.is_empty() {
-            let mut opts_cmd = clap::Command::new("slide");
+            let mut opts_cmd = clap::Command::new("slide").disable_help_flag(true);
             for arg in specific_args {
                 opts_cmd = opts_cmd.arg(arg);
             }

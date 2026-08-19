@@ -243,12 +243,12 @@ Large step for up/down.
 Defaults to a tenth of the range (at least 5).
 .TP
 \fB\-\-command\fR \fI<CMD>\fR
+Command run on every value change (flag form of `COMMAND`)
+.TP
+[\fICOMMAND\fR]
 Command run on every value change.
 
-Run through the shell with the current value appended as the last argument.
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
+Run through the shell with the current value appended as the last argument. Can be given as a positional argument or via \-\-command.
 
 .SH EXTRA
 KEYBOARD CONTROL:
