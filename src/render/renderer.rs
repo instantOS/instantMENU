@@ -1,7 +1,7 @@
 //! The shared drawing context: fontset + color schemes + canvas, port of
 //! `Drw` plus the scheme state of instantmenu.c.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use cosmic_text::{
     Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics, Shaping, SwashCache, Wrap,
@@ -12,6 +12,7 @@ use crate::enums::Scheme;
 use super::canvas::Canvas;
 use super::color::{scheme_from_strings, Color, SchemeColors, SchemeStrings};
 use super::font::{parse_font_name, primary_font_height, resolve_family, FontSpec};
+use super::fontconfig;
 
 /// The shared drawing context: fontset + color schemes + canvas, port of
 /// `Drw` plus the scheme state of instantmenu.c.
@@ -35,6 +36,9 @@ pub struct Renderer {
 
     // Shaped text is reusable for both measurement and drawing.
     layout_cache: HashMap<String, TextLayout>,
+    // Characters whose fallback coverage has already been checked. This lets
+    // pasted text extend the small startup database without repeated queries.
+    checked_chars: HashSet<char>,
 }
 
 struct TextLayout {
@@ -45,9 +49,16 @@ struct TextLayout {
 impl Renderer {
     /// Create the renderer and load the fontset. Mirrors `drw_fontset_create`
     /// + `drw_scm_create` + `lrpad = drw->fonts->h`.
-    pub fn new(fonts: &[String], scheme_strings: &[SchemeStrings; 9]) -> Self {
-        let mut font_system = FontSystem::new();
+    pub fn new(
+        fonts: &[String],
+        scheme_strings: &[SchemeStrings; 9],
+        required_chars: &HashSet<char>,
+    ) -> Self {
         let specs: Vec<FontSpec> = fonts.iter().map(|f| parse_font_name(f)).collect();
+        let mut font_system = match fontconfig::database_for(&specs, required_chars) {
+            Some(db) => FontSystem::new_with_locale_and_db(detect_locale(), db),
+            None => FontSystem::new(),
+        };
 
         // Resolve each family against the system font database, loosely
         // (fontconfig-style), falling back to the raw name.
@@ -59,6 +70,8 @@ impl Renderer {
 
         let font_height = primary_font_height(&mut font_system, &families, specs[0].pixel_size);
 
+        let mut checked_chars = required_chars.clone();
+        checked_chars.extend(' '..='~');
         let mut renderer = Renderer {
             schemes: scheme_strings.iter().map(scheme_from_strings).collect(),
             swash_cache: SwashCache::new(),
@@ -70,6 +83,7 @@ impl Renderer {
             scheme: SchemeColors::default(),
             frame_background: None,
             layout_cache: HashMap::new(),
+            checked_chars,
         };
         renderer.scheme = renderer.schemes.first().copied().unwrap_or_default();
         renderer
@@ -136,6 +150,14 @@ impl Renderer {
     }
 
     fn make_buffer(&mut self, text: &str, max_width: Option<f32>) -> Buffer {
+        let new_chars: HashSet<char> = text
+            .chars()
+            .filter(|ch| !self.checked_chars.contains(ch))
+            .collect();
+        if !new_chars.is_empty() {
+            fontconfig::add_fallbacks(self.font_system.db_mut(), &new_chars);
+            self.checked_chars.extend(new_chars);
+        }
         let pixel_size = self.fonts[0].pixel_size;
         let metrics = Metrics::new(pixel_size, self.font_height as f32);
         let mut buffer = Buffer::new(&mut self.font_system, metrics);
@@ -182,7 +204,7 @@ impl Renderer {
             };
             spans.push((&text[start..], Attrs::new().family(Family::Name(family))));
         }
-        buffer.set_rich_text(spans, &default_attrs, Shaping::Basic, None);
+        buffer.set_rich_text(spans, &default_attrs, Shaping::Advanced, None);
     }
 
     fn buffer_width(buffer: &Buffer) -> i32 {
@@ -316,6 +338,22 @@ impl Renderer {
         }
         self.layout_cache.insert(text.to_owned(), layout);
     }
+}
+
+fn detect_locale() -> String {
+    std::env::var("LC_ALL")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| std::env::var("LC_CTYPE").ok().filter(|value| !value.is_empty()))
+        .or_else(|| std::env::var("LANG").ok().filter(|value| !value.is_empty()))
+        .map(|value| {
+            value
+                .split('.')
+                .next()
+                .unwrap_or("en_US")
+                .replace('_', "-")
+        })
+        .unwrap_or_else(|| "en-US".to_string())
 }
 
 #[derive(PartialEq, Clone, Copy)]

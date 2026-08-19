@@ -2,6 +2,19 @@
 
 # smart application launcher that remembers often used apps
 # define $1 to run in terminal
+# `--toast TENTHS` makes the launcher noninteractive for startup benchmarks.
+TOAST_ARGS=()
+TOAST_DMENU=""
+if [ "$1" = "--toast" ]; then
+    if [[ ! "$2" =~ ^[0-9]+$ ]] || [ "$2" -eq 0 ]; then
+        echo "usage: instantmenu_smartrun [--toast TENTHS] [desktop|terminal] [initial text]" >&2
+        exit 2
+    fi
+    TOAST_ARGS=(--toast "$2")
+    TOAST_DMENU=" --toast $2"
+    shift 2
+fi
+
 if [ -n "$2" ] || [ -z "$1" ]; then
     LIST="$HOME/.cache/instantmenuhist"
     RARGS="terminal"
@@ -9,7 +22,7 @@ if [ -n "$2" ] || [ -z "$1" ]; then
 else
     if [ "$1" = "desktop" ]; then
         shift 1
-        i3-dmenu-desktop --dmenu='instantmenu -p desktop --left-cmd "instantmenu_smartrun terminal" --right-cmd "instantmenu_smartrun" --search-text "search apps" -l 10 --position centered -i --width -1 --line-height -1 --border-width 4'
+        i3-dmenu-desktop --dmenu="instantmenu -p desktop --left-cmd \"instantmenu_smartrun terminal\" --right-cmd \"instantmenu_smartrun\" --search-text \"search apps\" -l 10 --position centered -i --width 900 --line-height -1 --border-width 4${TOAST_DMENU}"
         exit
     fi
     LIST="$HOME/.cache/instanttermmenuhist"
@@ -25,7 +38,7 @@ if [ -n "$2" ]; then
         instantmenu_path | sort -u
     } | perl -nE '$seen{$_}++ or print' |
         instantmenu --right-cmd "instantmenu_smartrun $RARGS" --left-cmd "instantmenu_smartrun $LARGS" \
-            -p "${1}" -i --fast --search-text "search apps" -l 10 --position centered --width -1 --line-height -1 --border-width 4 --initial-text "$2")
+            -p "${1}" -i --fast --search-text "search apps" -l 10 --position centered --width 900 --line-height -1 --border-width 4 --initial-text "$2" "${TOAST_ARGS[@]}")
 else
 
     # read history and path
@@ -34,7 +47,7 @@ else
         instantmenu_path | sort -u
     } | perl -nE '$seen{$_}++ or print' |
         instantmenu --right-cmd "instantmenu_smartrun $RARGS" --left-cmd "instantmenu_smartrun $LARGS" \
-            -p "${1}" -i --fast --search-text "search apps" -l 10 --position centered --width -1 --line-height -1 --border-width 4)
+            -p "${1}" -i --fast --search-text "search apps" -l 10 --position centered --width 900 --line-height -1 --border-width 4 "${TOAST_ARGS[@]}")
 fi
 
 # check if the application doesn't exist (indicated by exit code 1 and short runtime)

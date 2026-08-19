@@ -9,7 +9,6 @@ impl Menu {
     /// run — port of the event loop in run().
     pub fn run(&mut self) {
         if self.cfg.toast != 0 {
-            self.draw_menu();
             let toast = self.cfg.toast;
             std::thread::sleep(Duration::from_micros(toast as u64 * 100_000));
             std::process::exit(0);

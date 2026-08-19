@@ -103,11 +103,10 @@ impl Menu {
     /// read_stdin — getline-per-line semantics: split on '\n' (a final chunk
     /// without trailing newline is still an item), then strip ONE trailing
     /// '\n' or '\t' byte and cut at the first NUL like strdup would.
-    pub fn read_stdin(&mut self) {
-        if self.cfg.password || self.cfg.input_only {
-            self.input_width = 0;
-            self.cfg.lines = 0;
-            return;
+    pub fn read_stdin(cfg: &mut crate::config::Config) -> Vec<Item> {
+        if cfg.password || cfg.input_only {
+            cfg.lines = 0;
+            return Vec::new();
         }
 
         /* read each line from stdin and add it to the item list */
@@ -115,6 +114,7 @@ impl Menu {
         if std::io::stdin().read_to_end(&mut input).is_err() {
             /* keep whatever we got, like getline erroring mid-way */
         }
+        let mut items = Vec::new();
         let mut count: i32 = 0;
         let input = input.strip_suffix(b"\n").unwrap_or(&input);
         for raw in input.split(|&b| b == b'\n').filter(|_| !input.is_empty()) {
@@ -126,21 +126,21 @@ impl Menu {
                 count += 1;
                 continue;
             };
-            self.items.push(Item {
+            items.push(Item {
                 text: line.to_owned(),
                 already_output: false,
             });
             count += 1;
         }
 
-        let columns = self.cfg.columns;
-        let lines = self.cfg.lines;
+        let columns = cfg.columns;
+        let lines = cfg.lines;
         let i = count;
-        self.cfg.lines = lines.min(i / columns + (i % columns != 0) as i32);
-        if columns != 1 && self.cfg.lines != 0 {
-            self.cfg.columns =
-                (i / self.cfg.lines + (i % self.cfg.lines != 0) as i32).min(columns);
+        cfg.lines = lines.min(i / columns + (i % columns != 0) as i32);
+        if columns != 1 && cfg.lines != 0 {
+            cfg.columns = (i / cfg.lines + (i % cfg.lines != 0) as i32).min(columns);
         }
+        items
     }
 
     /// `-it` — initial input text, applied with reject_no_match temporarily

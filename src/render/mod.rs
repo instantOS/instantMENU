@@ -7,6 +7,7 @@
 mod canvas;
 mod color;
 mod font;
+mod fontconfig;
 mod renderer;
 
 pub use canvas::Canvas;

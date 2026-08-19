@@ -25,7 +25,7 @@ fn main() {
     let (temp_font, color_temp) = apply_values(&args, &mut cfg);
 
     /* open backend (Wayland preferred when WAYLAND_DISPLAY is set) */
-    let backend = backend::open(cfg.embed).unwrap_or_else(|e| {
+    let mut backend = backend::open(cfg.embed).unwrap_or_else(|e| {
         eprintln!("instantmenu: {e}");
         std::process::exit(1);
     });
@@ -41,8 +41,35 @@ fn main() {
         *cfg.colors[scheme as usize].role_mut(role) = value;
     }
 
+    /* Read candidates before constructing the font database so only fallback
+     * fonts needed by the actual corpus have to be loaded. */
+    let grab = cfg.toast == 0 && !cfg.no_grab;
+    let fast = cfg.fast && !std::io::stdin().is_terminal();
+    if fast && grab {
+        backend.grab_keyboard();
+    }
+    let items = Menu::read_stdin(&mut cfg);
+    if !fast && grab {
+        backend.grab_keyboard();
+    }
+
+    let mut required_chars = std::collections::HashSet::new();
+    for item in &items {
+        required_chars.extend(item.text.chars());
+    }
+    for text in [
+        args.initial_text.as_deref(),
+        cfg.prompt.as_deref(),
+        cfg.search_text.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        required_chars.extend(text.chars());
+    }
+
     /* drw_fontset_create + lrpad = drw->fonts->h */
-    let renderer = Renderer::new(&cfg.fonts, &cfg.colors);
+    let renderer = Renderer::new(&cfg.fonts, &cfg.colors, &required_chars);
 
     if cfg.full_height || cfg.line_height == -1 {
         cfg.line_height = (renderer.font_height as f32 * 2.5) as i32;
@@ -57,22 +84,7 @@ fn main() {
     if let Some(t) = args.initial_text.clone() {
         menu.initial_text(&t);
     }
-
-    /* fast && !isatty(0): grab before reading stdin so the menu is snappy on
-     * slow stdin producers */
-    let grab = menu.cfg.toast == 0 && !menu.cfg.no_grab;
-    let fast = menu.cfg.fast && !std::io::stdin().is_terminal();
-    if fast {
-        if grab {
-            menu.backend.grab_keyboard();
-        }
-        menu.read_stdin();
-    } else {
-        menu.read_stdin();
-        if grab {
-            menu.backend.grab_keyboard();
-        }
-    }
+    menu.items = items;
 
     /* negative -w: use the wider of |width| and the computed item width */
     apply_negative_width(&mut menu);
@@ -239,6 +251,14 @@ fn apply_resources(backend: &dyn backend::Backend, cfg: &mut Config) {
 /// negative `-w`: use the wider of |width| and the computed item width.
 fn apply_negative_width(menu: &mut Menu) {
     if menu.cfg.width <= -1 {
+        const AUTO_WIDTH_WARNING_ITEMS: usize = 256;
+        if menu.items.len() >= AUTO_WIDTH_WARNING_ITEMS {
+            eprintln!(
+                "instantmenu: warning: --width {} requires measuring all {} items; use a positive width for large lists",
+                menu.cfg.width,
+                menu.items.len()
+            );
+        }
         let prompt_text = menu.cfg.prompt.clone();
         let prompt_width = match &prompt_text {
             Some(p) => menu.text_width(p),
