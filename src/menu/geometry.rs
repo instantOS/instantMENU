@@ -101,6 +101,14 @@ impl Menu {
         }
     }
 
+    /// Content-based width: widest item text plus the prompt, floored at
+    /// [`Config::min_width`] and capped at `cap` (root or parent width).
+    fn content_width(&mut self, prompt_width: i32, cap: i32) -> i32 {
+        (self.max_text_width() + prompt_width)
+            .max(self.cfg.min_width)
+            .min(cap)
+    }
+
     /// Geometry on a selected monitor: follow the cursor, or sit at an
     /// anchor with a pixel nudge.
     fn monitor_geometry(&mut self, monitor: Rect, root: Size, width: i32, layout: &mut Layout) {
@@ -110,10 +118,7 @@ impl Menu {
             } else {
                 // MIN(MAX(max_text_width() + prompt_width, min_width), wa.width);
                 // `wa` still holds the root attributes here in the C code.
-                let max_width = (self.max_text_width() + layout.prompt_width)
-                    .max(self.cfg.min_width)
-                    .min(root.w);
-                layout.menu_width = max_width;
+                layout.menu_width = self.content_width(layout.prompt_width, root.w);
             }
             if let Some(pointer) = self.backend.pointer_position() {
                 let mut x = pointer.x;
@@ -137,6 +142,8 @@ impl Menu {
         }
 
         if self.cfg.position == Position::Center {
+            // `center` is a near-full-width popup, not content-sized, so it
+            // does not use `min_width` (unlike the follow-cursor/embed paths).
             layout.menu_width = if width != 0 && width < monitor.w {
                 width
             } else {
@@ -191,17 +198,12 @@ impl Menu {
                 layout.x = x;
                 layout.y = y;
             }
-            let max_width = (self.max_text_width() + layout.prompt_width)
-                .max(self.cfg.min_width)
-                .min(parent.w);
-            layout.menu_width = max_width;
+            layout.menu_width = self.content_width(layout.prompt_width, parent.w);
             return Ok(());
         }
 
         layout.menu_width = if self.cfg.position == Position::Center {
-            (self.max_text_width() + layout.prompt_width)
-                .max(self.cfg.min_width)
-                .min(parent.w)
+            self.content_width(layout.prompt_width, parent.w)
         } else if width > 0 && width < parent.w {
             width
         } else {

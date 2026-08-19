@@ -8,7 +8,8 @@ use super::matcher::Item;
 use super::transition::Transition;
 use super::Menu;
 use crate::backend::{
-    Backend, BackendEvent, MonitorInfo, MouseButton, CONTROL_MASK, MOD1_MASK, MOD4_MASK, SHIFT_MASK,
+    Backend, BackendEvent, EventPoll, MonitorInfo, MouseButton, CONTROL_MASK, MOD1_MASK, MOD4_MASK,
+    SHIFT_MASK,
 };
 use crate::config::Config;
 use crate::enums::ExitStatus;
@@ -17,6 +18,7 @@ use crate::render::{Canvas, Color, Renderer};
 use std::collections::{HashSet, VecDeque};
 use std::io::Write;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use xkbcommon::xkb::keysyms as ks;
 
 /* ── stub backend ──────────────────────────────────────────────────────── */
@@ -62,8 +64,16 @@ impl Backend for StubBackend {
     fn present(&mut self, _canvas: &Canvas) {
         self.state.lock().unwrap().presents += 1;
     }
-    fn next_event(&mut self) -> Option<BackendEvent> {
-        self.feed.lock().unwrap().pop_front()
+    fn poll_event(&mut self, timeout: Option<Duration>) -> EventPoll {
+        if let Some(ev) = self.feed.lock().unwrap().pop_front() {
+            return EventPoll::Event(ev);
+        }
+        if let Some(timeout) = timeout {
+            std::thread::sleep(timeout);
+            EventPoll::Timeout
+        } else {
+            EventPoll::Closed
+        }
     }
     fn request_selection(&mut self, clipboard: bool) {
         self.state
@@ -536,6 +546,29 @@ fn run_toast_times_out_with_success() {
     let (mut menu, stub, _out) = menu_with(cfg, &["alpha"]);
     stub.key(ks::KEY_Escape, 0, "");
     assert_eq!(menu.run(), ExitStatus::Success);
+}
+
+#[test]
+fn run_toast_re_presents_on_expose() {
+    let cfg = Config {
+        toast: 1,
+        ..Config::default()
+    };
+    let (mut menu, stub, _out) = menu_with(cfg, &["alpha"]);
+    stub.feed.lock().unwrap().push_back(BackendEvent::Expose);
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert!(stub.state().presents >= 1);
+}
+
+#[test]
+fn run_toast_fails_on_destroyed() {
+    let cfg = Config {
+        toast: 10,
+        ..Config::default()
+    };
+    let (mut menu, stub, _out) = menu_with(cfg, &["alpha"]);
+    stub.feed.lock().unwrap().push_back(BackendEvent::Destroyed);
+    assert_eq!(menu.run(), ExitStatus::Failure);
 }
 
 #[test]

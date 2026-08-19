@@ -1,9 +1,9 @@
 //! The menu event loop (port of `run()`).
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::Menu;
-use crate::backend::BackendEvent;
+use crate::backend::{BackendEvent, EventPoll};
 use crate::enums::ExitStatus;
 
 impl Menu {
@@ -12,8 +12,25 @@ impl Menu {
     pub fn run(&mut self) -> ExitStatus {
         if self.cfg.toast != 0 {
             let toast = self.cfg.toast;
-            std::thread::sleep(Duration::from_micros(toast as u64 * 100_000));
-            return ExitStatus::Success;
+            let deadline = Instant::now() + Duration::from_micros(toast as u64 * 100_000);
+            loop {
+                let now = Instant::now();
+                if now >= deadline {
+                    return ExitStatus::Success;
+                }
+                let remaining = deadline - now;
+                match self.backend.poll_event(Some(remaining)) {
+                    EventPoll::Event(BackendEvent::Destroyed) => return ExitStatus::Failure,
+                    EventPoll::Event(BackendEvent::Expose) => {
+                        self.backend.present(&self.canvas);
+                    }
+                    EventPoll::Event(_) => {
+                        // Toast mode ignores all user input
+                    }
+                    EventPoll::Timeout => return ExitStatus::Success,
+                    EventPoll::Closed => return ExitStatus::Failure,
+                }
+            }
         }
 
         let mut last_time: u32 = 0;

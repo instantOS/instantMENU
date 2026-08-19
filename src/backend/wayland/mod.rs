@@ -25,7 +25,7 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 use xkbcommon::xkb;
 
-use super::{Backend, BackendEvent, MonitorInfo};
+use super::{Backend, BackendEvent, EventPoll, MonitorInfo};
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
 use selection::pump_offer;
@@ -593,17 +593,30 @@ impl Backend for WaylandBackend {
         }
     }
 
-    fn next_event(&mut self) -> Option<BackendEvent> {
+    fn poll_event(&mut self, timeout: Option<std::time::Duration>) -> EventPoll {
+        let start = std::time::Instant::now();
         loop {
             if let Some(ev) = self.state.events.pop_front() {
-                return Some(ev);
+                return EventPoll::Event(ev);
             }
             if self.state.dead {
-                return None;
+                return EventPoll::Closed;
             }
             if let Some(ev) = self.pump_selection() {
-                return Some(ev);
+                return EventPoll::Event(ev);
             }
+
+            let timeout_ms = match timeout {
+                Some(dur) => {
+                    let elapsed = start.elapsed();
+                    if elapsed >= dur {
+                        return EventPoll::Timeout;
+                    }
+                    let remaining = dur - elapsed;
+                    remaining.as_millis().min(i32::MAX as u128) as i32
+                }
+                None => -1,
+            };
 
             /* Wait for the wayland socket or a pending selection pipe. A
              * blocking_dispatch() here would only wake on wayland events, so
@@ -620,7 +633,7 @@ impl Backend for WaylandBackend {
                 /* events are already pending in the queue: dispatch them
                  * before blocking on anything else */
                 if self.queue.dispatch_pending(&mut self.state).is_err() {
-                    return None;
+                    return EventPoll::Closed;
                 }
                 let _ = self.connection.flush();
                 continue;
@@ -643,15 +656,20 @@ impl Backend for WaylandBackend {
                     });
                 }
             }
-            loop {
-                let n = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) };
+            let n = loop {
+                let n =
+                    unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
                 if n >= 0 {
-                    break;
+                    break n;
                 }
                 let err = std::io::Error::last_os_error();
                 if err.kind() != std::io::ErrorKind::Interrupted {
-                    return None;
+                    return EventPoll::Closed;
                 }
+            };
+            if n == 0 {
+                drop(guard);
+                return EventPoll::Timeout;
             }
             /* read + dispatch only when the wayland socket is ready; when
              * only a selection pipe fired, drop the guard (cancels the
@@ -659,12 +677,12 @@ impl Backend for WaylandBackend {
             if fds[0].revents & (libc::POLLIN | libc::POLLERR | libc::POLLHUP) != 0 {
                 if let Some(g) = guard {
                     if g.read().is_err() {
-                        return None;
+                        return EventPoll::Closed;
                     }
                 }
             }
             if self.queue.dispatch_pending(&mut self.state).is_err() {
-                return None;
+                return EventPoll::Closed;
             }
             let _ = self.connection.flush();
         }

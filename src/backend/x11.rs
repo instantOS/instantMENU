@@ -1,5 +1,6 @@
 //! X11 backend — x11rb (XCB) + libxkbcommon-x11 for keysym/text lookup.
 
+use std::os::fd::AsRawFd;
 use std::time::Duration;
 
 use x11rb::connection::Connection;
@@ -14,7 +15,7 @@ use x11rb::xcb_ffi::XCBConnection;
 use xkbcommon::xkb::x11 as xkbx11;
 use xkbcommon::xkb::{self, KeyDirection, Keycode};
 
-use super::{Backend, BackendEvent, MonitorInfo, MouseButton};
+use super::{Backend, BackendEvent, EventPoll, MonitorInfo, MouseButton};
 use crate::enums::ExitStatus;
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
@@ -150,6 +151,83 @@ impl X11Backend {
         }
         eprintln!("instantmenu: cannot grab focus");
         ExitStatus::Failure.exit();
+    }
+
+    fn handle_event(&mut self, ev: Event) -> Option<BackendEvent> {
+        match ev {
+            Event::KeyPress(k) => {
+                let (sym, text) = self.lookup_key(k.detail, true);
+                Some(BackendEvent::KeyPress {
+                    sym,
+                    state: k.state.bits() as u32,
+                    text,
+                })
+            }
+            Event::KeyRelease(k) => {
+                let (sym, _) = self.lookup_key(k.detail, false);
+                Some(BackendEvent::KeyRelease {
+                    sym,
+                    state: k.state.bits() as u32,
+                })
+            }
+            Event::ButtonPress(b) => {
+                let button = mouse_button(b.detail)?;
+                Some(BackendEvent::ButtonPress {
+                    button,
+                    state: b.state.bits() as u32,
+                    pos: Point::new(b.event_x as i32, b.event_y as i32),
+                })
+            }
+            Event::MotionNotify(m) => Some(BackendEvent::Motion {
+                time: m.time,
+                pos: Point::new(m.event_x as i32, m.event_y as i32),
+            }),
+            Event::Expose(e) => {
+                if e.count == 0 {
+                    Some(BackendEvent::Expose)
+                } else {
+                    None
+                }
+            }
+            Event::FocusIn(f) => {
+                if f.event != self.window {
+                    Some(BackendEvent::FocusInOther)
+                } else {
+                    None
+                }
+            }
+            Event::VisibilityNotify(v) => {
+                if v.state != Visibility::UNOBSCURED {
+                    Some(BackendEvent::VisibilityObscured)
+                } else {
+                    None
+                }
+            }
+            Event::DestroyNotify(d) => {
+                if d.window == self.window {
+                    Some(BackendEvent::Destroyed)
+                } else {
+                    None
+                }
+            }
+            Event::SelectionNotify(s) if s.property != x11rb::NONE => {
+                if let Ok(reply) = self.connection.get_property(
+                    true,
+                    self.window,
+                    s.property,
+                    AtomEnum::ANY,
+                    0,
+                    8192 / 4 + 1,
+                ) {
+                    if let Ok(prop) = reply.reply() {
+                        let text = String::from_utf8_lossy(&prop.value).into_owned();
+                        return Some(BackendEvent::SelectionNotify { text });
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
     }
 }
 
@@ -461,80 +539,51 @@ impl Backend for X11Backend {
         }
     }
 
-    fn next_event(&mut self) -> Option<BackendEvent> {
+    fn poll_event(&mut self, timeout: Option<Duration>) -> EventPoll {
+        let start = std::time::Instant::now();
         loop {
-            let ev = match self.connection.wait_for_event() {
-                Ok(ev) => ev,
-                Err(_) => return None,
+            match self.connection.poll_for_event() {
+                Ok(Some(ev)) => {
+                    if let Some(event) = self.handle_event(ev) {
+                        return EventPoll::Event(event);
+                    }
+                    continue;
+                }
+                Ok(None) => {}
+                Err(_) => return EventPoll::Closed,
+            }
+
+            let timeout_ms = match timeout {
+                Some(dur) => {
+                    let elapsed = start.elapsed();
+                    if elapsed >= dur {
+                        return EventPoll::Timeout;
+                    }
+                    let remaining = dur - elapsed;
+                    remaining.as_millis().min(i32::MAX as u128) as i32
+                }
+                None => -1,
             };
-            match ev {
-                Event::KeyPress(k) => {
-                    let (sym, text) = self.lookup_key(k.detail, true);
-                    return Some(BackendEvent::KeyPress {
-                        sym,
-                        state: k.state.bits() as u32,
-                        text,
-                    });
+
+            let mut pfd = libc::pollfd {
+                fd: self.connection.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+
+            let n = loop {
+                let n = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
+                if n >= 0 {
+                    break n;
                 }
-                Event::KeyRelease(k) => {
-                    let (sym, _) = self.lookup_key(k.detail, false);
-                    return Some(BackendEvent::KeyRelease {
-                        sym,
-                        state: k.state.bits() as u32,
-                    });
+                let err = std::io::Error::last_os_error();
+                if err.kind() != std::io::ErrorKind::Interrupted {
+                    return EventPoll::Closed;
                 }
-                Event::ButtonPress(b) => {
-                    let Some(button) = mouse_button(b.detail) else {
-                        continue;
-                    };
-                    return Some(BackendEvent::ButtonPress {
-                        button,
-                        state: b.state.bits() as u32,
-                        pos: Point::new(b.event_x as i32, b.event_y as i32),
-                    });
-                }
-                Event::MotionNotify(m) => {
-                    return Some(BackendEvent::Motion {
-                        time: m.time,
-                        pos: Point::new(m.event_x as i32, m.event_y as i32),
-                    });
-                }
-                Event::Expose(e) => {
-                    if e.count == 0 {
-                        return Some(BackendEvent::Expose);
-                    }
-                }
-                Event::FocusIn(f) => {
-                    if f.event != self.window {
-                        return Some(BackendEvent::FocusInOther);
-                    }
-                }
-                Event::VisibilityNotify(v) => {
-                    if v.state != Visibility::UNOBSCURED {
-                        return Some(BackendEvent::VisibilityObscured);
-                    }
-                }
-                Event::DestroyNotify(d) => {
-                    if d.window == self.window {
-                        return Some(BackendEvent::Destroyed);
-                    }
-                }
-                Event::SelectionNotify(s) if s.property != x11rb::NONE => {
-                    if let Ok(reply) = self.connection.get_property(
-                        true,
-                        self.window,
-                        s.property,
-                        AtomEnum::ANY,
-                        0,
-                        8192 / 4 + 1,
-                    ) {
-                        if let Ok(prop) = reply.reply() {
-                            let text = String::from_utf8_lossy(&prop.value).into_owned();
-                            return Some(BackendEvent::SelectionNotify { text });
-                        }
-                    }
-                }
-                _ => {}
+            };
+
+            if n == 0 {
+                return EventPoll::Timeout;
             }
         }
     }

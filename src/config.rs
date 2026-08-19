@@ -50,7 +50,8 @@ pub struct Config {
     pub position: Position,
     /* --follow-cursor option; place menu at mouse position */
     pub follow_cursor: bool,
-    /* minimum width when centered */
+    /* minimum width when the menu is sized to its content
+    (follow-cursor, embedded); not used for the monitor `center` popup */
     pub min_width: i32,
 
     pub instant: bool,

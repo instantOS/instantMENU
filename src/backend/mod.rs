@@ -39,7 +39,7 @@ pub enum MouseButton {
 }
 
 /// Backend-agnostic events, port of the XEvent switch in `run()`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackendEvent {
     KeyPress {
         /// X keysym (XKB keysym values).
@@ -75,6 +75,17 @@ pub enum BackendEvent {
     SelectionNotify {
         text: String,
     },
+}
+
+/// Result of polling for a backend event with an optional timeout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EventPoll {
+    /// An event arrived from the backend.
+    Event(BackendEvent),
+    /// The timeout expired before an event arrived.
+    Timeout,
+    /// The backend connection died or was closed.
+    Closed,
 }
 
 pub trait Backend {
@@ -129,8 +140,15 @@ pub trait Backend {
     }
     /// Raise the window (XRaiseWindow on VisibilityNotify).
     fn raise(&mut self) {}
+    /// Poll for the next event, up to `timeout`. `None` waits indefinitely.
+    fn poll_event(&mut self, timeout: Option<std::time::Duration>) -> EventPoll;
     /// Block for the next event, None when the connection died.
-    fn next_event(&mut self) -> Option<BackendEvent>;
+    fn next_event(&mut self) -> Option<BackendEvent> {
+        match self.poll_event(None) {
+            EventPoll::Event(ev) => Some(ev),
+            EventPoll::Timeout | EventPoll::Closed => None,
+        }
+    }
     /// Ask for the selection/clipboard contents (XConvertSelection).
     fn request_selection(&mut self, clipboard: bool);
     /// X resource "key -> value" pairs (X11 only, empty on Wayland).
