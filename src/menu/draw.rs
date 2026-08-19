@@ -200,7 +200,11 @@ impl Menu {
             let lpad = self.renderer.horizontal_padding / 2;
             let mut p = Painter::new(&mut self.renderer, &mut self.canvas);
             p.set_scheme(Scheme::Selected);
-            *x = p.draw_inverted_text(rect, lpad, &prompt);
+            /* the prompt is drawn with the selected scheme but NOT inverted:
+             * the C calls drw_text(..., 0, 1) where the last argument is
+             * `rounded` — the prompt is a solid (blue) block with the
+             * selected text color on top */
+            *x = p.draw_text(rect, lpad, &prompt);
         }
     }
 

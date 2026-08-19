@@ -119,7 +119,9 @@ impl<'a> Painter<'a> {
             .draw_text(self.canvas, cell, left_padding, text, false, is_accented)
     }
 
-    /// Draw inverted text (prompt mode): background is painted with `fg` and text is painted with `bg`.
+    /// Draw inverted text: background is painted with `fg` and text is
+    /// painted with `bg`. (Not used by the prompt — the C original draws
+    /// that non-inverted — but available for inverted cells.)
     pub fn draw_inverted_text(&mut self, cell: Rect, left_padding: i32, text: &str) -> i32 {
         self.renderer
             .draw_text(self.canvas, cell, left_padding, text, true, false)
