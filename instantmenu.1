@@ -1,307 +1,227 @@
-.TH INSTANTMENU 1 instantmenu\-VERSION
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH instantmenu 1  "instantmenu 4.9" 
 .SH NAME
-instantMENU \- menu for instantOS
+instantmenu \- A dynamic menu for X11 and Wayland (instantMENU, Rust port)
 .SH SYNOPSIS
-.B instantmenu
-.RB [ OPTIONS ]
-.br
-.B instantmenu
-.RB [ \-rfins ]
-.RB [ \-l
-.IR lines ]
-.RB [ \-g
-.IR columns ]
-.RB [ \-m
-.IR monitor ]
-.RB [ \-p
-.IR prompt ]
-.RB [ \-x
-.IR xoffset ]
-.RB [ \-y
-.IR yoffset ]
-.RB [ \-w
-.IR width ]
-.RB [ \-a
-.IR duration ]
-.br
-.B instantmenu_run " ..."
+\fBinstantmenu\fR [\fB\-\-backend\fR] [\fB\-\-position\fR] [\fB\-r\fR|\fB\-\-reject\-no\-match\fR] [\fB\-f\fR|\fB\-\-fast\fR] [\fB\-\-toast\fR] [\fB\-\-commented\fR] [\fB\-\-follow\-cursor\fR] [\fB\-\-input\-only\fR] [\fB\-s\fR|\fB\-\-smart\-case\fR] [\fB\-\-match\-mode\fR] [\fB\-\-pre\-match\fR] [\fB\-\-space\-confirm\fR] [\fB\-\-full\-height\fR] [\fB\-i\fR|\fB\-\-insensitive\fR] [\fB\-n\fR|\fB\-\-instant\fR] [\fB\-\-password\fR] [\fB\-\-monospace\fR] [\fB\-\-no\-grab\fR] [\fB\-\-alt\-tab\fR] [\fB\-\-managed\fR] [\fB\-\-right\-command\fR] [\fB\-\-left\-command\fR] [\fB\-g\fR|\fB\-\-columns\fR] [\fB\-l\fR|\fB\-\-lines\fR] [\fB\-x\fR|\fB\-\-x\-offset\fR] [\fB\-\-right\-x\-offset\fR] [\fB\-y\fR|\fB\-\-y\-offset\fR] [\fB\-w\fR|\fB\-\-width\fR] [\fB\-m\fR|\fB\-\-monitor\fR] [\fB\-p\fR|\fB\-\-prompt\fR] [\fB\-\-placeholder\fR] [\fB\-\-font\fR] [\fB\-\-line\-height\fR] [\fB\-a\fR|\fB\-\-animation\fR] [\fB\-\-normal\-bg\fR] [\fB\-\-normal\-fg\fR] [\fB\-\-selected\-bg\fR] [\fB\-\-selected\-fg\fR] [\fB\-\-embed\fR] [\fB\-\-border\-width\fR] [\fB\-\-preselect\fR] [\fB\-\-initial\-text\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] 
 .SH DESCRIPTION
-.B instantmenu
-is a dynamic menu for X11 and Wayland, which reads a list of newline\-separated
-items from stdin.  When the user selects an item and presses Return, their
-choice is printed to stdout and instantmenu terminates.  Entering text will
-narrow the items to those matching the tokens in the input.
-.P
-instantmenu is used for most of the interfaces present in instantOS.
-.P
-.B instantmenu_run
-is a script used by
-.IR instantwm (1)
-which lists programs in the user's $PATH and runs the result in their $SHELL.
-.P
-Long options are the canonical command line.  Single\-letter shortcuts for the
-most common flags exist as well; they are listed for each option below.
+instantmenu reads a newline\-separated list of items from stdin and displays them in a menu. Selecting an item and pressing Return prints it to stdout and exits; typing narrows the list to matching items.
 .SH OPTIONS
 .TP
-.BI \-\-help
-Print command line help and exit.
+\fB\-\-backend\fR \fI<BACKEND>\fR [default: auto]
+Backend to use: auto, x11 or wayland
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+auto: Auto\-detect: Wayland when WAYLAND_DISPLAY is set, else X11
+.IP \(bu 2
+x11: X11 (runs on Xwayland when started from a Wayland session)
+.IP \(bu 2
+wayland: Wayland (layer\-shell / xdg\-shell)
+.RE
 .TP
-.BI \-V ", " \-\-version
-Print version information to stdout and exit.
+\fB\-\-position\fR \fI<POSITION>\fR
+Where the menu appears on screen: top, bottom or centered
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+top: Top of the screen (the default)
+.IP \(bu 2
+bottom: Bottom of the screen
+.IP \(bu 2
+centered: Centered on the screen
+.RE
 .TP
-.BI \-\-position " position"
-Choose where instantmenu appears on the screen:
-.BR top " (the default), "
-.BR bottom ", or "
-.BR centered .
+\fB\-r\fR, \fB\-\-reject\-no\-match\fR
+Reject input if it results in no matches
 .TP
-.BI \-r ", " \-\-reject-no-match
-Reject input if it results in no matches.
+\fB\-f\fR, \fB\-\-fast\fR
+Grab the keyboard before reading stdin.
+
+Only done when stdin is not a tty. Faster, but locks up X until stdin reaches end\-of\-file.
 .TP
-.BI \-f ", " \-\-fast
-Grab the keyboard before reading stdin if not reading from a tty.  This is
-faster, but will lock up X until stdin reaches end\-of\-file.
+\fB\-\-toast\fR \fI<TENTHS>\fR
+Toast mode that times out after a while (tenths of seconds).
+
+The menu draws itself, waits the given time, then exits without a selection.
 .TP
-.BI \-\-toast " tenths"
-Toast mode: instantmenu draws itself, waits for the given time in tenths of
-seconds and exits without a selection.
+\fB\-\-commented\fR
+Activate instantASSIST mode (single\-letter launcher)
 .TP
-.BI \-\-commented
-Activate instantASSIST mode (single\-letter launcher).
+\fB\-\-follow\-cursor\fR
+Place the menu at the mouse position
 .TP
-.BI \-\-follow-cursor
-instantmenu appears at the position of the mouse cursor.
+\fB\-\-input\-only\fR
+Only display the input field, without the item list
 .TP
-.BI \-\-input-only
-Only display the input field, without the item list.
+\fB\-s\fR, \fB\-\-smart\-case\fR
+Enable smart case matching.
+
+The pattern is matched case\-insensitively unless it contains an uppercase letter.
 .TP
-.BI \-s ", " \-\-smart-case
-Enable smart case matching: the pattern is matched case\-insensitively unless
-it contains an uppercase letter.
+\fB\-\-match\-mode\fR \fI<MODE>\fR
+Item matching algorithm: fuzzy, dmenu or exact
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+fuzzy: Fuzzy matching (the default): ranks by how tightly the pattern fits
+.IP \(bu 2
+dmenu: The classic dmenu matcher: every token must appear; exact, prefix, then substring matches are ranked in that order
+.IP \(bu 2
+exact: Only exact matches
+.RE
 .TP
-.BI \-\-match-mode " mode"
-Select the item matching algorithm:
-.BR fuzzy " (the default), "
-.BR dmenu " (the classic dmenu matcher: all tokens must appear in each item;
-exact matches first, then prefixes, then substrings), or
-.BR exact " (only exact matches)."
+\fB\-\-pre\-match\fR
+Enable pre matching
 .TP
-.BI \-\-pre-match
-Enable pre matching.
+\fB\-\-space\-confirm\fR
+Confirm the selection with the space key
 .TP
-.BI \-\-space-confirm
-Confirm the selection with the space key instead of typing a space.
+\fB\-\-full\-height\fR
+Make instantmenu take the full screen height
 .TP
-.BI \-\-full-height
-Make instantmenu take the full screen height.
+\fB\-i\fR, \fB\-\-insensitive\fR
+Case\-insensitive item matching
 .TP
-.BI \-i ", " \-\-insensitive
-Match menu items case\-insensitively.
+\fB\-n\fR, \fB\-\-instant\fR
+Instantly select the only match
 .TP
-.BI \-n ", " \-\-instant
-Instantly select the only match.
+\fB\-\-password\fR
+Display input as dots
 .TP
-.BI \-\-password
-Display input as dots.
+\fB\-\-monospace\fR
+Use a monospace font (Fira Code Nerd Font:pixelsize=15)
 .TP
-.BI \-\-monospace
-Use a monospace font (Fira Code Nerd Font:pixelsize=15).
+\fB\-\-no\-grab\fR
+Don\*(Aqt grab the keyboard
 .TP
-.BI \-\-no-grab
-Don't grab the keyboard.
+\fB\-\-alt\-tab\fR
+Alt\-tab behaviour
 .TP
-.BI \-\-alt-tab
-Activate alt\-tab behaviour.
+\fB\-\-managed\fR
+Let instantmenu be managed by the window manager as a normal window
 .TP
-.BI \-\-managed
-Let instantmenu be managed by the window manager as a normal window.
+\fB\-\-right\-command\fR \fI<CMD>\fR
+Execute this command on shift + right arrow
 .TP
-.BI \-\-right-command " command"
-Run command on shift + right.
+\fB\-\-left\-command\fR \fI<CMD>\fR
+Run this command on shift + left and add a click target left of the input field
 .TP
-.BI \-\-left-command " command"
-Run command on shift + left and add a click target left of the input field.
+\fB\-g\fR, \fB\-\-columns\fR \fI<N>\fR
+Number of columns in grid mode (0 means 1).
+
+Implies one line per row unless \-\-lines is given.
 .TP
-.BI \-g ", " \-\-columns " columns"
-List items in a grid with the given number of columns (0 means 1).  Implies
-one line per row unless
-.B \-l
-is given.
+\fB\-l\fR, \fB\-\-lines\fR \fI<N>\fR
+Number of lines in a vertical list
 .TP
-.BI \-l ", " \-\-lines " lines"
-List items vertically, with the given number of lines.
-.TP
-.BI \-x ", " \-\-x-offset " xoffset"
-Place instantmenu at this offset measured from the left side of the monitor.
+\fB\-x\fR, \fB\-\-x\-offset\fR \fI<N>\fR
+Window x offset measured from the left side of the monitor.
+
 Can be negative.
 .TP
-.BI \-\-right-x-offset " xoffset"
-Place instantmenu at this offset measured from the right side of the monitor.
+\fB\-\-right\-x\-offset\fR \fI<N>\fR
+Window x offset measured from the right side of the monitor.
+
 Can be negative.
 .TP
-.BI \-y ", " \-\-y-offset " yoffset"
-Place instantmenu at this offset measured from the top of the monitor.  If the
-.B \-\-position bottom
-option is used, the offset is measured from the bottom.  Can be negative.
+\fB\-y\fR, \fB\-\-y\-offset\fR \fI<N>\fR
+Window y offset.
+
+Measured from the top of the monitor, or from the bottom with \-\-position bottom. Can be negative.
 .TP
-.BI \-w ", " \-\-width " width"
-Set the width of the instantmenu window.  A negative value makes instantmenu
-adjust the width to the longest line of text present in stdin.
+\fB\-w\fR, \fB\-\-width\fR \fI<N>\fR
+Make instantmenu this wide.
+
+A negative value adjusts the width to the longest line read from stdin.
 .TP
-.BI \-m ", " \-\-monitor " monitor"
-Display instantmenu on the monitor number supplied.  Monitor numbers start
-from 0.
+\fB\-m\fR, \fB\-\-monitor\fR \fI<N>\fR
+Select monitor by index.
+
+Monitor numbers start from 0. Use \-1 for automatic selection.
 .TP
-.BI \-p ", " \-\-prompt " prompt"
-Define the prompt to be displayed to the left of the input field.
+\fB\-p\fR, \fB\-\-prompt\fR \fI<TEXT>\fR
+Prompt added to the left of the input field
 .TP
-.BI \-\-placeholder " pretext"
-Define text to be displayed in an empty input field.
+\fB\-\-placeholder\fR \fI<TEXT>\fR
+Placeholder inside the input field
 .TP
-.BI \-\-font " font"
-Define the font or font set used.
+\fB\-\-font\fR \fI<FONT>\fR
+Font or font set (overrides the X resource and default)
 .TP
-.BI \-\-line-height " height"
-Use a menu line of at least 'height' pixels tall, but no less than 8.
+\fB\-\-line\-height\fR \fI<N>\fR
+Minimum height of one menu line.
+
+At least 8 pixels.
 .TP
-.BI \-a ", " \-\-animation " duration"
-Set animation duration in frames.
+\fB\-a\fR, \fB\-\-animation\fR \fI<N>\fR
+Animation duration in frames
 .TP
-.BI \-\-normal-bg " color"
-Define the normal background color.
-.IR #RGB ,
-.IR #RRGGBB ,
-and X color names are supported.
+\fB\-\-normal\-bg\fR \fI<COLOR>\fR
+Normal background color.
+
+Supports #RGB, #RRGGBB and X color names.
 .TP
-.BI \-\-normal-fg " color"
-Define the normal foreground color.
+\fB\-\-normal\-fg\fR \fI<COLOR>\fR
+Normal foreground color.
+
+Supports #RGB, #RRGGBB and X color names.
 .TP
-.BI \-\-selected-bg " color"
-Define the selected background color.
+\fB\-\-selected\-bg\fR \fI<COLOR>\fR
+Selected background color.
+
+Supports #RGB, #RRGGBB and X color names.
 .TP
-.BI \-\-selected-fg " color"
-Define the selected foreground color.
+\fB\-\-selected\-fg\fR \fI<COLOR>\fR
+Selected foreground color.
+
+Supports #RGB, #RRGGBB and X color names.
 .TP
-.BI \-\-embed " windowid"
-Embed into windowid (X11 only).
+\fB\-\-embed\fR \fI<ID>\fR
+Embedding window id (X11 only)
 .TP
-.BI \-\-border-width " borderwidth"
-Add a border around instantmenu with width n.
+\fB\-\-border\-width\fR \fI<N>\fR
+Border width.
+
+Adds a border around the menu.
 .TP
-.BI \-\-preselect " index"
-Start with the item at index n preselected, counting from 0.
+\fB\-\-preselect\fR \fI<N>\fR
+Preselected item index.
+
+Starts from 0.
 .TP
-.BI \-\-initial-text " text"
-Start with the given initial text in the input field.
-.SH USAGE
-instantmenu is completely controlled by the keyboard.  Items are selected using the
-arrow keys, page up, page down, home, and end.
+\fB\-\-initial\-text\fR \fI<TEXT>\fR
+Initial input text
 .TP
-.B Tab
-Copy the selected item to the input field.
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
-.B Return
-Confirm selection.  Prints the selected item to stdout and exits, returning
-success.
-.TP
-.B Ctrl-Return
-Confirm selection.  Prints the selected item to stdout and continues.
-.TP
-.B Shift\-Return
-Confirm input.  Prints the input text to stdout and exits, returning success.
-.TP
-.B Escape
-Exit without selecting an item, returning failure.
-.TP
-.B Ctrl-Left
-Move cursor to the start of the current word
-.TP
-.B Ctrl-Right
-Move cursor to the end of the current word
-.TP
-.B C\-a
-Home
-.TP
-.B C\-b
-Left
-.TP
-.B C\-c
-Escape
-.TP
-.B C\-d
-Delete
-.TP
-.B C\-e
-End
-.TP
-.B C\-f
-Right
-.TP
-.B C\-g
-Escape
-.TP
-.B C\-h
-Backspace
-.TP
-.B C\-i
-Tab
-.TP
-.B C\-j
-Return
-.TP
-.B C\-J
-Shift-Return
-.TP
-.B C\-k
-Delete line right
-.TP
-.B C\-m
-Return
-.TP
-.B C\-M
-Shift-Return
-.TP
-.B C\-n
-Down
-.TP
-.B C\-p
-Up
-.TP
-.B C\-u
-Delete line left
-.TP
-.B C\-w
-Delete word left
-.TP
-.B C\-y
-Paste from primary X selection
-.TP
-.B C\-Y
-Paste from X clipboard
-.TP
-.B M\-b
-Move cursor to the start of the current word
-.TP
-.B M\-f
-Move cursor to the end of the current word
-.TP
-.B M\-g
-Home
-.TP
-.B M\-G
-End
-.TP
-.B M\-h
-Up
-.TP
-.B M\-j
-Page down
-.TP
-.B M\-k
-Page up
-.TP
-.B M\-l
-Down
-.SH SEE ALSO
-.IR instantwm (1),
-.IR itest (1)
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH EXTRA
+KEYBOARD CONTROL:
+  Tab          copy the selected item to the input field
+  Return       confirm the selection and exit
+  Ctrl\-Return  confirm the selection and keep running
+  Shift\-Return confirm the input text and exit
+  Escape       exit without selecting an item
+  Ctrl\-Left    move the cursor to the start of the current word
+  Ctrl\-Right   move the cursor to the end of the current word
+  C\-a Home  C\-b Left  C\-c Escape  C\-d Delete  C\-e End  C\-f Right
+  C\-g Escape  C\-h Backspace  C\-i Tab  C\-j Return  C\-k delete right
+  C\-m Return  C\-n Down  C\-p Up  C\-u delete left  C\-w delete word
+  C\-y paste primary  C\-Y paste clipboard
+  M\-b word start  M\-f word end  M\-g Home  M\-G End  M\-h Up
+  M\-j page down  M\-k page up  M\-l Down  M\-F4 quit
+.SH VERSION
+v4.9

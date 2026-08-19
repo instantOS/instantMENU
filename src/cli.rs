@@ -10,11 +10,38 @@ use clap::Parser;
 use crate::backend::BackendChoice;
 use crate::config::{MatchMode, Position};
 
+/// Long-form description shown by `--help` and the generated man page.
+const LONG_ABOUT: &str = concat!(
+    "instantmenu reads a newline-separated list of items from stdin and ",
+    "displays them in a menu. Selecting an item and pressing Return prints ",
+    "it to stdout and exits; typing narrows the list to matching items.",
+);
+
+/// Keyboard bindings shown by `--help` and the generated man page.
+const KEY_BINDINGS: &str = concat!(
+    "KEYBOARD CONTROL:\n",
+    "  Tab          copy the selected item to the input field\n",
+    "  Return       confirm the selection and exit\n",
+    "  Ctrl-Return  confirm the selection and keep running\n",
+    "  Shift-Return confirm the input text and exit\n",
+    "  Escape       exit without selecting an item\n",
+    "  Ctrl-Left    move the cursor to the start of the current word\n",
+    "  Ctrl-Right   move the cursor to the end of the current word\n",
+    "  C-a Home  C-b Left  C-c Escape  C-d Delete  C-e End  C-f Right\n",
+    "  C-g Escape  C-h Backspace  C-i Tab  C-j Return  C-k delete right\n",
+    "  C-m Return  C-n Down  C-p Up  C-u delete left  C-w delete word\n",
+    "  C-y paste primary  C-Y paste clipboard\n",
+    "  M-b word start  M-f word end  M-g Home  M-G End  M-h Up\n",
+    "  M-j page down  M-k page up  M-l Down  M-F4 quit\n",
+);
+
 #[derive(Parser, Debug)]
 #[command(
     name = "instantmenu",
     about = "A dynamic menu for X11 and Wayland (instantMENU, Rust port)",
+    long_about = LONG_ABOUT,
     version = crate::config::VERSION,
+    after_long_help = KEY_BINDINGS,
 )]
 pub struct Args {
     /// Backend to use: auto, x11 or wayland.
@@ -35,10 +62,16 @@ pub struct Args {
     pub reject_no_match: bool,
 
     /// Grab the keyboard before reading stdin.
+    ///
+    /// Only done when stdin is not a tty. Faster, but locks up X until
+    /// stdin reaches end-of-file.
     #[arg(long, short = 'f')]
     pub fast: bool,
 
     /// Toast mode that times out after a while (tenths of seconds).
+    ///
+    /// The menu draws itself, waits the given time, then exits without a
+    /// selection.
     #[arg(
         long,
         value_name = "TENTHS",
@@ -55,11 +88,14 @@ pub struct Args {
     #[arg(long, conflicts_with = "position")]
     pub follow_cursor: bool,
 
-    /// Input only (no item list).
+    /// Only display the input field, without the item list.
     #[arg(long)]
     pub input_only: bool,
 
     /// Enable smart case matching.
+    ///
+    /// The pattern is matched case-insensitively unless it contains an
+    /// uppercase letter.
     #[arg(long, short = 's')]
     pub smart_case: bool,
 
@@ -103,7 +139,7 @@ pub struct Args {
     #[arg(long)]
     pub alt_tab: bool,
 
-    /// Display as a managed wm window.
+    /// Let instantmenu be managed by the window manager as a normal window.
     #[arg(long)]
     pub managed: bool,
 
@@ -111,11 +147,14 @@ pub struct Args {
     #[arg(long, value_name = "CMD")]
     pub right_command: Option<String>,
 
-    /// Add a click target left of the input field running CMD.
+    /// Run this command on shift + left and add a click target left of the
+    /// input field.
     #[arg(long, value_name = "CMD")]
     pub left_command: Option<String>,
 
-    /// Number of columns in grid mode (0 means 1; enables lines if unset).
+    /// Number of columns in grid mode (0 means 1).
+    ///
+    /// Implies one line per row unless --lines is given.
     #[arg(long, short = 'g', value_name = "N", value_parser = clap::value_parser!(i32).range(0..))]
     pub columns: Option<i32>,
 
@@ -123,7 +162,9 @@ pub struct Args {
     #[arg(long, short = 'l', value_name = "N", value_parser = clap::value_parser!(i32).range(0..))]
     pub lines: Option<i32>,
 
-    /// Window x offset.
+    /// Window x offset measured from the left side of the monitor.
+    ///
+    /// Can be negative.
     #[arg(
         long,
         short = 'x',
@@ -133,7 +174,9 @@ pub struct Args {
     )]
     pub x_offset: Option<i32>,
 
-    /// Window x offset counted from the right side of the screen.
+    /// Window x offset measured from the right side of the monitor.
+    ///
+    /// Can be negative.
     #[arg(
         long,
         value_name = "N",
@@ -142,15 +185,23 @@ pub struct Args {
     )]
     pub right_x_offset: Option<i32>,
 
-    /// Window y offset (measured from the bottom with --position bottom).
+    /// Window y offset.
+    ///
+    /// Measured from the top of the monitor, or from the bottom with
+    /// --position bottom. Can be negative.
     #[arg(long, short = 'y', value_name = "N", allow_hyphen_values = true)]
     pub y_offset: Option<i32>,
 
-    /// Make instantmenu this wide (negative: auto width).
+    /// Make instantmenu this wide.
+    ///
+    /// A negative value adjusts the width to the longest line read from
+    /// stdin.
     #[arg(long, short = 'w', value_name = "N", allow_hyphen_values = true)]
     pub width: Option<i32>,
 
-    /// Select monitor by index (-1: automatic).
+    /// Select monitor by index.
+    ///
+    /// Monitor numbers start from 0. Use -1 for automatic selection.
     #[arg(
         long,
         short = 'm',
@@ -173,6 +224,8 @@ pub struct Args {
     pub font: Option<String>,
 
     /// Minimum height of one menu line.
+    ///
+    /// At least 8 pixels.
     #[arg(long, value_name = "N", allow_hyphen_values = true)]
     pub line_height: Option<i32>,
 
@@ -186,18 +239,26 @@ pub struct Args {
     pub animation: Option<i32>,
 
     /// Normal background color.
+    ///
+    /// Supports #RGB, #RRGGBB and X color names.
     #[arg(long, value_name = "COLOR")]
     pub normal_bg: Option<String>,
 
     /// Normal foreground color.
+    ///
+    /// Supports #RGB, #RRGGBB and X color names.
     #[arg(long, value_name = "COLOR")]
     pub normal_fg: Option<String>,
 
     /// Selected background color.
+    ///
+    /// Supports #RGB, #RRGGBB and X color names.
     #[arg(long, value_name = "COLOR")]
     pub selected_bg: Option<String>,
 
     /// Selected foreground color.
+    ///
+    /// Supports #RGB, #RRGGBB and X color names.
     #[arg(long, value_name = "COLOR")]
     pub selected_fg: Option<String>,
 
@@ -206,6 +267,8 @@ pub struct Args {
     pub embed: Option<u32>,
 
     /// Border width.
+    ///
+    /// Adds a border around the menu.
     #[arg(
         long,
         value_name = "N",
@@ -214,6 +277,8 @@ pub struct Args {
     pub border_width: Option<i32>,
 
     /// Preselected item index.
+    ///
+    /// Starts from 0.
     #[arg(long, value_name = "N", allow_hyphen_values = true)]
     pub preselect: Option<i32>,
 

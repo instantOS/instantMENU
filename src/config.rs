@@ -12,20 +12,23 @@ pub const XRES_NAME: &str = "instantmenu";
 /// Where the menu appears on screen (`--position`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Position {
+    /// Top of the screen (the default).
     Top,
+    /// Bottom of the screen.
     Bottom,
+    /// Centered on the screen.
     Centered,
 }
 
 /// Item matching algorithm (`--match-mode`).
-///
-/// `Dmenu` is the classic dmenu matcher: every whitespace-separated word of
-/// the input must appear contiguously in the item; exact, prefix and
-/// substring matches are ranked in that order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum MatchMode {
+    /// Fuzzy matching (the default): ranks by how tightly the pattern fits.
     Fuzzy,
+    /// The classic dmenu matcher: every token must appear; exact, prefix,
+    /// then substring matches are ranked in that order.
     Dmenu,
+    /// Only exact matches.
     Exact,
 }
 
