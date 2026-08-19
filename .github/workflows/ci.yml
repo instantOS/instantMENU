@@ -52,8 +52,11 @@ jobs:
           diff -u /tmp/instantmenu.1 instantmenu.1
       - name: Check package metadata
         run: |
+          useradd -m builder
           for directory in packaging/arch packaging/arch-bin; do
+            install -o builder -g builder -m 0644 "$directory/PKGBUILD" /home/builder/PKGBUILD
             generated="$(mktemp)"
-            (cd "$directory" && makepkg --printsrcinfo) > "$generated"
+            su builder -c 'cd /home/builder && makepkg --printsrcinfo' > "$generated"
             diff -u "$directory/.SRCINFO" "$generated"
           done
+
