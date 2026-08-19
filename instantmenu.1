@@ -1,10 +1,10 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH instantmenu 1  "instantmenu 4.9" 
+.TH instantmenu 1  "instantmenu 4.9.0"
 .SH NAME
 instantmenu \- A dynamic menu for X11 and Wayland (instantMENU, Rust port)
 .SH SYNOPSIS
-\fBinstantmenu\fR [\fB\-\-backend\fR] [\fB\-\-position\fR] [\fB\-r\fR|\fB\-\-reject\-no\-match\fR] [\fB\-f\fR|\fB\-\-fast\fR] [\fB\-\-toast\fR] [\fB\-\-commented\fR] [\fB\-\-follow\-cursor\fR] [\fB\-\-input\-only\fR] [\fB\-s\fR|\fB\-\-smart\-case\fR] [\fB\-\-match\-mode\fR] [\fB\-\-pre\-match\fR] [\fB\-\-space\-confirm\fR] [\fB\-\-full\-height\fR] [\fB\-i\fR|\fB\-\-insensitive\fR] [\fB\-n\fR|\fB\-\-instant\fR] [\fB\-\-password\fR] [\fB\-\-monospace\fR] [\fB\-\-no\-grab\fR] [\fB\-\-alt\-tab\fR] [\fB\-\-managed\fR] [\fB\-\-right\-command\fR] [\fB\-\-left\-command\fR] [\fB\-g\fR|\fB\-\-columns\fR] [\fB\-l\fR|\fB\-\-lines\fR] [\fB\-x\fR|\fB\-\-x\-offset\fR] [\fB\-\-right\-x\-offset\fR] [\fB\-y\fR|\fB\-\-y\-offset\fR] [\fB\-w\fR|\fB\-\-width\fR] [\fB\-m\fR|\fB\-\-monitor\fR] [\fB\-p\fR|\fB\-\-prompt\fR] [\fB\-\-placeholder\fR] [\fB\-\-font\fR] [\fB\-\-line\-height\fR] [\fB\-a\fR|\fB\-\-animation\fR] [\fB\-\-normal\-bg\fR] [\fB\-\-normal\-fg\fR] [\fB\-\-selected\-bg\fR] [\fB\-\-selected\-fg\fR] [\fB\-\-embed\fR] [\fB\-\-border\-width\fR] [\fB\-\-preselect\fR] [\fB\-\-initial\-text\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] 
+\fBinstantmenu\fR [\fB\-\-backend\fR] [\fB\-\-position\fR] [\fB\-r\fR|\fB\-\-reject\-no\-match\fR] [\fB\-f\fR|\fB\-\-fast\fR] [\fB\-\-toast\fR] [\fB\-\-commented\fR] [\fB\-\-follow\-cursor\fR] [\fB\-\-input\-only\fR] [\fB\-s\fR|\fB\-\-smart\-case\fR] [\fB\-\-match\-mode\fR] [\fB\-\-pre\-match\fR] [\fB\-\-space\-confirm\fR] [\fB\-\-full\-height\fR] [\fB\-i\fR|\fB\-\-insensitive\fR] [\fB\-n\fR|\fB\-\-instant\fR] [\fB\-\-password\fR] [\fB\-\-monospace\fR] [\fB\-\-no\-grab\fR] [\fB\-\-alt\-tab\fR] [\fB\-\-managed\fR] [\fB\-\-right\-command\fR] [\fB\-\-left\-command\fR] [\fB\-g\fR|\fB\-\-columns\fR] [\fB\-l\fR|\fB\-\-lines\fR] [\fB\-x\fR|\fB\-\-x\-offset\fR] [\fB\-y\fR|\fB\-\-y\-offset\fR] [\fB\-w\fR|\fB\-\-width\fR] [\fB\-m\fR|\fB\-\-monitor\fR] [\fB\-p\fR|\fB\-\-prompt\fR] [\fB\-\-placeholder\fR] [\fB\-\-font\fR] [\fB\-\-line\-height\fR] [\fB\-a\fR|\fB\-\-animation\fR] [\fB\-\-normal\-bg\fR] [\fB\-\-normal\-fg\fR] [\fB\-\-selected\-bg\fR] [\fB\-\-selected\-fg\fR] [\fB\-\-embed\fR] [\fB\-\-border\-width\fR] [\fB\-\-preselect\fR] [\fB\-\-initial\-text\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR]
 .SH DESCRIPTION
 instantmenu reads a newline\-separated list of items from stdin and displays them in a menu. Selecting an item and pressing Return prints it to stdout and exits; typing narrows the list to matching items.
 .SH OPTIONS
@@ -25,18 +25,30 @@ wayland: Wayland (layer\-shell / xdg\-shell)
 .RE
 .TP
 \fB\-\-position\fR \fI<POSITION>\fR
-Where the menu appears on screen: top, bottom or centered
+Anchor the menu to a corner, edge or the center of the screen
 .br
 
 .br
 \fIPossible values:\fR
 .RS 14
 .IP \(bu 2
-top: Top of the screen (the default)
+top\-left: Top\-left corner
 .IP \(bu 2
-bottom: Bottom of the screen
+top: Top edge, centered horizontally (the default)
 .IP \(bu 2
-centered: Centered on the screen
+top\-right: Top\-right corner
+.IP \(bu 2
+left: Left edge, centered vertically
+.IP \(bu 2
+center: Centered on the screen
+.IP \(bu 2
+right: Right edge, centered vertically
+.IP \(bu 2
+bottom\-left: Bottom\-left corner
+.IP \(bu 2
+bottom: Bottom edge, centered horizontally
+.IP \(bu 2
+bottom\-right: Bottom\-right corner
 .RE
 .TP
 \fB\-r\fR, \fB\-\-reject\-no\-match\fR
@@ -126,19 +138,14 @@ Implies one line per row unless \-\-lines is given.
 Number of lines in a vertical list
 .TP
 \fB\-x\fR, \fB\-\-x\-offset\fR \fI<N>\fR
-Window x offset measured from the left side of the monitor.
+Horizontal offset from the anchor position.
 
-Can be negative.
-.TP
-\fB\-\-right\-x\-offset\fR \fI<N>\fR
-Window x offset measured from the right side of the monitor.
-
-Can be negative.
+Positive moves right, negative moves left.
 .TP
 \fB\-y\fR, \fB\-\-y\-offset\fR \fI<N>\fR
-Window y offset.
+Vertical offset from the anchor position.
 
-Measured from the top of the monitor, or from the bottom with \-\-position bottom. Can be negative.
+Positive moves down, negative moves up.
 .TP
 \fB\-w\fR, \fB\-\-width\fR \fI<N>\fR
 Make instantmenu this wide.
@@ -224,4 +231,4 @@ KEYBOARD CONTROL:
   M\-b word start  M\-f word end  M\-g Home  M\-G End  M\-h Up
   M\-j page down  M\-k page up  M\-l Down  M\-F4 quit
 .SH VERSION
-v4.9
+v4.9.0

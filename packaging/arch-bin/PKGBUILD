@@ -1,0 +1,31 @@
+# Maintainer: instantOS <hello@instantos.io>
+pkgname=instantmenu-bin
+_pkgname=instantmenu
+pkgver=4.9.0
+pkgrel=1
+pkgdesc="A dynamic menu for X11 and Wayland (prebuilt binary)"
+arch=('x86_64')
+url="https://github.com/instantOS/instantMENU"
+license=('MIT')
+provides=("instantmenu=$pkgver")
+conflicts=('instantmenu')
+depends=('bash' 'fontconfig' 'gcc-libs' 'glibc' 'libxcb' 'libxkbcommon-x11' 'perl')
+optdepends=('i3-wm: launch desktop entries with instantmenu_smartrun desktop')
+source=(
+    "instantMENU-$pkgver.tar.gz"
+    "$_pkgname-x86_64-unknown-linux-gnu-v$pkgver.tgz"
+)
+sha256sums=('SKIP' 'SKIP')
+
+package() {
+    cd "instantMENU-$pkgver"
+    archive="$srcdir/$_pkgname-x86_64-unknown-linux-gnu-v$pkgver"
+    install -Dm755 "$archive/instantmenu" "$pkgdir/usr/bin/instantmenu"
+    install -Dm755 "$archive/itest" "$pkgdir/usr/bin/itest"
+    install -Dm755 "$archive/instantmenu_path" "$pkgdir/usr/bin/instantmenu_path"
+    install -Dm755 "$archive/instantmenu_run" "$pkgdir/usr/bin/instantmenu_run"
+    install -Dm755 "$archive/instantmenu_smartrun" "$pkgdir/usr/bin/instantmenu_smartrun"
+    install -Dm644 "$archive/instantmenu.1" "$pkgdir/usr/share/man/man1/instantmenu.1"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

@@ -1,0 +1,55 @@
+name: CI
+run-name: "CI: ${{ github.event.head_commit.message || github.event.pull_request.title }}"
+
+on:
+  push:
+    branches:
+      - main
+      - rust-rewrite
+  pull_request:
+
+jobs:
+  test:
+    name: Test and build on Arch Linux
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    container:
+      image: archlinux:latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install build dependencies
+        run: bash scripts/ci/install-deps-arch.sh
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: arch-cargo-${{ hashFiles('**/Cargo.lock') }}
+          prefix-key: arch-test
+          cache-all-crates: true
+          cache-bin: "false"
+      - name: Remove leaked rustup state
+        run: rm -rf ~/.rustup ~/.cargo/bin
+      - name: Check formatting
+        run: cargo fmt -- --check
+      - name: Run clippy
+        run: cargo clippy --locked --all-targets
+      - name: Run tests
+        run: cargo test --locked --all-targets --verbose
+      - name: Build debug binaries
+        run: cargo build --locked --bins
+      - name: Check command-line interfaces
+        run: |
+          ./target/debug/instantmenu --help > /dev/null
+          ./target/debug/instantmenu --version
+          ./target/debug/itest -e Cargo.toml > /dev/null
+      - name: Check generated man page
+        run: |
+          cargo run --locked --bin instantmenu-mangen
+          git diff --exit-code -- instantmenu.1
+      - name: Check package metadata
+        run: |
+          for directory in packaging/arch packaging/arch-bin; do
+            (cd "$directory" && makepkg --printsrcinfo > generated.SRCINFO)
+            diff -u "$directory/.SRCINFO" "$directory/generated.SRCINFO"
+          done

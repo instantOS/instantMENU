@@ -1,0 +1,223 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - CHANGELOG.md
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  metadata:
+    name: Prepare release metadata
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    container:
+      image: ubuntu:24.04
+    if: ${{ github.repository_owner == 'instantOS' }}
+    permissions:
+      contents: write
+    outputs:
+      should_release: ${{ steps.metadata.outputs.should_release }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      version: ${{ steps.metadata.outputs.version }}
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Configure git
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - name: Determine release tag
+        id: metadata
+        run: bash scripts/ci/determine-release.sh
+
+  build:
+    name: Build release artifacts
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    container:
+      image: archlinux:latest
+    needs: metadata
+    if: ${{ needs.metadata.outputs.should_release == 'true' }}
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install build dependencies
+        run: bash scripts/ci/install-deps-arch.sh
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+      - name: Create build user
+        run: |
+          useradd -m builder
+          chown -R builder:builder "$PWD"
+      - name: Determine target triple
+        id: target
+        run: echo "triple=$(rustc -vV | awk '/^host:/ {print $2}')" >> "$GITHUB_OUTPUT"
+      - name: Extract version
+        id: vars
+        run: bash scripts/ci/extract-version.sh "$GITHUB_REF_NAME"
+      - name: Test and build
+        run: |
+          workspace="$PWD"
+          su builder -c "cd '$workspace' && cargo test --locked --all-targets"
+          su builder -c "cd '$workspace' && cargo build --release --locked --bin instantmenu --bin itest"
+      - name: Strip binaries
+        run: strip target/release/instantmenu target/release/itest
+      - name: Collect artifacts
+        run: bash scripts/ci/package-binary.sh "${{ steps.target.outputs.triple }}" "${{ steps.vars.outputs.version }}" target/release
+      - name: Upload release archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: instantmenu-${{ steps.vars.outputs.version }}-${{ steps.target.outputs.triple }}
+          path: |
+            artifacts/*.tgz
+            artifacts/*.sha256
+
+  pkgbuild:
+    name: Build Arch package
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    container:
+      image: archlinux:latest
+    needs:
+      - metadata
+      - build
+    if: ${{ needs.metadata.outputs.should_release == 'true' }}
+    steps:
+      - name: Install packaging tools
+        run: |
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed base-devel git
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Extract version
+        id: vars
+        run: bash scripts/ci/extract-version.sh "$GITHUB_REF_NAME"
+      - name: Download native archive
+        uses: actions/download-artifact@v8
+        with:
+          name: instantmenu-${{ steps.vars.outputs.version }}-x86_64-unknown-linux-gnu
+          path: dist
+      - name: Create package inputs
+        env:
+          VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          git config --global --add safe.directory "$PWD"
+          git archive --format=tar.gz --prefix="instantMENU-${VERSION}/" -o "instantMENU-${VERSION}.tar.gz" HEAD
+          cp "dist/instantmenu-x86_64-unknown-linux-gnu-v${VERSION}.tgz" .
+          cp packaging/arch-bin/PKGBUILD .
+          useradd -m builder
+          chown -R builder:builder "$PWD"
+      - name: Build package
+        run: su builder -c "cd '$PWD' && makepkg --nodeps --noconfirm --skippgpcheck"
+      - name: Collect package artifacts
+        run: |
+          mkdir -p artifacts
+          shopt -s nullglob
+          for package in ./*.pkg.tar.zst ./*.src.tar.zst; do
+            mv "$package" artifacts/
+          done
+      - name: Upload Arch package
+        uses: actions/upload-artifact@v7
+        with:
+          name: instantmenu-${{ steps.vars.outputs.version }}-arch-package
+          path: artifacts/
+
+  deb:
+    name: Build Debian package
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    container:
+      image: ubuntu:24.04
+    needs:
+      - metadata
+      - build
+    if: ${{ needs.metadata.outputs.should_release == 'true' }}
+    steps:
+      - name: Install packaging tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates dpkg-dev
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Extract version
+        id: vars
+        run: bash scripts/ci/extract-version.sh "$GITHUB_REF_NAME"
+      - name: Download native archive
+        uses: actions/download-artifact@v8
+        with:
+          name: instantmenu-${{ steps.vars.outputs.version }}-x86_64-unknown-linux-gnu
+          path: dist
+      - name: Extract binaries
+        env:
+          VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          tar -xzf "dist/instantmenu-x86_64-unknown-linux-gnu-v${VERSION}.tgz" -C dist
+          archive="dist/instantmenu-x86_64-unknown-linux-gnu-v${VERSION}"
+          install -Dm0755 "$archive/instantmenu" target/release/instantmenu
+          install -Dm0755 "$archive/itest" target/release/itest
+      - name: Build Debian package
+        run: bash utils/build_deb.sh
+      - name: Collect Debian package
+        env:
+          VERSION: ${{ steps.vars.outputs.version }}
+        run: |
+          mkdir -p artifacts
+          mv "target/deb/instantmenu_${VERSION}_amd64.deb" artifacts/
+          cd artifacts
+          sha256sum "instantmenu_${VERSION}_amd64.deb" > "instantmenu_${VERSION}_amd64.deb.sha256"
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v7
+        with:
+          name: instantmenu-${{ steps.vars.outputs.version }}-deb
+          path: artifacts/
+
+  release:
+    name: Publish GitHub release
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    container:
+      image: ubuntu:24.04
+    needs:
+      - metadata
+      - build
+      - pkgbuild
+      - deb
+    if: ${{ needs.metadata.outputs.should_release == 'true' }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Extract release notes
+        run: bash scripts/ci/extract-release-notes.sh "${{ needs.metadata.outputs.version }}" > release-notes.md
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.metadata.outputs.tag }}
+          name: ${{ needs.metadata.outputs.tag }}
+          body_path: release-notes.md
+          files: dist/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

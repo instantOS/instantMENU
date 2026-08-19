@@ -12,8 +12,20 @@ it is used for instantASSIST and in some other places
 ```sh
 git clone https://github.com/instantOS/instantMENU
 cd instantMENU
-./build.sh
+cargo build --locked
+# Or install the debug build and helper scripts for your user:
+just install
 ```
+
+Release archives, Arch Linux packages, and Debian packages are also attached to
+each [GitHub release](https://github.com/instantOS/instantMENU/releases).
+
+## Releases
+
+The version-bump workflow opens a `release/version-bump` pull request using
+conventional commits to choose the next version. Merging that PR creates the
+matching `v*` tag and publishes the release artifacts. A patch, minor, or major
+bump can also be selected manually from the workflow dispatch form.
 
 ## Features
 

@@ -16,8 +16,19 @@ fn main() -> io::Result<()> {
     let mut buffer: Vec<u8> = Default::default();
     man.render(&mut buffer)?;
 
+    // clap_mangen leaves a space at the end of a few generated lines. Keep
+    // the checked-in artifact friendly to diff and whitespace checks.
+    let rendered = String::from_utf8(buffer)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let rendered = rendered
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+
     let out = Path::new(env!("CARGO_MANIFEST_DIR")).join("instantmenu.1");
-    std::fs::write(&out, buffer)?;
+    std::fs::write(&out, rendered)?;
     println!("wrote {}", out.display());
     Ok(())
 }

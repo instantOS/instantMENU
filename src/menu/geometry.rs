@@ -386,14 +386,41 @@ mod tests {
         let width = 200;
         let height = 100;
 
-        assert_eq!(anchor_origin(Position::TopLeft, area, width, height), Point::new(100, 50));
-        assert_eq!(anchor_origin(Position::Top, area, width, height), Point::new(500, 50));
-        assert_eq!(anchor_origin(Position::TopRight, area, width, height), Point::new(900, 50));
-        assert_eq!(anchor_origin(Position::Left, area, width, height), Point::new(100, 300));
-        assert_eq!(anchor_origin(Position::Center, area, width, height), Point::new(500, 300));
-        assert_eq!(anchor_origin(Position::Right, area, width, height), Point::new(900, 300));
-        assert_eq!(anchor_origin(Position::BottomLeft, area, width, height), Point::new(100, 550));
-        assert_eq!(anchor_origin(Position::Bottom, area, width, height), Point::new(500, 550));
-        assert_eq!(anchor_origin(Position::BottomRight, area, width, height), Point::new(900, 550));
+        assert_eq!(
+            anchor_origin(Position::TopLeft, area, width, height),
+            Point::new(100, 50)
+        );
+        assert_eq!(
+            anchor_origin(Position::Top, area, width, height),
+            Point::new(500, 50)
+        );
+        assert_eq!(
+            anchor_origin(Position::TopRight, area, width, height),
+            Point::new(900, 50)
+        );
+        assert_eq!(
+            anchor_origin(Position::Left, area, width, height),
+            Point::new(100, 300)
+        );
+        assert_eq!(
+            anchor_origin(Position::Center, area, width, height),
+            Point::new(500, 300)
+        );
+        assert_eq!(
+            anchor_origin(Position::Right, area, width, height),
+            Point::new(900, 300)
+        );
+        assert_eq!(
+            anchor_origin(Position::BottomLeft, area, width, height),
+            Point::new(100, 550)
+        );
+        assert_eq!(
+            anchor_origin(Position::Bottom, area, width, height),
+            Point::new(500, 550)
+        );
+        assert_eq!(
+            anchor_origin(Position::BottomRight, area, width, height),
+            Point::new(900, 550)
+        );
     }
 }

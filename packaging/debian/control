@@ -1,0 +1,11 @@
+Package: instantmenu
+Version: VERSION
+Section: x11
+Priority: optional
+Architecture: ARCHITECTURE
+Depends: bash, libc6, libfontconfig1, libgcc-s1, libxcb1, libxkbcommon0, libxkbcommon-x11-0, perl
+Suggests: i3-wm
+Maintainer: instantOS <hello@instantos.io>
+Description: Dynamic menu for X11 and Wayland
+ instantMENU reads items from standard input, lets the user search and select
+ one, and writes the selection to standard output.
