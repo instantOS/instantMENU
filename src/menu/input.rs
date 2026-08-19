@@ -6,17 +6,11 @@ use super::{Item, Menu, TEXT_MAX};
 use crate::enums::{Direction, EditOp};
 
 impl Menu {
-    /// Port of insert(): EditOp::Insert(s) inserts `s` at the cursor (capped
-    /// at the TEXT_MAX budget on a char boundary), EditOp::Delete(n) deletes
-    /// `n` bytes before the cursor (clamped at the text start).
+    /// Port of insert(): EditOp::Insert(s) inserts `s` at the cursor
+    /// (truncated at the TEXT_MAX budget on a char boundary, like the C
+    /// clamp `n = TEXT_MAX - textsize - 1`), EditOp::Delete(n) deletes `n`
+    /// bytes before the cursor (clamped at the text start).
     pub(super) fn insert(&mut self, op: EditOp) {
-        // only insertion can overflow the TEXT_MAX budget
-        if let EditOp::Insert(s) = op {
-            if self.text.len() + s.len() > TEXT_MAX {
-                return;
-            }
-        }
-
         let last = self
             .cfg
             .reject_no_match
@@ -24,10 +18,11 @@ impl Menu {
 
         match op {
             EditOp::Insert(s) => {
-                // cut at the TEXT_MAX budget on a char boundary; a raw byte
-                // cut could land inside a multi-byte char and panic on
+                // truncate at the TEXT_MAX budget on a char boundary; a raw
+                // byte cut could land inside a multi-byte char and panic on
                 // insert_str
-                let byte_len = s.floor_char_boundary(s.len().min(TEXT_MAX - self.text.len()));
+                let room = TEXT_MAX.saturating_sub(self.text.len());
+                let byte_len = s.floor_char_boundary(s.len().min(room));
                 self.text.insert_str(self.cursor, &s[..byte_len]);
                 self.cursor += byte_len;
 
@@ -116,20 +111,25 @@ impl Menu {
         let mut items = Vec::new();
         let mut count: i32 = 0;
         let input = input.strip_suffix(b"\n").unwrap_or(&input);
-        for raw in input.split(|&b| b == b'\n').filter(|_| !input.is_empty()) {
-            let raw = raw.strip_suffix(b"\t").unwrap_or(raw);
-            let cut = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
-            let Ok(line) = std::str::from_utf8(&raw[..cut]) else {
-                /* C strdup keeps invalid bytes; items are drawn as text so
-                 * drop-lossy lines are the closest safe equivalent */
+        /* empty input: getline() returns -1 immediately in the C version,
+         * so there is no empty chunk to turn into an item */
+        if !input.is_empty() {
+            for raw in input.split(|&b| b == b'\n') {
+                let raw = raw.strip_suffix(b"\t").unwrap_or(raw);
+                let cut = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
+                let Ok(line) = std::str::from_utf8(&raw[..cut]) else {
+                    /* C strdup keeps invalid bytes; items are drawn as text
+                     * so drop-lossy lines are the closest safe equivalent.
+                     * They are not counted either, so `count` stays equal
+                     * to items.len() for the grid math below. */
+                    continue;
+                };
+                items.push(Item {
+                    text: line.to_owned(),
+                    already_output: false,
+                });
                 count += 1;
-                continue;
-            };
-            items.push(Item {
-                text: line.to_owned(),
-                already_output: false,
-            });
-            count += 1;
+            }
         }
 
         let columns = cfg.columns;

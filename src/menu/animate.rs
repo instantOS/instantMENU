@@ -1,7 +1,5 @@
 //! Selection and rectangle animations, plus the left/right command triggers.
 
-use std::time::Duration;
-
 use super::Menu;
 use crate::enums::{ExitStatus, Scheme, Side};
 
@@ -51,7 +49,7 @@ impl Menu {
                 false,
             );
             self.backend.present(&self.canvas);
-            std::thread::sleep(Duration::from_micros(19000));
+            self.backend.wait_frame();
         }
     }
 
@@ -81,7 +79,7 @@ impl Menu {
             self.renderer
                 .rect(&mut self.canvas, rx as i32, ry as i32, rw as i32, rh as i32, true, true, false);
             self.backend.present(&self.canvas);
-            std::thread::sleep(Duration::from_micros(19000));
+            self.backend.wait_frame();
         }
     }
 

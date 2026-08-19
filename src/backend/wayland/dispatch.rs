@@ -4,7 +4,7 @@
 use std::os::fd::AsRawFd;
 
 use wayland_client::protocol::{
-    wl_buffer, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer,
+    wl_buffer, wl_callback, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer,
     wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
 };
 use wayland_client::{Connection, Dispatch, QueueHandle, WEnum};
@@ -396,6 +396,23 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for EventState {
                     }
                 }
             }
+        }
+    }
+}
+
+impl Dispatch<wl_callback::WlCallback, ()> for EventState {
+    fn event(
+        state: &mut Self,
+        _proxy: &wl_callback::WlCallback,
+        event: wl_callback::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let wl_callback::Event::Done { .. } = event {
+            state.frame_done = true;
+            /* the callback is done; dropping it destroys the object */
+            state.frame_callback = None;
         }
     }
 }

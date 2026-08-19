@@ -376,7 +376,9 @@ impl Menu {
             if !self.cfg.alt_tab {
                 let Some(s) = self.selected else { return false };
                 let selected_text = self.items[self.matches[s]].text.clone();
-                let take = selected_text.len().min(TEXT_MAX);
+                // cut at the TEXT_MAX budget on a char boundary; a raw byte
+                // cut could land inside a multi-byte char and panic
+                let take = selected_text.floor_char_boundary(selected_text.len().min(TEXT_MAX));
                 self.text = selected_text[..take].to_string();
                 self.cursor = take;
                 self.do_match();

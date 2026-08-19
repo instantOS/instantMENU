@@ -116,7 +116,9 @@ fn colored_scheme(code: Option<&u8>) -> Option<Scheme> {
 }
 
 /// Port of `outputoffset`: how many chars of the item text are skipped when
-/// drawing, by category.
+/// drawing, by category. (`ItemCategory::Icon` keeps the nominal value for a
+/// 3-byte icon here; `draw_item` computes the real label offset from the
+/// actual icon bytes — see `Menu::draw_icon`.)
 pub fn output_offset(category: ItemCategory) -> usize {
     match category {
         ItemCategory::Normal => 0,

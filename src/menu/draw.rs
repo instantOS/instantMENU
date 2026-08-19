@@ -33,8 +33,9 @@ impl Menu {
         let mut category = self.classify_item(pos, &text, is_selected);
 
         let mut temp_padding = 0;
+        let mut label_offset = 0usize;
         if category == ItemCategory::Colored && bytes.get(2) == Some(&b' ') {
-            temp_padding = self.draw_icon(&text, is_selected, x, y);
+            (temp_padding, label_offset) = self.draw_icon(&text, is_selected, x, y);
             category = ItemCategory::Icon;
         }
 
@@ -48,7 +49,13 @@ impl Menu {
         } else {
             &text
         };
-        let offset = output_offset(category);
+        /* icon items: the label starts after the ":X " prefix plus the actual
+         * icon bytes, which output_offset cannot express statically */
+        let offset = if category == ItemCategory::Icon {
+            label_offset
+        } else {
+            output_offset(category)
+        };
         let shown = output.get(offset..).unwrap_or("");
 
         if is_selected {
@@ -101,10 +108,12 @@ impl Menu {
         category
     }
 
-    /// Draw the icon of a `:X ` item; returns the horizontal padding it used.
-    fn draw_icon(&mut self, text: &str, is_selected: bool, x: i32, y: i32) -> i32 {
+    /// Draw the icon of a `:X ` item; returns the cell padding it used and
+    /// the byte offset of the label inside `text` (the 3-byte prefix plus
+    /// the icon bytes actually drawn).
+    fn draw_icon(&mut self, text: &str, is_selected: bool, x: i32, y: i32) -> (i32, usize) {
         let temp_padding = self.renderer.font_height * 3;
-        // draw the icon (the three bytes after the ":X " prefix)
+        // draw the icon (the bytes after the ":X " prefix, up to 3 bytes)
         let end = (3..=6)
             .rev()
             .find(|&i| text.is_char_boundary(i))
@@ -124,7 +133,7 @@ impl Menu {
         );
         let sc = if is_selected { Scheme::Hover } else { Scheme::Normal };
         self.renderer.set_scheme(sc);
-        temp_padding
+        (temp_padding, end)
     }
 
     pub(super) fn draw_menu(&mut self) {

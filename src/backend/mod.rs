@@ -120,6 +120,12 @@ pub trait Backend {
 
     /// Blit the canvas to the window (`drw_map`).
     fn present(&mut self, canvas: &Canvas);
+    /// Block until the frame committed by the last `present` is on screen.
+    /// The default paces animations at a fixed ~19 ms; Wayland overrides this
+    /// to wait for the compositor's frame callback (vsync).
+    fn wait_frame(&mut self) {
+        std::thread::sleep(std::time::Duration::from_micros(19000));
+    }
     /// Raise the window (XRaiseWindow on VisibilityNotify).
     fn raise(&mut self) {}
     /// Block for the next event, None when the connection died.

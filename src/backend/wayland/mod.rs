@@ -13,7 +13,7 @@ use std::os::fd::{AsRawFd, BorrowedFd};
 use std::os::unix::io::RawFd;
 
 use wayland_client::protocol::{
-    wl_buffer, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer,
+    wl_buffer, wl_callback, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer,
     wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_shm_pool, wl_surface,
 };
 use wayland_client::{Connection, EventQueue, QueueHandle};
@@ -127,6 +127,13 @@ pub struct EventState {
     /// into the buffer here.
     border_width: i32,
     border_color: Color,
+    /// set when the `wl_surface.frame` callback fires; `wait_frame` blocks on
+    /// this so animations pace themselves to the compositor's vsync.
+    frame_done: bool,
+    /// the pending frame callback; kept alive here because dropping the
+    /// proxy destroys the callback, so the `done` event would never arrive
+    /// and `wait_frame` would block forever.
+    frame_callback: Option<wl_callback::WlCallback>,
     /// canvas copy drawn once the first Configure arrives
     pending_frame: Option<(Vec<u8>, i32, i32)>,
 
@@ -171,6 +178,8 @@ impl EventState {
             height: 0,
             border_width: 0,
             border_color: Color::rgb(0, 0, 0),
+            frame_done: false,
+            frame_callback: None,
             pending_frame: None,
             pool: None,
             clipboard_offer: None,
@@ -278,6 +287,12 @@ impl EventState {
         if let Some(surface) = &self.surface {
             surface.attach(Some(&buffer), 0, 0);
             surface.damage_buffer(0, 0, width, height);
+            /* Register a frame callback so wait_frame() can block until this
+             * frame is actually presented — this paces animations to vsync
+             * instead of a fixed sleep. The proxy must be kept alive until
+             * the done event arrives, so it is stored in the state. */
+            self.frame_done = false;
+            self.frame_callback = Some(surface.frame(&self.queue_handle, ()));
             surface.commit();
         }
     }
@@ -546,6 +561,18 @@ impl Backend for WaylandBackend {
         self.pump_pending();
         self.state.draw(&canvas.data, canvas.width, canvas.height);
         let _ = self.connection.flush();
+    }
+
+    fn wait_frame(&mut self) {
+        /* Block until the frame committed by the last present() is on screen.
+         * The frame callback is dispatched by the queue, so release events for
+         * previously-used buffers are processed here too. */
+        while !self.state.frame_done {
+            if self.state.dead {
+                break;
+            }
+            let _ = self.queue.blocking_dispatch(&mut self.state);
+        }
     }
 
     fn next_event(&mut self) -> Option<BackendEvent> {
