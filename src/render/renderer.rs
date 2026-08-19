@@ -155,14 +155,6 @@ impl Renderer {
         width
     }
 
-    /// `drw_fontset_getwidth_clamp` — width of `text` clamped to `n`.
-    pub fn text_width_clamp(&mut self, text: &str, n: i32) -> i32 {
-        if n == 0 {
-            return 0;
-        }
-        self.text_width(text).min(n)
-    }
-
     fn make_buffer(&mut self, text: &str, max_width: Option<f32>) -> Buffer {
         let new_chars: HashSet<char> = text
             .chars()

@@ -75,7 +75,6 @@ pub fn read_stdin(cfg: &Config) -> StdinItems {
     if std::io::stdin().read_to_end(&mut input).is_err() {
         /* keep whatever we got, like getline erroring mid-way */
     }
-    let mut count: i32 = 0;
     let mut items = Vec::new();
     let input = input.strip_suffix(b"\n").unwrap_or(&input);
     for raw in input.split(|&b| b == b'\n').filter(|_| !input.is_empty()) {
@@ -83,14 +82,14 @@ pub fn read_stdin(cfg: &Config) -> StdinItems {
         let cut = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
         let Ok(line) = std::str::from_utf8(&raw[..cut]) else {
             /* C strdup keeps invalid bytes; items are drawn as text so
-             * drop-lossy lines are the closest safe equivalent */
-            count += 1;
+             * drop-lossy lines are the closest safe equivalent.
+             * They are not counted either, so items.len() stays the true count. */
             continue;
         };
         items.push(Item::new(line));
-        count += 1;
     }
 
+    let count = items.len() as i32;
     StdinItems {
         items,
         grid: adjusted_grid(cfg.lines, cfg.columns, count),
