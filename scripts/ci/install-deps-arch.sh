@@ -10,6 +10,7 @@ pacman -S --noconfirm --needed \
   pkgconf \
   git \
   fontconfig \
+  ttf-dejavu \
   libxcb \
   libxkbcommon-x11 \
   wayland \
