@@ -250,11 +250,12 @@ impl Menu {
             self.renderer.set_scheme(Scheme::Normal);
         }
 
+        /* C: curpos = TEXTW(text) - TEXTW(&text[cursor]); the lrpad terms
+         * cancel, leaving the width of the text before the cursor. */
         let mut cursor_position = if self.cfg.commented {
-            self.bar_height
+            0
         } else {
-            self.renderer.text_width(&self.text[..self.cursor])
-                + self.renderer.horizontal_padding
+            self.renderer.text_width(&self.text) - self.renderer.text_width(&self.text[self.cursor..])
         };
         cursor_position += self.renderer.horizontal_padding / 2 - 1;
         if cursor_position < w {

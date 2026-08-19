@@ -500,11 +500,12 @@ impl Dispatch<zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1, ()>
 }
 
 /// Linux evdev button code -> normalized button.
+/// BTN_LEFT = 0x110, BTN_RIGHT = 0x111, BTN_MIDDLE = 0x112.
 fn evdev_button(code: u32) -> Option<MouseButton> {
     match code {
         0x110 => Some(MouseButton::Left),
-        0x111 => Some(MouseButton::Middle),
-        0x112 => Some(MouseButton::Right),
+        0x111 => Some(MouseButton::Right),
+        0x112 => Some(MouseButton::Middle),
         _ => None,
     }
 }
