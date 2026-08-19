@@ -128,3 +128,91 @@ impl Editor {
         target
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Cursor-aware insertion in the middle of multi-byte text.
+    #[test]
+    fn insert_extends_and_moves_cursor() {
+        let mut ed = Editor::new();
+        ed.set_text("hällo");
+        ed.cursor = "h".len(); // between h and ä
+        assert!(ed.apply(EditOp::Insert("x")));
+        assert_eq!(ed.text, "hxällo");
+        assert_eq!(ed.cursor, 2);
+    }
+
+    #[test]
+    fn delete_removes_bytes_before_cursor() {
+        let mut ed = Editor::new();
+        ed.set_text("hällo");
+        ed.cursor = "hä".len();
+        assert!(ed.apply(EditOp::Delete("ä".len())));
+        assert_eq!(ed.text, "hllo");
+        assert_eq!(ed.cursor, 1);
+    }
+
+    /// The C version truncated at BUFSIZ; going over budget rejects the
+    /// whole insert instead.
+    #[test]
+    fn insert_beyond_text_max_is_rejected() {
+        let mut ed = Editor::new();
+        let full = "x".repeat(TEXT_MAX);
+        assert!(ed.apply(EditOp::Insert(&full)));
+        assert!(!ed.apply(EditOp::Insert("x")));
+        assert_eq!(ed.text.len(), TEXT_MAX);
+    }
+
+    /// A multi-byte item longer than the budget must cut on a char boundary,
+    /// not mid-byte.
+    #[test]
+    fn set_text_caps_on_char_boundary() {
+        let mut ed = Editor::new();
+        ed.set_text(&"ä".repeat(TEXT_MAX));
+        assert!(ed.text.len() <= TEXT_MAX);
+        assert!(ed.text.is_char_boundary(ed.text.len()));
+        assert!(ed.text.chars().all(|c| c == 'ä'));
+    }
+
+    #[test]
+    fn next_rune_skips_whole_utf8_chars() {
+        let mut ed = Editor::new();
+        ed.set_text("hällo");
+        ed.cursor = 1;
+        assert_eq!(ed.next_rune(Direction::Forward), 3);
+        assert_eq!(ed.next_rune(Direction::Backward), 0);
+    }
+
+    #[test]
+    fn word_edges_walk_over_delimiters() {
+        let delimiters = " ";
+        let mut ed = Editor::new();
+        ed.set_text("foo bar baz");
+        ed.cursor = "foo bar".len(); // between r and the second space run? no: end of "bar"
+        ed.move_word_edge(Direction::Forward, delimiters);
+        assert_eq!(ed.cursor, "foo bar baz".len());
+        ed.move_word_edge(Direction::Backward, delimiters);
+        assert_eq!(ed.cursor, "foo bar ".len());
+    }
+
+    /// Ctrl-w order (C deleteword): delimiters directly left of the cursor
+    /// first, then the word. The delimiters *before* the word survive.
+    #[test]
+    fn word_delete_target_spans_trailing_delimiters_then_word() {
+        let mut ed = Editor::new();
+        ed.set_text("hello world");
+        ed.cursor = ed.text.len();
+        assert_eq!(ed.word_delete_target(" "), "hello ".len());
+        assert!(ed.apply(EditOp::Delete(ed.cursor - "hello ".len())));
+        assert_eq!(ed.text, "hello ");
+
+        // trailing delimiters go together with the word that follows them
+        ed.set_text("hello   ");
+        ed.cursor = ed.text.len();
+        assert_eq!(ed.word_delete_target(" "), 0);
+        assert!(ed.apply(EditOp::Delete(ed.text.len())));
+        assert_eq!(ed.text, "");
+    }
+}

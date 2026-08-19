@@ -123,3 +123,174 @@ pub(super) fn retreat(sel: &Selection, paging: &Paging) -> (Selection, bool) {
     }
     (sel, false)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 10px per byte, so tests can compute budgets by hand.
+    struct FakeMeasure;
+
+    impl Measure for FakeMeasure {
+        fn text_width(&mut self, s: &str) -> i32 {
+            10 * s.len() as i32
+        }
+        fn text_width_clamp(&mut self, s: &str, n: i32) -> i32 {
+            if n == 0 {
+                return 0;
+            }
+            self.text_width(s).min(n)
+        }
+    }
+
+    fn layout(lines: i32, columns: i32, bar_height: i32, menu_width: i32) -> Layout {
+        Layout {
+            lines,
+            columns,
+            bar_height,
+            menu_width,
+            // horizontal budget: menu_width - (prompt + input + arrows)
+            prompt_width: 0,
+            input_width: 100,
+            ..Layout::default()
+        }
+    }
+
+    fn items(texts: &[&str]) -> Vec<Item> {
+        texts.iter().map(|t| Item::new(*t)).collect()
+    }
+
+    #[test]
+    fn selection_resets_to_top_on_match() {
+        assert_eq!(Selection::from_match(0).selected, None);
+        assert_eq!(Selection::from_match(0).current, None);
+        assert_eq!(Selection::from_match(3), Selection {
+            selected: Some(0),
+            current: Some(0),
+        });
+    }
+
+    /// Vertical list: rows * columns * bar_height pixels per page.
+    #[test]
+    fn vertical_pages_hold_lines_times_columns_rows() {
+        let lay = layout(3, 1, 30, 0);
+        let its = items(&["a"; 7]);
+        let matches: Vec<usize> = (0..7).collect();
+        let sel = Selection {
+            selected: Some(0),
+            current: Some(0),
+        };
+        // 3 rows of 30px fit into the 90px page; the 4th is the next page
+        let paging = calc_paging(&sel, &its, &matches, &lay, &mut FakeMeasure);
+        assert_eq!(paging, Paging { next: Some(3), prev: 0 });
+
+        // page 2 (indices 3..6)
+        let sel = Selection {
+            selected: Some(3),
+            current: Some(3),
+        };
+        let paging = calc_paging(&sel, &its, &matches, &lay, &mut FakeMeasure);
+        assert_eq!(paging, Paging { next: Some(6), prev: 0 });
+    }
+
+    /// Horizontal list: the page is a pixel budget minus prompt, input field
+    /// and the two paging arrows (10px each with FakeMeasure).
+    #[test]
+    fn horizontal_pages_are_a_pixel_budget() {
+        // n = 260 - (0 + 100 + 10 + 10) = 140 → three 40px items
+        let lay = layout(0, 1, 30, 260);
+        let its = items(&["aaaa", "bbbb", "cccc", "dddd"]);
+        let matches: Vec<usize> = (0..4).collect();
+        let sel = Selection {
+            selected: Some(0),
+            current: Some(0),
+        };
+        let paging = calc_paging(&sel, &its, &matches, &lay, &mut FakeMeasure);
+        assert_eq!(paging, Paging { next: Some(3), prev: 0 });
+
+        // wide items clamp to the budget: one per page
+        let its = items(&["abcdefghijklmn", "abcdefghijklmn"]);
+        let matches: Vec<usize> = (0..2).collect();
+        let paging = calc_paging(&sel, &its, &matches, &lay, &mut FakeMeasure);
+        assert_eq!(paging, Paging { next: Some(1), prev: 0 });
+    }
+
+    /// select_next turns the page exactly when it steps onto `next`.
+    #[test]
+    fn advance_turns_at_page_boundary() {
+        let paging = Paging { next: Some(3), prev: 0 };
+
+        let within = Selection {
+            selected: Some(0),
+            current: Some(0),
+        };
+        assert_eq!(
+            advance(&within, 7, &paging),
+            (
+                Selection {
+                    selected: Some(1),
+                    current: Some(0)
+                },
+                false
+            )
+        );
+
+        let boundary = Selection {
+            selected: Some(2),
+            current: Some(0),
+        };
+        assert_eq!(
+            advance(&boundary, 7, &paging),
+            (
+                Selection {
+                    selected: Some(3),
+                    current: Some(3)
+                },
+                true
+            )
+        );
+
+        // the last match does not advance further
+        let end = Selection {
+            selected: Some(6),
+            current: Some(6),
+        };
+        assert_eq!(advance(&end, 7, &paging), (end, false));
+    }
+
+    /// select_prev turns the page when the selection is at the page top.
+    #[test]
+    fn retreat_turns_at_page_top() {
+        let paging = Paging { next: Some(6), prev: 0 };
+
+        let within = Selection {
+            selected: Some(4),
+            current: Some(3),
+        };
+        assert_eq!(
+            retreat(&within, &paging),
+            (
+                Selection {
+                    selected: Some(3),
+                    current: Some(3)
+                },
+                false
+            )
+        );
+
+        let top = Selection {
+            selected: Some(3),
+            current: Some(3),
+        };
+        assert_eq!(
+            retreat(&top, &paging),
+            (
+                Selection {
+                    selected: Some(2),
+                    current: Some(0)
+                },
+                true
+            )
+        );
+    }
+}

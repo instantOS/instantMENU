@@ -236,3 +236,150 @@ impl Matcher {
         MatchResult::Listed
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    fn matcher(cfg_mut: impl FnOnce(&mut Config), items: &[&str]) -> Matcher {
+        let mut cfg = Config::default();
+        cfg_mut(&mut cfg);
+        Matcher::new(items.iter().map(|s| Item::new(*s)).collect(), &cfg)
+    }
+
+    /// dmenu ranking: exact, then prefix, then substring.
+    #[test]
+    fn dmenu_ranks_exact_prefix_substring() {
+        let mut m = matcher(
+            |c| c.match_mode = MatchMode::Dmenu,
+            &["foobar", "foo", "xfoo", "barfoo"],
+        );
+        assert_eq!(m.search("foo"), MatchResult::Listed);
+        assert_eq!(m.matches, vec![1, 0, 2, 3]);
+    }
+
+    /// Every whitespace-separated token must appear; token order does not
+    /// matter (strtok semantics).
+    #[test]
+    fn dmenu_tokens_are_and_combined() {
+        let mut m = matcher(
+            |c| c.match_mode = MatchMode::Dmenu,
+            &["foo bar", "foo", "bar"],
+        );
+        assert_eq!(m.search("bar foo"), MatchResult::Listed);
+        assert_eq!(m.matches, vec![0]);
+    }
+
+    #[test]
+    fn insensitive_matches_across_case() {
+        let mut m = matcher(|c| c.insensitive = true, &["foo", "bar"]);
+        assert_eq!(m.search("FOO"), MatchResult::Listed);
+        assert_eq!(m.matches, vec![0]);
+    }
+
+    /// Smart case starts insensitive; one uppercase letter turns it
+    /// sensitive for good (the C flag was never reset).
+    #[test]
+    fn smart_case_flips_once_and_never_resets() {
+        let mut m = matcher(|c| c.smart_case = true, &["FOO", "foo"]);
+        assert_eq!(m.search("foo"), MatchResult::Listed);
+        assert_eq!(m.matches, vec![0, 1]);
+
+        m.note_uppercase("Foo");
+        assert_eq!(m.search("foo"), MatchResult::Listed);
+        assert_eq!(m.matches, vec![1]);
+
+        // lowercase input must not switch back
+        m.note_uppercase("foo");
+        assert_eq!(m.search("foo"), MatchResult::Listed);
+        assert_eq!(m.matches, vec![1]);
+    }
+
+    /// smart_case is off by default: matching is case-sensitive.
+    #[test]
+    fn default_matching_is_case_sensitive() {
+        let mut m = matcher(|_| (), &["foo"]);
+        assert_eq!(m.search("FOO"), MatchResult::Listed);
+        assert!(m.matches.is_empty());
+    }
+
+    /// commented mode: the first query byte picks the first item starting
+    /// with it; an empty query falls through to the normal matcher.
+    #[test]
+    fn commented_mode_picks_by_first_byte() {
+        let mut m =
+            matcher(|c| c.commented = true, &["yes", "no", "maybe"]);
+        assert_eq!(m.search("n"), MatchResult::CommentPick(Some(1)));
+        assert_eq!(m.search("zzz"), MatchResult::CommentPick(None));
+        assert_eq!(m.search(""), MatchResult::Listed);
+        assert_eq!(m.matches, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn instant_mode_picks_the_single_exact_match() {
+        let mut m = matcher(
+            |c| {
+                c.match_mode = MatchMode::Dmenu;
+                c.instant = true;
+            },
+            &["abc", "bcd"],
+        );
+        assert_eq!(m.search("abc"), MatchResult::InstantPick(0));
+    }
+
+    /// A lone substring match suppresses instant mode — the C had_substr
+    /// gate.
+    #[test]
+    fn instant_mode_is_suppressed_by_substring_matches() {
+        let mut m = matcher(
+            |c| {
+                c.match_mode = MatchMode::Dmenu;
+                c.instant = true;
+            },
+            &["xab"],
+        );
+        assert_eq!(m.search("ab"), MatchResult::Listed);
+        assert_eq!(m.matches, vec![0]);
+    }
+
+    /// Empty query + single item in dmenu mode counts as an exact match and
+    /// fires instant mode...
+    #[test]
+    fn instant_mode_fires_on_empty_dmenu_query() {
+        let mut m = matcher(
+            |c| {
+                c.match_mode = MatchMode::Dmenu;
+                c.instant = true;
+            },
+            &["only"],
+        );
+        assert_eq!(m.search(""), MatchResult::InstantPick(0));
+    }
+
+    /// ...but the fuzzy matcher returns early on an empty query, before the
+    /// instant check.
+    #[test]
+    fn instant_mode_does_not_fire_on_empty_fuzzy_query() {
+        let mut m = matcher(|c| c.instant = true, &["only"]);
+        assert_eq!(m.search(""), MatchResult::Listed);
+        assert_eq!(m.matches, vec![0]);
+    }
+
+    /// Fuzzy scores by subsequence position: same spread but a later start
+    /// ranks worse.
+    #[test]
+    fn fuzzy_ranks_tighter_matches_first() {
+        let mut m = matcher(|_| (), &["foobar", "fobar"]);
+        assert_eq!(m.search("fb"), MatchResult::Listed);
+        assert_eq!(m.matches, vec![1, 0]);
+    }
+
+    /// Exact mode: only exact matches are listed (no prefix/substr ranking).
+    #[test]
+    fn exact_mode_lists_only_exact_matches() {
+        let mut m = matcher(|c| c.match_mode = MatchMode::Exact, &["foo", "foobar"]);
+        assert_eq!(m.search("foo"), MatchResult::Listed);
+        assert_eq!(m.matches, vec![0]);
+    }
+}
