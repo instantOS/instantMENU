@@ -48,7 +48,7 @@ pub struct Args {
     #[arg(long, value_enum, value_name = "BACKEND", default_value = "auto")]
     pub backend: BackendChoice,
 
-    /// Where the menu appears on screen: top, bottom or centered.
+    /// Anchor the menu to a corner, edge or the center of the screen.
     #[arg(
         long,
         value_enum,
@@ -162,33 +162,15 @@ pub struct Args {
     #[arg(long, short = 'l', value_name = "N", value_parser = clap::value_parser!(i32).range(0..))]
     pub lines: Option<i32>,
 
-    /// Window x offset measured from the left side of the monitor.
+    /// Horizontal offset from the anchor position.
     ///
-    /// Can be negative.
-    #[arg(
-        long,
-        short = 'x',
-        value_name = "N",
-        allow_hyphen_values = true,
-        conflicts_with = "right_x_offset"
-    )]
+    /// Positive moves right, negative moves left.
+    #[arg(long, short = 'x', value_name = "N", allow_hyphen_values = true)]
     pub x_offset: Option<i32>,
 
-    /// Window x offset measured from the right side of the monitor.
+    /// Vertical offset from the anchor position.
     ///
-    /// Can be negative.
-    #[arg(
-        long,
-        value_name = "N",
-        allow_hyphen_values = true,
-        conflicts_with = "x_offset"
-    )]
-    pub right_x_offset: Option<i32>,
-
-    /// Window y offset.
-    ///
-    /// Measured from the top of the monitor, or from the bottom with
-    /// --position bottom. Can be negative.
+    /// Positive moves down, negative moves up.
     #[arg(long, short = 'y', value_name = "N", allow_hyphen_values = true)]
     pub y_offset: Option<i32>,
 
@@ -325,7 +307,7 @@ mod tests {
             "-l",
             "10",
             "--position",
-            "centered",
+            "center",
             "--width",
             "-1",
             "--line-height",
@@ -397,6 +379,24 @@ mod tests {
     }
 
     #[test]
+    fn position_anchors_parse() {
+        for (value, expected) in [
+            ("top-left", Position::TopLeft),
+            ("top", Position::Top),
+            ("top-right", Position::TopRight),
+            ("left", Position::Left),
+            ("center", Position::Center),
+            ("right", Position::Right),
+            ("bottom-left", Position::BottomLeft),
+            ("bottom", Position::Bottom),
+            ("bottom-right", Position::BottomRight),
+        ] {
+            let a = Args::try_parse_from(["instantmenu", "--position", value]).unwrap();
+            assert_eq!(a.position, Some(expected), "{value}");
+        }
+    }
+
+    #[test]
     fn match_mode_parses() {
         let a = Args::try_parse_from(["instantmenu", "--match-mode", "exact"]).unwrap();
         assert_eq!(a.match_mode, Some(MatchMode::Exact));
@@ -413,10 +413,6 @@ mod tests {
     #[test]
     fn formerly_silent_overrides_now_rejected() {
         /* both flags used to parse with one silently winning */
-        assert!(
-            Args::try_parse_from(["instantmenu", "--x-offset", "5", "--right-x-offset", "10"])
-                .is_err()
-        );
         assert!(Args::try_parse_from(["instantmenu", "--font", "x", "--monospace"]).is_err());
     }
 

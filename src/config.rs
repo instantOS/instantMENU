@@ -4,7 +4,7 @@
 use crate::render::SchemeStrings;
 use clap::ValueEnum;
 
-pub const VERSION: &str = "4.9";
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// `xresname`
 pub const XRES_NAME: &str = "instantmenu";
@@ -12,12 +12,24 @@ pub const XRES_NAME: &str = "instantmenu";
 /// Where the menu appears on screen (`--position`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Position {
-    /// Top of the screen (the default).
+    /// Top-left corner.
+    TopLeft,
+    /// Top edge, centered horizontally (the default).
     Top,
-    /// Bottom of the screen.
-    Bottom,
+    /// Top-right corner.
+    TopRight,
+    /// Left edge, centered vertically.
+    Left,
     /// Centered on the screen.
-    Centered,
+    Center,
+    /// Right edge, centered vertically.
+    Right,
+    /// Bottom-left corner.
+    BottomLeft,
+    /// Bottom edge, centered horizontally.
+    Bottom,
+    /// Bottom-right corner.
+    BottomRight,
 }
 
 /// Item matching algorithm (`--match-mode`).
@@ -34,7 +46,7 @@ pub enum MatchMode {
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    /* --position option; top (default), bottom, or centered on screen */
+    /* --position option; anchor corner/edge/center on screen */
     pub position: Position,
     /* --follow-cursor option; place menu at mouse position */
     pub follow_cursor: bool,
@@ -104,11 +116,9 @@ pub struct Config {
     pub commented: bool,
     /* -m option; monitor index, -1 = auto */
     pub monitor: i32,
-    /* -x option: window x offset */
+    /* -x option: horizontal nudge from the anchor */
     pub x_offset: i32,
-    /* --right-x-offset option: x offset counted from the right */
-    pub right_x_offset: bool,
-    /* -y option: window y offset */
+    /* -y option: vertical nudge from the anchor */
     pub y_offset: i32,
     /* -w option: make instantmenu this wide */
     pub width: i32,
@@ -174,7 +184,6 @@ impl Default for Config {
             commented: false,
             monitor: -1,
             x_offset: 0,
-            right_x_offset: false,
             y_offset: 0,
             width: 0,
             embed: None,

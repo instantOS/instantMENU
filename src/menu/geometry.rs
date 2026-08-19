@@ -101,27 +101,10 @@ impl Menu {
         }
     }
 
-    /// Geometry on a selected monitor (centered / follow_cursor / offset).
+    /// Geometry on a selected monitor: follow the cursor, or sit at an
+    /// anchor with a pixel nudge.
     fn monitor_geometry(&mut self, monitor: Rect, root: Size, width: i32, layout: &mut Layout) {
-        if self.cfg.position == Position::Centered {
-            if width != 0 && width < monitor.w {
-                layout.menu_width = width;
-            } else {
-                layout.menu_width = monitor.w - 100;
-            }
-
-            while (layout.lines + 1) * layout.bar_height > monitor.h {
-                layout.lines -= 1;
-            }
-
-            layout.menu_height = (layout.lines + 1) * layout.bar_height;
-            layout.x = monitor.x + (monitor.w - layout.menu_width) / 2;
-            layout.y = monitor.y + (monitor.h - layout.menu_height) / 2;
-
-            if layout.y < 0 {
-                layout.y = 0;
-            }
-        } else if self.cfg.follow_cursor {
+        if self.cfg.follow_cursor {
             if width != 0 {
                 layout.menu_width = width;
             } else {
@@ -150,36 +133,35 @@ impl Menu {
                 layout.x = clamped.x;
                 layout.y = clamped.y;
             }
-        } else {
-            let mut y_offset = self.cfg.y_offset;
-            if y_offset <= -1 {
-                if y_offset == -1 {
-                    y_offset = (monitor.h - layout.menu_height) / 2;
-                } else {
-                    y_offset = (self.renderer.font_height as f32 * 1.55) as i32;
-                }
+            return;
+        }
+
+        if self.cfg.position == Position::Center {
+            layout.menu_width = if width != 0 && width < monitor.w {
+                width
+            } else {
+                monitor.w - 100
+            };
+            while (layout.lines + 1) * layout.bar_height > monitor.h {
+                layout.lines -= 1;
             }
+            layout.menu_height = (layout.lines + 1) * layout.bar_height;
+        } else {
             layout.menu_width = if width > 0 && width < monitor.w {
                 width
             } else {
                 monitor.w
             };
-            let mut x_offset = self.cfg.x_offset;
-            if x_offset == -1 {
-                x_offset = (monitor.w - layout.menu_width) / 2;
-            }
-            layout.x = if self.cfg.right_x_offset {
-                monitor.x + monitor.w - x_offset - layout.menu_width - 2 * self.cfg.border_width
-            } else {
-                monitor.x + x_offset
-            };
-            layout.y = monitor.y
-                + if self.cfg.position == Position::Top {
-                    y_offset
-                } else {
-                    monitor.h - layout.menu_height - y_offset
-                };
         }
+
+        let origin = anchor_origin(
+            self.cfg.position,
+            monitor,
+            layout.menu_width,
+            layout.menu_height,
+        );
+        layout.x = origin.x + self.cfg.x_offset;
+        layout.y = origin.y + self.cfg.y_offset;
     }
 
     /// Geometry when embedding into a parent window (`-W`, no monitor info).
@@ -192,14 +174,9 @@ impl Menu {
         let Some(parent) = self.backend.embed_parent_size() else {
             return Err(ExitStatus::Failure);
         };
-        if self.cfg.position == Position::Centered {
-            let max_width = (self.max_text_width() + layout.prompt_width)
-                .max(self.cfg.min_width)
-                .min(parent.w);
-            layout.menu_width = max_width;
-            layout.x = (parent.w - layout.menu_width) / 2;
-            layout.y = (parent.h - layout.menu_height) / 2;
-        } else if self.cfg.follow_cursor {
+        let area = Rect::new(0, 0, parent.w, parent.h);
+
+        if self.cfg.follow_cursor {
             if let Some(pointer) = self.backend.pointer_position() {
                 let mut x = pointer.x;
                 let mut y = pointer.y;
@@ -218,19 +195,27 @@ impl Menu {
                 .max(self.cfg.min_width)
                 .min(parent.w);
             layout.menu_width = max_width;
-        } else {
-            layout.x = self.cfg.x_offset;
-            layout.y = if self.cfg.position == Position::Top {
-                self.cfg.y_offset
-            } else {
-                parent.h - layout.menu_height - self.cfg.y_offset
-            };
-            layout.menu_width = if width > 0 && width < parent.w {
-                width
-            } else {
-                parent.w
-            };
+            return Ok(());
         }
+
+        layout.menu_width = if self.cfg.position == Position::Center {
+            (self.max_text_width() + layout.prompt_width)
+                .max(self.cfg.min_width)
+                .min(parent.w)
+        } else if width > 0 && width < parent.w {
+            width
+        } else {
+            parent.w
+        };
+
+        let origin = anchor_origin(
+            self.cfg.position,
+            area,
+            layout.menu_width,
+            layout.menu_height,
+        );
+        layout.x = origin.x + self.cfg.x_offset;
+        layout.y = origin.y + self.cfg.y_offset;
         Ok(())
     }
 
@@ -345,6 +330,22 @@ impl Menu {
     }
 }
 
+/// Top-left corner of a `width`×`height` window anchored to `area`, before
+/// any `--x-offset`/`--y-offset` nudge.
+fn anchor_origin(position: Position, area: Rect, width: i32, height: i32) -> Point {
+    let x = match position {
+        Position::TopLeft | Position::Left | Position::BottomLeft => area.x,
+        Position::Top | Position::Center | Position::Bottom => area.x + (area.w - width) / 2,
+        Position::TopRight | Position::Right | Position::BottomRight => area.x + area.w - width,
+    };
+    let y = match position {
+        Position::TopLeft | Position::Top | Position::TopRight => area.y,
+        Position::Left | Position::Center | Position::Right => area.y + (area.h - height) / 2,
+        Position::BottomLeft | Position::Bottom | Position::BottomRight => area.y + area.h - height,
+    };
+    Point::new(x, y)
+}
+
 /// Pick the monitor index from `-m`, the focused monitor, or the pointer.
 fn select_monitor(monitors: &[MonitorInfo], cfg_monitor: i32, backend: &dyn Backend) -> usize {
     let n = monitors.len() as i32;
@@ -369,4 +370,30 @@ fn select_monitor(monitors: &[MonitorInfo], cfg_monitor: i32, backend: &dyn Back
         }
     }
     i
+}
+
+#[cfg(test)]
+mod tests {
+    use super::anchor_origin;
+    use crate::config::Position;
+    use crate::geom::{Point, Rect};
+
+    /// Each anchor places the window's top-left corner at the matching
+    /// corner/edge-center of the area, before any nudge.
+    #[test]
+    fn anchors_place_the_window_corner() {
+        let area = Rect::new(100, 50, 1000, 600);
+        let width = 200;
+        let height = 100;
+
+        assert_eq!(anchor_origin(Position::TopLeft, area, width, height), Point::new(100, 50));
+        assert_eq!(anchor_origin(Position::Top, area, width, height), Point::new(500, 50));
+        assert_eq!(anchor_origin(Position::TopRight, area, width, height), Point::new(900, 50));
+        assert_eq!(anchor_origin(Position::Left, area, width, height), Point::new(100, 300));
+        assert_eq!(anchor_origin(Position::Center, area, width, height), Point::new(500, 300));
+        assert_eq!(anchor_origin(Position::Right, area, width, height), Point::new(900, 300));
+        assert_eq!(anchor_origin(Position::BottomLeft, area, width, height), Point::new(100, 550));
+        assert_eq!(anchor_origin(Position::Bottom, area, width, height), Point::new(500, 550));
+        assert_eq!(anchor_origin(Position::BottomRight, area, width, height), Point::new(900, 550));
+    }
 }

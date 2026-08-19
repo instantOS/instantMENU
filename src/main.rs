@@ -171,10 +171,6 @@ fn apply_values(
     if let Some(x) = args.x_offset {
         cfg.x_offset = x;
     }
-    if let Some(x) = args.right_x_offset {
-        cfg.right_x_offset = true;
-        cfg.x_offset = x;
-    }
     if let Some(y) = args.y_offset {
         cfg.y_offset = y;
     }
