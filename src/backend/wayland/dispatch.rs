@@ -19,6 +19,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 use xkbcommon::xkb::{Keycode, KeyDirection};
 
 use crate::backend::{MouseButton, XKB_OFFSET};
+use crate::geom::{Point, Rect};
 use super::selection::{load_keymap, x11_mask};
 use super::{BackendEvent, EventState, MonitorInfo, OfferTracker, OutputEntry};
 
@@ -72,10 +73,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for EventState {
                         state.outputs.push(OutputEntry {
                             proxy,
                             info: MonitorInfo {
-                                x: 0,
-                                y: 0,
-                                width: 0,
-                                height: 0,
+                                rect: Rect::default(),
                                 name: String::new(),
                             },
                         });
@@ -119,14 +117,14 @@ impl Dispatch<wl_output::WlOutput, ()> for EventState {
         let Some(i) = state.outputs.iter().position(|o| o.proxy == *proxy) else { return };
         match event {
             wl_output::Event::Geometry { x, y, .. } => {
-                state.outputs[i].info.x = x;
-                state.outputs[i].info.y = y;
+                state.outputs[i].info.rect.x = x;
+                state.outputs[i].info.rect.y = y;
             }
             wl_output::Event::Mode { flags, width, height, .. } => {
                 if let WEnum::Value(f) = flags {
                     if f.contains(wl_output::Mode::Current) {
-                        state.outputs[i].info.width = width;
-                        state.outputs[i].info.height = height;
+                        state.outputs[i].info.rect.w = width;
+                        state.outputs[i].info.rect.h = height;
                     }
                 }
             }
@@ -244,8 +242,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
                 state.pointer_y = surface_y;
                 state.events.push_back(BackendEvent::Motion {
                     time,
-                    x: surface_x as i32,
-                    y: surface_y as i32,
+                    pos: Point::new(surface_x as i32, surface_y as i32),
                 });
             }
             wl_pointer::Event::Button { button, state: button_state, .. } => {
@@ -254,8 +251,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
                     state.events.push_back(BackendEvent::ButtonPress {
                         button,
                         state: mods,
-                        x: state.pointer_x as i32,
-                        y: state.pointer_y as i32,
+                        pos: Point::new(state.pointer_x as i32, state.pointer_y as i32),
                     });
                 }
             }
@@ -266,8 +262,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
                         state.events.push_back(BackendEvent::ButtonPress {
                             button: if value > 0.0 { MouseButton::ScrollDown } else { MouseButton::ScrollUp },
                             state: mods,
-                            x: -1,
-                            y: -1,
+                            pos: Point::new(-1, -1),
                         });
                     }
                 }

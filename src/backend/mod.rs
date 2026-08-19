@@ -4,22 +4,15 @@
 pub mod wayland;
 pub mod x11;
 
+use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
 
 /// A monitor, port of `XineramaScreenInfo` usage in instantmenu.c.
 #[derive(Debug, Clone)]
 pub struct MonitorInfo {
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
+    /// The monitor's bounds in root coordinates.
+    pub rect: Rect,
     pub name: String,
-}
-
-/// INTERSECT macro: overlap area of rect (x, y, w, h) with a monitor.
-pub fn intersect_area(x: i32, y: i32, w: i32, h: i32, monitor: &MonitorInfo) -> i32 {
-    (0.max((x + w).min(monitor.x + monitor.width) - x.max(monitor.x)))
-        * (0.max((y + h).min(monitor.y + monitor.height) - y.max(monitor.y)))
 }
 
 /// A mouse button (or scroll-wheel direction), normalized across backends.
@@ -50,14 +43,12 @@ pub enum BackendEvent {
     ButtonPress {
         button: MouseButton,
         state: u32,
-        x: i32,
-        y: i32,
+        pos: Point,
     },
     Motion {
         /// Server timestamp (ms) for the 60fps throttle.
         time: u32,
-        x: i32,
-        y: i32,
+        pos: Point,
     },
     /// Redraw needed (Expose on X11).
     Expose,
@@ -76,9 +67,9 @@ pub enum BackendEvent {
 pub trait Backend {
     fn monitors(&self) -> &[MonitorInfo];
     /// Size of the root window / total output area (`drw->w/h`).
-    fn root_size(&self) -> (i32, i32);
+    fn root_size(&self) -> Size;
     /// Root pointer position (`getrootptr`).
-    fn pointer_position(&self) -> Option<(i32, i32)> {
+    fn pointer_position(&self) -> Option<Point> {
         None
     }
     /// Monitor index of the focused window, if known (X11 only).
@@ -87,7 +78,7 @@ pub trait Backend {
     }
     /// Size of the embedding parent window (`-W`), or the root window when
     /// not embedding. None when there is no parent to query.
-    fn embed_parent_size(&self) -> Option<(i32, i32)> {
+    fn embed_parent_size(&self) -> Option<Size> {
         None
     }
 
@@ -96,10 +87,7 @@ pub trait Backend {
     /// keyboard interactivity; X11 grabs separately).
     fn create_window(
         &mut self,
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
+        rect: Rect,
         border_width: i32,
         managed: bool,
         grab: bool,
@@ -110,7 +98,7 @@ pub trait Backend {
     /// XMapRaised + embedding reparenting when `-W` was given.
     fn map_window(&mut self) {}
     /// Embedding: reparent + select input on parent + grab focus.
-    fn embed_setup(&mut self, _x: i32, _y: i32) {}
+    fn embed_setup(&mut self, _pos: Point) {}
     /// XGrabKeyboard retry loop (dies on failure like the C version).
     fn grab_keyboard(&mut self) {}
     /// Focus grab loop; `title` is set as WM_NAME in managed mode.

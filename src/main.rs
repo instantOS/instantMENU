@@ -1,12 +1,12 @@
 //! Port of `main()` from instantmenu.c: argument layering (defaults → X
 //! resources → command line), fontset creation, stdin/keyboard ordering and
-//! the width fallback for negative `-w`.
+//! driving the menu through setup and the event loop.
 
 use instantmenu::backend;
 use instantmenu::cli;
 use instantmenu::config::Config;
 use instantmenu::enums::{ColorRole, ExitStatus, Scheme};
-use instantmenu::menu::Menu;
+use instantmenu::menu::{self, Menu};
 use instantmenu::render::Renderer;
 use clap::Parser;
 use std::io::IsTerminal;
@@ -48,13 +48,13 @@ fn main() {
     if fast && grab {
         backend.grab_keyboard();
     }
-    let items = Menu::read_stdin(&mut cfg);
+    let stdin = menu::read_stdin(&cfg);
     if !fast && grab {
         backend.grab_keyboard();
     }
 
     let mut required_chars = std::collections::HashSet::new();
-    for item in &items {
+    for item in &stdin.items {
         required_chars.extend(item.text.chars());
     }
     for text in [
@@ -80,17 +80,19 @@ fn main() {
 
     let mut menu = Menu::new(cfg, renderer, backend);
 
-    /* -it: seed the input before reading stdin, with rejectnomatch off */
+    /* -it: seed the input before the items are loaded (the argv-loop order),
+     * with rejectnomatch off */
     if let Some(t) = args.initial_text.clone() {
-        menu.initial_text(&t);
+        if let Some(status) = menu.initial_text(&t) {
+            status.exit();
+        }
     }
-    menu.items = items;
+    menu.load_items(stdin);
 
-    /* negative -w: use the wider of |width| and the computed item width */
-    apply_negative_width(&mut menu);
-
-    menu.setup();
-    menu.run();
+    if let Some(status) = menu.setup() {
+        status.exit();
+    }
+    menu.run().exit();
 }
 
 /// Boolean flags: applied before the value options they gate.
@@ -244,32 +246,6 @@ fn apply_resources(backend: &dyn backend::Backend, cfg: &mut Config) {
                     *cfg.colors[scheme as usize].role_mut(role) = value.clone();
                 }
             }
-        }
-    }
-}
-
-/// negative `-w`: use the wider of |width| and the computed item width.
-fn apply_negative_width(menu: &mut Menu) {
-    if menu.cfg.width <= -1 {
-        const AUTO_WIDTH_WARNING_ITEMS: usize = 256;
-        if menu.items.len() >= AUTO_WIDTH_WARNING_ITEMS {
-            eprintln!(
-                "instantmenu: warning: --width {} requires measuring all {} items; use a positive width for large lists",
-                menu.cfg.width,
-                menu.items.len()
-            );
-        }
-        let prompt_text = menu.cfg.prompt.clone();
-        let prompt_width = match &prompt_text {
-            Some(p) => menu.text_width(p),
-            None => 0,
-        };
-        let max_width = (menu.max_text_width() as f64 * 1.3 * menu.cfg.columns.max(1) as f64
-            + prompt_width as f64) as i32;
-        if -menu.cfg.width > max_width {
-            menu.cfg.width = -menu.cfg.width;
-        } else {
-            menu.cfg.width = max_width;
         }
     }
 }

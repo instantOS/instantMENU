@@ -8,6 +8,7 @@ use cosmic_text::{
 };
 
 use crate::enums::Scheme;
+use crate::geom::Rect;
 
 use super::canvas::Canvas;
 use super::color::{scheme_from_strings, Color, SchemeColors, SchemeStrings};
@@ -100,28 +101,29 @@ impl Renderer {
     }
 
     pub fn clear(&mut self, canvas: &mut Canvas, color: Color) {
-        canvas.fill_rect(0, 0, canvas.width, canvas.height, color.channels());
+        canvas.fill_rect(Rect::with_size(canvas.size()), color.channels());
         self.frame_background = Some(color);
     }
 
     /// drw_rect — filled rect in the current scheme; `invert` swaps fg/bg,
     /// `accent` paints the bottom 4px strip with the detail color.
-    pub fn rect(&mut self, canvas: &mut Canvas, x: i32, y: i32, w: i32, h: i32, filled: bool, invert: bool, accent: bool) {
+    pub fn rect(&mut self, canvas: &mut Canvas, rect: Rect, filled: bool, invert: bool, accent: bool) {
         let color = if invert { self.scheme.bg } else { self.scheme.fg };
-        if filled && h < 40 {
+        if filled && rect.h < 40 {
             if accent {
-                self.fill_rect(canvas, x, y, w, h - 4, color);
-                self.fill_rect(canvas, x, y + h - 4, w, 4, self.scheme.detail);
+                self.fill_rect(canvas, rect, color);
+                let strip = Rect::new(rect.x, rect.bottom() - 4, rect.w, 4);
+                self.fill_rect(canvas, strip, self.scheme.detail);
             } else {
-                self.fill_rect(canvas, x, y, w, h, color);
+                self.fill_rect(canvas, rect, color);
             }
         } else {
-            self.fill_rect(canvas, x, y, w, h, color);
+            self.fill_rect(canvas, rect, color);
         }
     }
 
-    fn fill_rect(&self, canvas: &mut Canvas, x: i32, y: i32, w: i32, h: i32, color: Color) {
-        canvas.fill_rect(x, y, w, h, color.channels());
+    fn fill_rect(&self, canvas: &mut Canvas, rect: Rect, color: Color) {
+        canvas.fill_rect(rect, color.channels());
     }
 
     /// `drw_fontset_getwidth` — width of `text` (without lrpad).
@@ -215,7 +217,7 @@ impl Renderer {
             .ceil() as i32
     }
 
-    /// drw_text — draw `text` at (x, y, w, h) with `left_padding` padding.
+    /// drw_text — draw `text` in `cell` with `left_padding` padding.
     /// `invert` swaps fg/bg, `accent` paints a 4px detail strip at the
     /// bottom and shifts the text up by 2px. Text that does not fit is
     /// truncated with an ellipsis ("..."). Returns the x position after the
@@ -223,15 +225,13 @@ impl Renderer {
     pub fn text(
         &mut self,
         canvas: &mut Canvas,
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
+        cell: Rect,
         left_padding: i32,
         text: &str,
         invert: bool,
         accent: bool,
     ) -> i32 {
+        let Rect { x, y, w, h } = cell;
         let render = x != 0 || y != 0 || w != 0 || h != 0;
         if !render {
             // measuring call: width of the full text
@@ -244,10 +244,14 @@ impl Renderer {
         // background
         let fill = if invert { self.scheme.fg } else { self.scheme.bg };
         if accent {
-            self.fill_rect(canvas, x, y, w, h - 4, fill);
-            self.fill_rect(canvas, x, y + h - 4, w, 4, self.scheme.detail);
+            self.fill_rect(canvas, Rect::new(x, y, w, h - 4), fill);
+            self.fill_rect(
+                canvas,
+                Rect::new(x, y + h - 4, w, 4),
+                self.scheme.detail,
+            );
         } else if self.frame_background != Some(fill) {
-            self.fill_rect(canvas, x, y, w, h, fill);
+            self.fill_rect(canvas, cell, fill);
         }
         if w < left_padding {
             return x + w;
@@ -269,7 +273,7 @@ impl Renderer {
             let mut lo = 0usize;
             let mut hi = chars.len();
             while lo < hi {
-                let mid = (lo + hi + 1) / 2;
+                let mid = (lo + hi).div_ceil(2);
                 let end = if mid < chars.len() { chars[mid].0 } else { text.len() };
                 if self.text_width(&text[..end]) <= max_text_width {
                     lo = mid;
@@ -330,7 +334,7 @@ impl Renderer {
                 if cx < 0 || cy < 0 || cx >= width || cy >= height {
                     return;
                 }
-                canvas.blend_pixel(cx, cy, px_color);
+                canvas.blend_pixel(crate::geom::Point::new(cx, cy), px_color);
             },
         );
         if self.layout_cache.len() >= 1024 {

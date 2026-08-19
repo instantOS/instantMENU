@@ -29,6 +29,7 @@ use xkbcommon::xkb;
 
 use selection::pump_offer;
 use super::{Backend, BackendEvent, MonitorInfo};
+use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
 
 pub struct WaylandBackend {
@@ -190,13 +191,12 @@ impl EventState {
     }
 
     /// Monitor containing the given global-coordinate point, or the first.
-    fn output_for_point(&self, x: i32, y: i32) -> usize {
+    /// Half-open bounds, so a point on the shared edge belongs to the
+    /// left/top output only.
+    fn output_for_point(&self, pos: Point) -> usize {
         for (i, out) in self.outputs.iter().enumerate() {
-            if x >= out.info.x
-                && x < out.info.x + out.info.width
-                && y >= out.info.y
-                && y < out.info.y + out.info.height
-            {
+            let r = out.info.rect;
+            if pos.x >= r.x && pos.x < r.right() && pos.y >= r.y && pos.y < r.bottom() {
                 return i;
             }
         }
@@ -424,17 +424,14 @@ impl WaylandBackend {
     fn create_layer(
         &mut self,
         surface: &wl_surface::WlSurface,
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
+        rect: Rect,
         grab: bool,
     ) -> Result<(), String> {
         let state = &mut self.state;
         let shell = state.layer_shell.as_ref().ok_or(
             "compositor has no wlr-layer-shell (use -wm for managed windows)",
         )?;
-        let output_index = state.output_for_point(x, y);
+        let output_index = state.output_for_point(rect.origin());
         let output = state.outputs.get(output_index).map(|o| o.proxy.clone());
         let layer_surface = shell.get_layer_surface(
             surface,
@@ -448,23 +445,25 @@ impl WaylandBackend {
         /* translate the X11-style absolute geometry into an anchor and
          * margins on the chosen output: anchor the edge the menu sits on,
          * offset from the left; set_size is then honored for both axes */
-        let monitor = state.outputs.get(output_index).map(|o| o.info.clone()).unwrap_or(
-            MonitorInfo { x: 0, y: 0, width: w, height: h, name: String::new() },
-        );
+        let monitor = state
+            .outputs
+            .get(output_index)
+            .map(|o| o.info.rect)
+            .unwrap_or(rect);
 
         let mut anchor = zwlr_layer_surface_v1::Anchor::Left;
         let top;
         let bottom;
-        if y + h / 2 >= monitor.y + monitor.height / 2 {
+        if rect.y + rect.h / 2 >= monitor.y + monitor.h / 2 {
             anchor |= zwlr_layer_surface_v1::Anchor::Bottom;
             top = 0;
-            bottom = (monitor.y + monitor.height - (y + h)).max(0);
+            bottom = (monitor.bottom() - rect.bottom()).max(0);
         } else {
             anchor |= zwlr_layer_surface_v1::Anchor::Top;
-            top = (y - monitor.y).max(0);
+            top = (rect.y - monitor.y).max(0);
             bottom = 0;
         }
-        let left = (x - monitor.x).max(0);
+        let left = (rect.x - monitor.x).max(0);
 
         layer_surface.set_anchor(anchor);
         layer_surface.set_margin(top, 0, bottom, left);
@@ -473,7 +472,7 @@ impl WaylandBackend {
         } else {
             zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand
         });
-        layer_surface.set_size(w.max(1) as u32, h.max(1) as u32);
+        layer_surface.set_size(rect.w.max(1) as u32, rect.h.max(1) as u32);
         surface.commit();
         state.surface = Some(surface.clone());
         state.layer_surface = Some(layer_surface);
@@ -486,31 +485,28 @@ impl Backend for WaylandBackend {
         &self.state.monitors
     }
 
-    fn root_size(&self) -> (i32, i32) {
+    fn root_size(&self) -> Size {
         /* the union of all outputs */
         let mut min_x = i32::MAX;
         let mut min_y = i32::MAX;
         let mut max_x = i32::MIN;
         let mut max_y = i32::MIN;
         for out in &self.state.outputs {
-            min_x = min_x.min(out.info.x);
-            min_y = min_y.min(out.info.y);
-            max_x = max_x.max(out.info.x + out.info.width);
-            max_y = max_y.max(out.info.y + out.info.height);
+            min_x = min_x.min(out.info.rect.x);
+            min_y = min_y.min(out.info.rect.y);
+            max_x = max_x.max(out.info.rect.right());
+            max_y = max_y.max(out.info.rect.bottom());
         }
         if min_x > max_x {
-            (0, 0)
+            Size::new(0, 0)
         } else {
-            (max_x - min_x, max_y - min_y)
+            Size::new(max_x - min_x, max_y - min_y)
         }
     }
 
     fn create_window(
         &mut self,
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
+        rect: Rect,
         border_width: i32,
         managed: bool,
         grab: bool,
@@ -519,8 +515,8 @@ impl Backend for WaylandBackend {
         border_color: Color,
     ) -> Result<(), String> {
         let border_width = border_width.max(0);
-        self.state.width = w + 2 * border_width;
-        self.state.height = h + 2 * border_width;
+        self.state.width = rect.w + 2 * border_width;
+        self.state.height = rect.h + 2 * border_width;
         self.state.border_width = border_width;
         self.state.border_color = border_color;
 
@@ -536,10 +532,12 @@ impl Backend for WaylandBackend {
         } else {
             self.create_layer(
                 &surface,
-                x,
-                y,
-                w + 2 * border_width,
-                h + 2 * border_width,
+                Rect::new(
+                    rect.x,
+                    rect.y,
+                    rect.w + 2 * border_width,
+                    rect.h + 2 * border_width,
+                ),
                 grab,
             )
         }

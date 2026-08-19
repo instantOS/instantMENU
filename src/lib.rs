@@ -5,5 +5,6 @@ pub mod backend;
 pub mod cli;
 pub mod config;
 pub mod enums;
+pub mod geom;
 pub mod menu;
 pub mod render;

@@ -2,19 +2,20 @@
 
 use super::{Menu, LEFT_GLYPH, RIGHT_GLYPH};
 use crate::enums::{output_offset, ItemCategory, Scheme};
+use crate::geom::Rect;
 
 impl Menu {
     /// recalculate_numbers
     fn recalculate_numbers(&mut self) {
-        let match_count = self.matches.len();
+        let match_count = self.matcher.matches.len();
         if self.cfg.toast != 0 {
             self.show_numbers = false;
             return;
         }
-        let item_count = self.items.len();
+        let item_count = self.matcher.items.len();
         if match_count > 1 {
-            if self.cfg.lines > 1 {
-                self.show_numbers = match_count > self.cfg.lines as usize;
+            if self.layout.lines > 1 {
+                self.show_numbers = match_count > self.layout.lines as usize;
             } else {
                 self.show_numbers = true;
             }
@@ -24,10 +25,10 @@ impl Menu {
         self.numbers = format!("{match_count}/{item_count}");
     }
 
-    /// draw_item — draws one item at (x, y, w), returns the advanced x.
-    fn draw_item(&mut self, pos: usize, x: i32, y: i32, w: i32) -> i32 {
-        let is_selected = self.selected == Some(pos);
-        let text = self.items[self.matches[pos]].text.clone();
+    /// draw_item — draws one item in `cell`.
+    fn draw_item(&mut self, pos: usize, cell: Rect) {
+        let is_selected = self.selection.selected == Some(pos);
+        let text = self.matcher.text_of_match(pos).to_string();
         let bytes = text.as_bytes();
 
         let mut category = self.classify_item(pos, &text, is_selected);
@@ -35,7 +36,7 @@ impl Menu {
         let mut temp_padding = 0;
         let mut label_offset = 0usize;
         if category == ItemCategory::Colored && bytes.get(2) == Some(&b' ') {
-            (temp_padding, label_offset) = self.draw_icon(&text, is_selected, x, y);
+            (temp_padding, label_offset) = self.draw_icon(&text, is_selected, cell.x, cell.y);
             category = ItemCategory::Icon;
         }
 
@@ -59,32 +60,29 @@ impl Menu {
         let shown = output.get(offset..).unwrap_or("");
 
         if is_selected {
-            self.selected_y = y;
+            self.selected_y = cell.y;
         }
 
-        let x_in = x + if category == ItemCategory::Icon { temp_padding } else { 0 };
-        let w_in = if self.cfg.commented {
-            self.bar_height
+        let label_x = cell.x + if category == ItemCategory::Icon { temp_padding } else { 0 };
+        let label_w = if self.cfg.commented {
+            self.layout.bar_height
         } else {
-            w - if category == ItemCategory::Icon { temp_padding } else { 0 }
+            cell.w - if category == ItemCategory::Icon { temp_padding } else { 0 }
         };
         let left_padding = if self.cfg.commented {
-            (self.bar_height - self.renderer.text_width(output)) / 2
+            (self.layout.bar_height - self.renderer.text_width(output)) / 2
         } else {
             self.renderer.horizontal_padding / 2
         };
 
         self.renderer.text(
             &mut self.canvas,
-            x_in,
-            y,
-            w_in,
-            self.bar_height,
+            Rect::new(label_x, cell.y, label_w, self.layout.bar_height),
             left_padding,
             shown,
             false,
             category == ItemCategory::ColoredComment || is_selected,
-        )
+        );
     }
 
     /// Classify an item by its `>`/`:` prefix and set the matching scheme.
@@ -96,7 +94,7 @@ impl Menu {
                 // plain item: the scheme follows selection/output state
                 if is_selected {
                     Scheme::Selected
-                } else if self.items[self.matches[pos]].already_output {
+                } else if self.matcher.items[self.matcher.matches[pos]].already_output {
                     Scheme::Output
                 } else {
                     Scheme::Normal
@@ -122,10 +120,7 @@ impl Menu {
         let left_padding = (temp_padding as f64 / 2.6) as i32;
         self.renderer.text(
             &mut self.canvas,
-            x,
-            y,
-            temp_padding,
-            self.cfg.line_height,
+            Rect::new(x, y, temp_padding, self.cfg.line_height),
             left_padding,
             icon_text,
             false,
@@ -153,9 +148,9 @@ impl Menu {
 
         self.recalculate_numbers();
 
-        if self.cfg.lines > 0 {
+        if self.layout.lines > 0 {
             self.draw_grid(x, y);
-        } else if !self.matches.is_empty() {
+        } else if !self.matcher.matches.is_empty() {
             self.draw_horizontal_list(x);
         }
 
@@ -165,7 +160,7 @@ impl Menu {
 
     /// commented mode: the prompt follows the selected item.
     fn update_commented_prompt(&mut self) {
-        if self.cfg.commented && !self.matches.is_empty() {
+        if self.cfg.commented && !self.matcher.matches.is_empty() {
             let selected_text = self.selected_text().unwrap_or_default();
             let stripped = selected_text.get(1..).unwrap_or("");
             self.comment_prompt = Some(stripped.to_string());
@@ -180,82 +175,47 @@ impl Menu {
                 *x += arrow_width;
             }
             self.renderer.set_scheme(Scheme::Selected);
-            if self.cfg.lines < 8 {
-                *x = self.renderer.text(
-                    &mut self.canvas,
-                    *x,
-                    0,
-                    self.prompt_width,
-                    self.bar_height * (self.cfg.lines + 1),
-                    self.renderer.horizontal_padding / 2,
-                    &prompt,
-                    true,
-                    false,
-                );
+            // short menus: the prompt spans all rows, tall ones one row
+            let prompt_height = if self.layout.lines < 8 {
+                self.layout.bar_height * (self.layout.lines + 1)
             } else {
-                *x = self.renderer.text(
-                    &mut self.canvas,
-                    *x,
-                    0,
-                    self.prompt_width,
-                    self.bar_height,
-                    self.renderer.horizontal_padding / 2,
-                    &prompt,
-                    true,
-                    false,
-                );
-            }
+                self.layout.bar_height
+            };
+            *x = self.renderer.text(
+                &mut self.canvas,
+                Rect::new(*x, 0, self.layout.prompt_width, prompt_height),
+                self.renderer.horizontal_padding / 2,
+                &prompt,
+                true,
+                false,
+            );
         }
     }
 
     /// Draw the input field (text, search_text placeholder or password dots)
     /// and the cursor.
     fn draw_input_field(&mut self, x: i32, arrow_width: i32, font_height: i32) {
-        let w = if self.cfg.lines > 0 || self.matches.is_empty() {
-            self.menu_width - x
+        let w = if self.layout.lines > 0 || self.matcher.matches.is_empty() {
+            self.layout.menu_width - x
         } else {
-            self.input_width
+            self.layout.input_width
         };
         self.renderer.set_scheme(Scheme::Normal);
+        let field_x = x + if self.cfg.left_command.is_some() { arrow_width } else { 0 };
+        let field = Rect::new(field_x, 0, w, self.layout.bar_height);
+        let lpad = self.renderer.horizontal_padding / 2;
 
         if self.cfg.password {
-            let dots = ".".repeat(self.text.len());
-            self.renderer.text(
-                &mut self.canvas,
-                x,
-                0,
-                w,
-                self.bar_height,
-                self.renderer.horizontal_padding / 2,
-                &dots,
-                false,
-                false,
-            );
-        } else if !self.text.is_empty() {
-            self.renderer.text(
-                &mut self.canvas,
-                x + if self.cfg.left_command.is_some() { arrow_width } else { 0 },
-                0,
-                w,
-                self.bar_height,
-                self.renderer.horizontal_padding / 2,
-                &self.text,
-                false,
-                false,
-            );
+            let dots = ".".repeat(self.editor.text.len());
+            self.renderer
+                .text(&mut self.canvas, field, lpad, &dots, false, false);
+        } else if !self.editor.text.is_empty() {
+            self.renderer
+                .text(&mut self.canvas, field, lpad, &self.editor.text, false, false);
         } else if let Some(search_text) = self.cfg.search_text.as_deref() {
             self.renderer.set_scheme(Scheme::Fade);
-            self.renderer.text(
-                &mut self.canvas,
-                x + if self.cfg.left_command.is_some() { arrow_width } else { 0 },
-                0,
-                w,
-                self.bar_height,
-                self.renderer.horizontal_padding / 2,
-                search_text,
-                false,
-                false,
-            );
+            self.renderer
+                .text(&mut self.canvas, field, lpad, search_text, false, false);
             self.renderer.set_scheme(Scheme::Normal);
         }
 
@@ -264,7 +224,10 @@ impl Menu {
         let mut cursor_position = if self.cfg.commented {
             0
         } else {
-            self.renderer.text_width(&self.text) - self.renderer.text_width(&self.text[self.cursor..])
+            self.renderer.text_width(&self.editor.text)
+                - self
+                    .renderer
+                    .text_width(&self.editor.text[self.editor.cursor..])
         };
         cursor_position += self.renderer.horizontal_padding / 2 - 1;
         if cursor_position < w {
@@ -273,11 +236,12 @@ impl Menu {
             if !self.cfg.password && self.cfg.toast == 0 {
                 self.renderer.rect(
                     &mut self.canvas,
-                    x + if self.cfg.left_command.is_some() { arrow_width } else { 0 }
-                        + cursor_position,
-                    2 + (self.bar_height - font_height) / 2,
-                    2,
-                    font_height - 4,
+                    Rect::new(
+                        field_x + cursor_position,
+                        2 + (self.layout.bar_height - font_height) / 2,
+                        2,
+                        font_height - 4,
+                    ),
                     true,
                     false,
                     false,
@@ -288,26 +252,24 @@ impl Menu {
 
     /// Draw the vertical list / grid of items.
     fn draw_grid(&mut self, x: i32, y: i32) {
-        let start = self.current.unwrap_or(0);
-        let end = self.next.unwrap_or(self.matches.len());
+        let start = self.selection.current.unwrap_or(0);
+        let end = self.paging.next.unwrap_or(self.matcher.matches.len());
         for (i, pos) in (start..end).enumerate() {
-            let (item_x, item_y, column_width) = self.grid_cell_rect(i, x, y);
-            self.draw_item(pos, item_x, item_y, column_width);
+            let cell = self.layout.grid_cell_rect(i, x, y);
+            self.draw_item(pos, cell);
         }
     }
 
     /// Draw the horizontal list of items with the paging arrows.
     fn draw_horizontal_list(&mut self, x: i32) {
-        let left_arrow_x = x + self.input_width;
+        let bar_height = self.layout.bar_height;
+        let left_arrow_x = x + self.layout.input_width;
         let arrow_width = self.text_width("<");
-        if self.current.map(|c| c > 0).unwrap_or(false) {
+        if self.selection.current.map(|c| c > 0).unwrap_or(false) {
             self.renderer.set_scheme(Scheme::Normal);
             self.renderer.text(
                 &mut self.canvas,
-                left_arrow_x,
-                0,
-                arrow_width,
-                self.bar_height,
+                Rect::new(left_arrow_x, 0, arrow_width, bar_height),
                 self.renderer.horizontal_padding / 2,
                 "<",
                 false,
@@ -315,11 +277,11 @@ impl Menu {
             );
         }
 
-        for (pos, item_x, item_width) in self.horizontal_item_rects(x) {
-            self.draw_item(pos, item_x, 0, item_width);
+        for (pos, rect) in self.horizontal_item_rects(x) {
+            self.draw_item(pos, rect);
         }
 
-        if self.next.is_some() {
+        if self.paging.next.is_some() {
             let arrow_width = self.text_width(">");
             self.renderer.set_scheme(Scheme::Normal);
             if self.show_numbers {
@@ -327,10 +289,12 @@ impl Menu {
                 let numbers_width = self.text_width(&numbers);
                 self.renderer.text(
                     &mut self.canvas,
-                    self.menu_width - arrow_width - numbers_width,
-                    0,
-                    arrow_width,
-                    self.bar_height,
+                    Rect::new(
+                        self.layout.menu_width - arrow_width - numbers_width,
+                        0,
+                        arrow_width,
+                        bar_height,
+                    ),
                     self.renderer.horizontal_padding / 2,
                     ">",
                     false,
@@ -342,6 +306,7 @@ impl Menu {
 
     /// Draw the item counter and the left/right command cells.
     fn draw_footer(&mut self, arrow_width: i32) {
+        let bar_height = self.layout.bar_height;
         self.renderer.set_scheme(Scheme::Normal);
         if self.show_numbers {
             let numbers = self.numbers.clone();
@@ -349,25 +314,24 @@ impl Menu {
             let right_padding = if self.cfg.right_command.is_some() { arrow_width } else { 0 };
             self.renderer.text(
                 &mut self.canvas,
-                self.menu_width - numbers_width - right_padding,
-                0,
-                numbers_width,
-                self.bar_height,
+                Rect::new(
+                    self.layout.menu_width - numbers_width - right_padding,
+                    0,
+                    numbers_width,
+                    bar_height,
+                ),
                 self.renderer.horizontal_padding / 2,
                 &numbers,
                 false,
                 false,
             );
         }
-        if self.cfg.lines > 0 {
+        if self.layout.lines > 0 {
             if self.cfg.left_command.is_some() {
                 self.renderer.set_scheme(Scheme::Highlight);
                 self.renderer.text(
                     &mut self.canvas,
-                    0,
-                    0,
-                    arrow_width,
-                    self.bar_height,
+                    Rect::new(0, 0, arrow_width, bar_height),
                     self.renderer.horizontal_padding / 2,
                     LEFT_GLYPH,
                     false,
@@ -378,10 +342,12 @@ impl Menu {
                 self.renderer.set_scheme(Scheme::Highlight);
                 self.renderer.text(
                     &mut self.canvas,
-                    self.menu_width - arrow_width,
-                    0,
-                    arrow_width,
-                    self.bar_height,
+                    Rect::new(
+                        self.layout.menu_width - arrow_width,
+                        0,
+                        arrow_width,
+                        bar_height,
+                    ),
                     self.renderer.horizontal_padding / 2,
                     RIGHT_GLYPH,
                     false,

@@ -14,8 +14,9 @@ use x11rb::xcb_ffi::XCBConnection;
 use xkbcommon::xkb::x11 as xkbx11;
 use xkbcommon::xkb::{self, Keycode, KeyDirection};
 
-use super::{intersect_area, Backend, BackendEvent, MonitorInfo, MouseButton, XKB_OFFSET};
+use super::{Backend, BackendEvent, MonitorInfo, MouseButton, XKB_OFFSET};
 use crate::enums::ExitStatus;
+use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
 
 pub struct X11Backend {
@@ -193,13 +194,13 @@ impl Backend for X11Backend {
         out
     }
 
-    fn root_size(&self) -> (i32, i32) {
-        (self.root_width, self.root_height)
+    fn root_size(&self) -> Size {
+        Size::new(self.root_width, self.root_height)
     }
 
-    fn pointer_position(&self) -> Option<(i32, i32)> {
+    fn pointer_position(&self) -> Option<Point> {
         let reply = self.connection.query_pointer(self.root).ok()?.reply().ok()?;
-        Some((reply.root_x as i32, reply.root_y as i32))
+        Some(Point::new(reply.root_x as i32, reply.root_y as i32))
     }
 
     fn focused_monitor(&self) -> Option<usize> {
@@ -216,13 +217,13 @@ impl Backend for X11Backend {
         let mut best = 0usize;
         let mut area = 0;
         for (idx, monitor) in self.monitors.iter().enumerate() {
-            let a = intersect_area(
+            let a = Rect::new(
                 translated.dst_x as i32,
                 translated.dst_y as i32,
                 geometry.width as i32,
                 geometry.height as i32,
-                monitor,
-            );
+            )
+            .intersect_area(monitor.rect);
             if a > area {
                 area = a;
                 best = idx;
@@ -235,22 +236,19 @@ impl Backend for X11Backend {
         }
     }
 
-    fn embed_parent_size(&self) -> Option<(i32, i32)> {
+    fn embed_parent_size(&self) -> Option<Size> {
         let geo = self
             .connection
             .get_geometry(self.parent)
             .ok()?
             .reply()
             .ok()?;
-        Some((geo.width as i32, geo.height as i32))
+        Some(Size::new(geo.width as i32, geo.height as i32))
     }
 
     fn create_window(
         &mut self,
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
+        rect: Rect,
         border_width: i32,
         managed: bool,
         _grab: bool,
@@ -276,10 +274,10 @@ impl Backend for X11Backend {
                 self.root_depth,
                 window,
                 self.parent,
-                x as i16,
-                y as i16,
-                w as u16,
-                h as u16,
+                rect.x as i16,
+                rect.y as i16,
+                rect.w as u16,
+                rect.h as u16,
                 border_width as u16,
                 WindowClass::INPUT_OUTPUT,
                 x11rb::COPY_FROM_PARENT,
@@ -315,12 +313,12 @@ impl Backend for X11Backend {
         }
     }
 
-    fn embed_setup(&mut self, x: i32, y: i32) {
+    fn embed_setup(&mut self, pos: Point) {
         let Some(parent) = self.embed else { return };
         let window = self.window;
         let _ = self
             .connection
-            .reparent_window(window, parent, x as i16, y as i16);
+            .reparent_window(window, parent, pos.x as i16, pos.y as i16);
         let _ = self.connection.change_window_attributes(
             parent,
             &ChangeWindowAttributesAux::new()
@@ -468,15 +466,13 @@ impl Backend for X11Backend {
                     return Some(BackendEvent::ButtonPress {
                         button,
                         state: b.state.bits() as u32,
-                        x: b.event_x as i32,
-                        y: b.event_y as i32,
+                        pos: Point::new(b.event_x as i32, b.event_y as i32),
                     });
                 }
                 Event::MotionNotify(m) => {
                     return Some(BackendEvent::Motion {
                         time: m.time,
-                        x: m.event_x as i32,
-                        y: m.event_y as i32,
+                        pos: Point::new(m.event_x as i32, m.event_y as i32),
                     });
                 }
                 Event::Expose(e) => {
@@ -594,10 +590,12 @@ fn query_monitors(connection: &XCBConnection) -> Vec<MonitorInfo> {
             if let Some(screens) = screens.and_then(|c| c.reply().ok()) {
                 for (i, s) in screens.screen_info.iter().enumerate() {
                     monitors.push(MonitorInfo {
-                        x: s.x_org as i32,
-                        y: s.y_org as i32,
-                        width: s.width as i32,
-                        height: s.height as i32,
+                        rect: Rect::new(
+                            s.x_org as i32,
+                            s.y_org as i32,
+                            s.width as i32,
+                            s.height as i32,
+                        ),
                         name: format!("monitor {i}"),
                     });
                 }
