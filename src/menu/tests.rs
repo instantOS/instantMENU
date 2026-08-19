@@ -1003,6 +1003,43 @@ fn slide_paints_the_fill_with_the_selected_background() {
     assert_eq!(pixel(&menu, 2, 10), bgra(normal.bg));
 }
 
+/// The icon cell of a `:X ` item spans the full bar height: the gutter is
+/// painted with the item's scheme down to the row's bottom edge and, for
+/// the selected item, the detail strip sits at the bottom of the row like
+/// every other cell. Regression: the icon cell was drawn at only
+/// `line_height` (8px with `--line-height -1`), which shifted the glyph up
+/// into the previous row and put the accent strip at the top of the row.
+#[test]
+fn icon_cell_spans_the_full_bar_height() {
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &[":b \u{f011}Shutdown"]);
+    menu.layout.lines = 1;
+    menu.layout.menu_height = 240;
+    menu.canvas.resize(Size::new(600, 240));
+    menu.selection.selected = Some(0);
+    menu.draw_menu();
+
+    let selected = menu.renderer.color_scheme(Scheme::Selected);
+    let normal = menu.renderer.color_scheme(Scheme::Normal);
+    let bgra = |c: Color| {
+        let [r, g, b, a] = c.channels();
+        [b, g, r, a]
+    };
+    let pixel = |m: &Menu, x: usize, y: usize| -> [u8; 4] {
+        m.canvas.data[(y * m.canvas.width as usize + x) * 4..][..4]
+            .try_into()
+            .unwrap()
+    };
+
+    // row 0 spans y 30..60 (bar_height 30); x=5 is inside the icon gutter
+    // mid-row: the gutter carries the item's scheme down to the row bottom
+    // (was the menu background below the 8px icon cell)
+    assert_eq!(pixel(&menu, 5, 45), bgra(selected.bg));
+    // the accent strip of the selected item sits at the row's bottom edge
+    assert_eq!(pixel(&menu, 5, 58), bgra(selected.detail));
+    // the input row above keeps the plain menu background
+    assert_eq!(pixel(&menu, 5, 15), bgra(normal.bg));
+}
+
 /// Slide mode does not read items from stdin even when some are provided.
 #[test]
 fn slide_ignores_stdin_items() {

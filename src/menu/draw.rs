@@ -115,17 +115,22 @@ impl Menu {
 
     /// Draw the icon of a `:X ` item; returns the cell padding it used and
     /// the byte offset of the label inside `text` (the 3-byte prefix plus
-    /// the icon bytes actually drawn).
+    /// the icon glyph — everything actually drawn as the icon).
     fn draw_icon(&mut self, text: &str, is_selected: bool, x: i32, y: i32) -> (i32, usize) {
         let temp_padding = self.renderer.font_height * 3;
-        // draw the icon (the bytes after the ":X " prefix, up to 3 bytes)
-        let end = (3..=6)
-            .rev()
-            .find(|&i| text.is_char_boundary(i))
-            .unwrap_or(3);
+        // the icon is the first UTF-8 char after the ":X " prefix; the label
+        // starts right after it, however many bytes the glyph is
+        let end = text
+            .get(3..)
+            .and_then(|rest| rest.chars().next())
+            .map_or(3, |c| 3 + c.len_utf8());
         let icon_text = text.get(3..end).unwrap_or("");
         let left_padding = (temp_padding as f64 / 2.6) as i32;
-        let rect = Rect::new(x, y, temp_padding, self.cfg.line_height);
+        // the icon cell spans the full bar height (the `--line-height` value
+        // only sets the *minimum* row height), so the glyph is vertically
+        // centered like the label and the accent strip sits at the row's
+        // bottom edge instead of 4px from its top
+        let rect = Rect::new(x, y, temp_padding, self.layout.bar_height);
         let mut p = Painter::new(&mut self.renderer, &mut self.canvas);
         p.draw_item(rect, left_padding, icon_text, is_selected);
         let sc = if is_selected {
