@@ -2,6 +2,7 @@
 
 use std::time::{Duration, Instant};
 
+use super::transition::Transition;
 use super::Menu;
 use crate::backend::{BackendEvent, EventPoll};
 use crate::enums::ExitStatus;
@@ -67,6 +68,11 @@ impl Menu {
                     self.button_press(button, state, pos)
                 }
                 BackendEvent::ButtonRelease { .. } => continue,
+                BackendEvent::OutsideClick => {
+                    /* click outside the menu (modal grab): dismiss, like a
+                     * GTK context menu loses its grab */
+                    Transition::Exit(ExitStatus::Failure)
+                }
                 BackendEvent::Expose => {
                     self.backend.present(&self.canvas);
                     continue;

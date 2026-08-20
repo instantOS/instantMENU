@@ -30,6 +30,12 @@ pub struct X11Backend {
     graphics_context: Option<u32>,
     created: bool,
     managed: bool,
+    /// window bounds in root coordinates (content plus border), used to tell
+    /// inside from outside clicks while the pointer grab is active
+    window_rect: Rect,
+    /// whether a click outside the menu should close it (pointer grab)
+    outside_close: bool,
+    pointer_grabbed: bool,
 
     /* keyboard (ctx/keymap keep the C-level keymap alive for the state; only
      * the state is read from) */
@@ -86,6 +92,9 @@ impl X11Backend {
             graphics_context: None,
             created: false,
             managed: false,
+            window_rect: Rect::default(),
+            outside_close: false,
+            pointer_grabbed: false,
             xkb_context,
             xkb_keymap,
             xkb_state,
@@ -153,6 +162,35 @@ impl X11Backend {
         ExitStatus::Failure.exit();
     }
 
+    /// Grab the pointer like a GTK context menu: with owner-events presses
+    /// on our own windows are still delivered as usual, while presses
+    /// anywhere else are reported to the grab window (the root) and close
+    /// the menu. A failed grab only costs the outside-click behavior.
+    fn grab_pointer(&mut self) {
+        let ok = self
+            .connection
+            .grab_pointer(
+                true,
+                self.root,
+                EventMask::BUTTON_PRESS,
+                GrabMode::ASYNC,
+                GrabMode::ASYNC,
+                x11rb::CURRENT_TIME,
+                x11rb::NONE,
+                x11rb::NONE,
+            )
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .map(|r| r.status == GrabStatus::SUCCESS)
+            .unwrap_or(false);
+        if ok {
+            self.pointer_grabbed = true;
+        } else {
+            eprintln!("instantmenu: cannot grab pointer, clicks outside will not close the menu");
+        }
+        self.flush();
+    }
+
     fn handle_event(&mut self, ev: Event) -> Option<BackendEvent> {
         match ev {
             Event::KeyPress(k) => {
@@ -171,6 +209,19 @@ impl X11Backend {
                 })
             }
             Event::ButtonPress(b) => {
+                /* while the pointer grab is active, presses outside our
+                 * windows are reported to the grab window (the root) */
+                if self.pointer_grabbed && b.event != self.window {
+                    /* swallow scroll wheels: scrolling outside should not
+                     * dismiss the menu, only a real click does */
+                    if matches!(b.detail, 4..=7) {
+                        return None;
+                    }
+                    let root_pos = Point::new(b.root_x as i32, b.root_y as i32);
+                    if !self.window_rect.contains(root_pos) {
+                        return Some(BackendEvent::OutsideClick);
+                    }
+                }
                 let button = mouse_button(b.detail)?;
                 Some(BackendEvent::ButtonPress {
                     button,
@@ -353,6 +404,7 @@ impl Backend for X11Backend {
         border_width: i32,
         managed: bool,
         _grab: bool,
+        outside_close: bool,
         class_hint: &str,
         bg: Color,
         border_color: Color,
@@ -406,6 +458,13 @@ impl Backend for X11Backend {
         self.window = window;
         self.created = true;
         self.managed = managed;
+        /* X borders are drawn outside the geometry */
+        let bw = border_width.max(0);
+        self.window_rect = Rect::new(rect.x - bw, rect.y - bw, rect.w + 2 * bw, rect.h + 2 * bw);
+        self.outside_close = outside_close;
+        if outside_close {
+            self.grab_pointer();
+        }
         Ok(())
     }
 

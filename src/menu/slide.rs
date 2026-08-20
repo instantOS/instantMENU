@@ -122,6 +122,7 @@ impl Menu {
                     self.slide_motion(pos)
                 }
                 BackendEvent::Destroyed => return ExitStatus::Failure,
+                BackendEvent::OutsideClick => return ExitStatus::Failure,
                 BackendEvent::Expose => {
                     self.backend.present(&self.canvas);
                     continue;

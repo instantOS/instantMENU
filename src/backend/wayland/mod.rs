@@ -14,7 +14,7 @@ use std::os::unix::io::RawFd;
 
 use wayland_client::protocol::{
     wl_buffer, wl_callback, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer,
-    wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_shm_pool, wl_surface,
+    wl_keyboard, wl_output, wl_pointer, wl_region, wl_seat, wl_shm, wl_shm_pool, wl_surface,
 };
 use wayland_client::{Connection, EventQueue, QueueHandle};
 use wayland_protocols::wp::primary_selection::zv1::client::{
@@ -64,6 +64,25 @@ struct ShmPool {
     slots: Vec<ShmSlot>,
 }
 
+/// A click-catcher: an invisible fullscreen layer surface whose input region
+/// covers its whole output except the menu rectangle. A Wayland client cannot
+/// see clicks on other clients' surfaces, so modal menus catch outside clicks
+/// the way GTK context menus do — with a transparent shield under the menu
+/// that consumes (and dismisses on) any press outside it.
+pub(super) struct Shield {
+    surface: wl_surface::WlSurface,
+    layer_surface: zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+    region: wl_region::WlRegion,
+    buffer: wl_buffer::WlBuffer,
+    /// whether the first configure has been acked and the buffer attached
+    /// (a layer surface must stay bufferless until then).
+    configured: bool,
+}
+
+/// Userdata marker distinguishing shield layer surfaces from the menu's own
+/// (same protocol object, different `Dispatch` impls).
+pub(super) struct ShieldTag;
+
 /// A selection offer (clipboard or primary) being tracked.
 struct OfferTracker {
     mimes: Vec<String>,
@@ -106,6 +125,10 @@ pub struct EventState {
      * coordinates on wayland; the position comes from motion/enter) */
     pointer_x: f64,
     pointer_y: f64,
+    /// surface the pointer is currently on: the menu, one of the shields, or
+    /// None between leave/enter. Motion/button events only make sense in
+    /// menu-local coordinates, and a press on a shield is an outside click.
+    pointer_surface: Option<wl_surface::WlSurface>,
     data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
     data_device: Option<wl_data_device::WlDataDevice>,
     primary_manager:
@@ -142,6 +165,12 @@ pub struct EventState {
 
     pool: Option<ShmPool>,
 
+    /* outside-click shields, one per output */
+    shields: Vec<Shield>,
+    /// the pool backing the shield buffers (kept alive with its fd; the
+    /// memory is never mapped client-side — see `create_shields`)
+    shield_pool: Option<(wl_shm_pool::WlShmPool, RawFd)>,
+
     /* selection offers */
     clipboard_offer: Option<(wl_data_offer::WlDataOffer, OfferTracker)>,
     primary_offer: Option<(
@@ -167,6 +196,7 @@ impl EventState {
             pointer: None,
             pointer_x: 0.0,
             pointer_y: 0.0,
+            pointer_surface: None,
             data_device_manager: None,
             data_device: None,
             primary_manager: None,
@@ -187,6 +217,8 @@ impl EventState {
             frame_callback: None,
             pending_frame: None,
             pool: None,
+            shields: Vec::new(),
+            shield_pool: None,
             clipboard_offer: None,
             primary_offer: None,
             events: VecDeque::new(),
@@ -361,11 +393,26 @@ impl EventState {
             }
         }
     }
+
+    /// Destroy the shields and their pool (recreated on window re-creation).
+    fn destroy_shields(&mut self) {
+        for shield in self.shields.drain(..) {
+            shield.layer_surface.destroy();
+            shield.surface.destroy();
+            shield.region.destroy();
+            shield.buffer.destroy();
+        }
+        if let Some((pool, fd)) = self.shield_pool.take() {
+            pool.destroy();
+            unsafe { libc::close(fd) };
+        }
+    }
 }
 
 impl Drop for EventState {
     fn drop(&mut self) {
         self.destroy_pool();
+        self.destroy_shields();
     }
 }
 
@@ -445,6 +492,7 @@ impl WaylandBackend {
         surface: &wl_surface::WlSurface,
         rect: Rect,
         grab: bool,
+        outside_close: bool,
     ) -> Result<(), String> {
         let state = &mut self.state;
         let shell = state
@@ -496,7 +544,110 @@ impl WaylandBackend {
         surface.commit();
         state.surface = Some(surface.clone());
         state.layer_surface = Some(layer_surface);
+        if outside_close {
+            self.create_shields(rect);
+        }
         Ok(())
+    }
+
+    /// One click-catcher per output (see [`Shield`]). The shields sit in the
+    /// same layer as the menu; their input region excludes the menu rectangle
+    /// so the menu keeps all of its own pointer events.
+    fn create_shields(&mut self, menu_rect: Rect) {
+        self.state.destroy_shields();
+
+        let Some(compositor) = self.state.compositor.clone() else {
+            return;
+        };
+        let Some(shell) = self.state.layer_shell.clone() else {
+            return;
+        };
+        let Some(shm) = self.state.shm.clone() else {
+            return;
+        };
+        let qh = self.state.queue_handle.clone();
+        let outputs: Vec<(wl_output::WlOutput, Rect)> = self
+            .state
+            .outputs
+            .iter()
+            .filter(|o| o.info.rect.w > 0 && o.info.rect.h > 0)
+            .map(|o| (o.proxy.clone(), o.info.rect))
+            .collect();
+        if outputs.is_empty() {
+            return;
+        }
+
+        /* One pool backs every shield buffer. It is sparse: a zero-filled
+         * ARGB buffer is fully transparent, so the memory is never written
+         * (or even mapped client-side) and the pages are never allocated. */
+        let len: i32 = outputs.iter().map(|(_, r)| r.w * r.h * 4).sum();
+        let name = b"instantmenu\0";
+        let fd = unsafe { libc::memfd_create(name.as_ptr().cast(), 0) };
+        if fd < 0 {
+            return;
+        }
+        if unsafe { libc::ftruncate(fd, len as libc::off_t) } != 0 {
+            unsafe { libc::close(fd) };
+            return;
+        }
+        let pool = unsafe { shm.create_pool(BorrowedFd::borrow_raw(fd), len, &qh, ()) };
+        self.state.shield_pool = Some((pool.clone(), fd));
+
+        let mut offset = 0;
+        for (output, out_rect) in outputs {
+            let shield_surface = compositor.create_surface(&qh, ());
+            let layer_surface = shell.get_layer_surface(
+                &shield_surface,
+                Some(&output),
+                zwlr_layer_shell_v1::Layer::Top,
+                "instantmenu".to_string(),
+                &qh,
+                ShieldTag,
+            );
+            layer_surface.set_anchor(
+                zwlr_layer_surface_v1::Anchor::Top
+                    | zwlr_layer_surface_v1::Anchor::Bottom
+                    | zwlr_layer_surface_v1::Anchor::Left
+                    | zwlr_layer_surface_v1::Anchor::Right,
+            );
+            /* fullscreen but invisible to layout: no exclusive zone, and the
+             * keyboard stays with the menu surface */
+            layer_surface.set_exclusive_zone(-1);
+            layer_surface
+                .set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
+            layer_surface.set_size(out_rect.w as u32, out_rect.h as u32);
+
+            /* input region: the whole output minus the menu's part of it */
+            let region = compositor.create_region(&qh, ());
+            region.add(0, 0, out_rect.w, out_rect.h);
+            let x0 = menu_rect.x.max(out_rect.x);
+            let y0 = menu_rect.y.max(out_rect.y);
+            let x1 = menu_rect.right().min(out_rect.right());
+            let y1 = menu_rect.bottom().min(out_rect.bottom());
+            if x1 > x0 && y1 > y0 {
+                region.subtract(x0 - out_rect.x, y0 - out_rect.y, x1 - x0, y1 - y0);
+            }
+            shield_surface.set_input_region(Some(&region));
+            shield_surface.commit();
+
+            let buffer = pool.create_buffer(
+                offset,
+                out_rect.w,
+                out_rect.h,
+                out_rect.w * 4,
+                wl_shm::Format::Argb8888,
+                &qh,
+                (),
+            );
+            offset += out_rect.w * out_rect.h * 4;
+            self.state.shields.push(Shield {
+                surface: shield_surface,
+                layer_surface,
+                region,
+                buffer,
+                configured: false,
+            });
+        }
     }
 }
 
@@ -530,6 +681,7 @@ impl Backend for WaylandBackend {
         border_width: i32,
         managed: bool,
         grab: bool,
+        outside_close: bool,
         class_hint: &str,
         _bg: Color,
         border_color: Color,
@@ -559,6 +711,7 @@ impl Backend for WaylandBackend {
                     rect.h + 2 * border_width,
                 ),
                 grab,
+                outside_close,
             )
         }
     }

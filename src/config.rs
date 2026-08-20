@@ -185,6 +185,8 @@ pub struct Config {
     pub password: bool,
     /* --no-grab option; don't grab the keyboard */
     pub no_grab: bool,
+    /* --no-outside-close option; don't close on a click outside the menu */
+    pub outside_close: bool,
     /* --alt-tab option; alt-tab behaviour */
     pub alt_tab: bool,
     /* --managed option; display as managed wm window */
@@ -260,6 +262,7 @@ impl Default for Config {
             input_only: false,
             password: false,
             no_grab: false,
+            outside_close: true,
             alt_tab: false,
             managed: false,
             reject_no_match: false,

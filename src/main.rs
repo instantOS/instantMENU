@@ -154,6 +154,9 @@ fn apply_flags(args: &cli::Args, cfg: &mut Config) {
     if args.window.no_grab {
         cfg.no_grab = true;
     }
+    if args.window.no_outside_close {
+        cfg.outside_close = false;
+    }
     if args.menu.alt_tab {
         cfg.alt_tab = true;
     }

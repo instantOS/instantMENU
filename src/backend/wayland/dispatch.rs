@@ -5,7 +5,8 @@ use std::os::fd::AsRawFd;
 
 use wayland_client::protocol::{
     wl_buffer, wl_callback, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer,
-    wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
+    wl_keyboard, wl_output, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm, wl_shm_pool,
+    wl_surface,
 };
 use wayland_client::{Connection, Dispatch, QueueHandle, WEnum};
 use wayland_protocols::wp::primary_selection::zv1::client::{
@@ -17,7 +18,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_l
 use xkbcommon::xkb::{KeyDirection, Keycode};
 
 use super::selection::{load_keymap, x11_mask};
-use super::{BackendEvent, EventState, MonitorInfo, OfferTracker, OutputEntry};
+use super::{BackendEvent, EventState, MonitorInfo, OfferTracker, OutputEntry, ShieldTag};
 use crate::backend::{MouseButton, XKB_OFFSET};
 use crate::geom::{Point, Rect};
 
@@ -43,6 +44,7 @@ noop_dispatch!(
     wl_compositor::WlCompositor,
     wl_shm::WlShm,
     wl_shm_pool::WlShmPool,
+    wl_region::WlRegion,
     wl_data_device_manager::WlDataDeviceManager,
     zwp_primary_selection_device_manager_v1::ZwpPrimarySelectionDeviceManagerV1,
     zwlr_layer_shell_v1::ZwlrLayerShellV1,
@@ -258,14 +260,29 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
         _qh: &QueueHandle<Self>,
     ) {
         let mods = state.xkb.as_ref().map(|x| x.mods).unwrap_or(0);
+        /* enter/leave tell which of our surfaces has the pointer; only the
+         * menu's own events carry menu-local coordinates, and a press on a
+         * shield is an outside click */
+        let on_menu = state.pointer_surface.is_some()
+            && state.pointer_surface.as_ref() == state.surface.as_ref();
+        let on_shield = !on_menu
+            && state
+                .shields
+                .iter()
+                .any(|s| state.pointer_surface.as_ref() == Some(&s.surface));
         match event {
             wl_pointer::Event::Enter {
+                surface,
                 surface_x,
                 surface_y,
                 ..
             } => {
+                state.pointer_surface = Some(surface);
                 state.pointer_x = surface_x;
                 state.pointer_y = surface_y;
+            }
+            wl_pointer::Event::Leave { .. } => {
+                state.pointer_surface = None;
             }
             wl_pointer::Event::Motion {
                 time,
@@ -274,10 +291,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
             } => {
                 state.pointer_x = surface_x;
                 state.pointer_y = surface_y;
-                state.events.push_back(BackendEvent::Motion {
-                    time,
-                    pos: Point::new(surface_x as i32, surface_y as i32),
-                });
+                if on_menu {
+                    state.events.push_back(BackendEvent::Motion {
+                        time,
+                        pos: Point::new(surface_x as i32, surface_y as i32),
+                    });
+                }
             }
             wl_pointer::Event::Button {
                 button,
@@ -288,18 +307,24 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
                     WEnum::Value(s) => s,
                     WEnum::Unknown(_) => return,
                 };
-                let Some(button) = evdev_button(button) else {
-                    return;
-                };
                 match button_state {
-                    wl_pointer::ButtonState::Pressed => {
+                    wl_pointer::ButtonState::Pressed if on_shield => {
+                        state.events.push_back(BackendEvent::OutsideClick);
+                    }
+                    wl_pointer::ButtonState::Pressed if on_menu => {
+                        let Some(button) = evdev_button(button) else {
+                            return;
+                        };
                         state.events.push_back(BackendEvent::ButtonPress {
                             button,
                             state: mods,
                             pos: Point::new(state.pointer_x as i32, state.pointer_y as i32),
                         });
                     }
-                    wl_pointer::ButtonState::Released => {
+                    wl_pointer::ButtonState::Released if on_menu => {
+                        let Some(button) = evdev_button(button) else {
+                            return;
+                        };
                         state.events.push_back(BackendEvent::ButtonRelease {
                             button,
                             pos: Point::new(state.pointer_x as i32, state.pointer_y as i32),
@@ -310,17 +335,19 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
             }
             /* wheel: map to the scroll buttons the menu core understands */
             wl_pointer::Event::Axis { axis, value, .. } => {
-                if let WEnum::Value(a) = axis {
-                    if a == wl_pointer::Axis::VerticalScroll {
-                        state.events.push_back(BackendEvent::ButtonPress {
-                            button: if value > 0.0 {
-                                MouseButton::ScrollDown
-                            } else {
-                                MouseButton::ScrollUp
-                            },
-                            state: mods,
-                            pos: Point::new(-1, -1),
-                        });
+                if on_menu {
+                    if let WEnum::Value(a) = axis {
+                        if a == wl_pointer::Axis::VerticalScroll {
+                            state.events.push_back(BackendEvent::ButtonPress {
+                                button: if value > 0.0 {
+                                    MouseButton::ScrollDown
+                                } else {
+                                    MouseButton::ScrollUp
+                                },
+                                state: mods,
+                                pos: Point::new(-1, -1),
+                            });
+                        }
                     }
                 }
             }
@@ -364,6 +391,44 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for EventState {
             zwlr_layer_surface_v1::Event::Closed => {
                 state.dead = true;
                 state.events.push_back(BackendEvent::Destroyed);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Shield layer surfaces (userdata [`ShieldTag`]): ack the configure, then
+/// attach the transparent buffer — a layer surface must stay bufferless
+/// until its first configure has been acked.
+impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ShieldTag> for EventState {
+    fn event(
+        state: &mut Self,
+        surface: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+        event: zwlr_layer_surface_v1::Event,
+        _data: &ShieldTag,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwlr_layer_surface_v1::Event::Configure { serial, .. } => {
+                surface.ack_configure(serial);
+                if let Some(shield) = state
+                    .shields
+                    .iter_mut()
+                    .find(|s| &s.layer_surface == surface)
+                {
+                    if !shield.configured {
+                        shield.configured = true;
+                        let buffer = shield.buffer.clone();
+                        shield.surface.attach(Some(&buffer), 0, 0);
+                        shield.surface.commit();
+                    }
+                }
+            }
+            zwlr_layer_surface_v1::Event::Closed => {
+                /* the compositor closed the shield; clicks on that output
+                 * simply no longer close the menu */
+                state.shields.retain(|s| &s.layer_surface != surface);
             }
             _ => {}
         }

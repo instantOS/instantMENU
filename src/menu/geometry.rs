@@ -296,6 +296,13 @@ impl Menu {
             self.layout.menu_width,
             self.layout.menu_height,
         );
+        /* modal menus also close on a click outside them (pointer grab /
+         * click-catcher surfaces); managed and embedded ones do not */
+        let outside_close = !managed
+            && self.cfg.embed.is_none()
+            && !self.cfg.no_grab
+            && self.cfg.toast == 0
+            && self.cfg.outside_close;
         if self
             .backend
             .create_window(
@@ -303,6 +310,7 @@ impl Menu {
                 self.cfg.border_width,
                 managed,
                 !self.cfg.no_grab && self.cfg.toast == 0,
+                outside_close,
                 class,
                 bg,
                 border_color,

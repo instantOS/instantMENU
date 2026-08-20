@@ -51,6 +51,7 @@ impl Backend for StubBackend {
         _border_width: i32,
         _managed: bool,
         _grab: bool,
+        _outside_close: bool,
         _class_hint: &str,
         _bg: Color,
         _border_color: Color,
@@ -633,6 +634,15 @@ fn scroll_turns_pages() {
 #[test]
 fn run_returns_failure_when_the_connection_dies() {
     let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha"]);
+    assert_eq!(menu.run(), ExitStatus::Failure);
+}
+
+/// A click outside the menu (pointer grab on X11, shield surface on Wayland)
+/// closes it without a selection.
+#[test]
+fn run_outside_click_exits_with_failure() {
+    let (mut menu, stub, _out) = menu_with(Config::default(), &["alpha"]);
+    stub.push(BackendEvent::OutsideClick);
     assert_eq!(menu.run(), ExitStatus::Failure);
 }
 

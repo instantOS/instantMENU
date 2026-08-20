@@ -340,6 +340,13 @@ pub struct WindowArgs {
     #[arg(long, global = true)]
     pub no_grab: bool,
 
+    /// Don't close the menu when clicking outside of it.
+    ///
+    /// By default a modal menu (keyboard grabbed) closes on a click outside
+    /// of it, like a GTK context menu.
+    #[arg(long, global = true)]
+    pub no_outside_close: bool,
+
     /// Let instantmenu be managed by the window manager as a normal window.
     #[arg(long, global = true)]
     pub managed: bool,
@@ -646,6 +653,17 @@ mod tests {
         let a = Args::try_parse_from(["instantmenu", "--follow-cursor"]).unwrap();
         assert_eq!(a.window.position, None);
         assert!(a.window.follow_cursor);
+    }
+
+    #[test]
+    fn no_outside_close_parses() {
+        let a = Args::try_parse_from(["instantmenu"]).unwrap();
+        assert!(!a.window.no_outside_close);
+        let a = Args::try_parse_from(["instantmenu", "--no-outside-close"]).unwrap();
+        assert!(a.window.no_outside_close);
+        /* it is a window option, so it is also valid in slide mode */
+        let a = Args::try_parse_from(["instantmenu", "slide", "--no-outside-close"]).unwrap();
+        assert!(a.window.no_outside_close);
     }
 
     #[test]

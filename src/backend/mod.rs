@@ -67,6 +67,9 @@ pub enum BackendEvent {
         time: u32,
         pos: Point,
     },
+    /// A button was pressed outside the menu (pointer grab on X11, input
+    /// shield surface on Wayland) — close like a context menu does.
+    OutsideClick,
     /// Redraw needed (Expose on X11).
     Expose,
     /// Focus went to another window — regrab focus.
@@ -112,13 +115,17 @@ pub trait Backend {
 
     /// Create the menu window (XCreateWindow in setup()).
     /// `grab` = whether the keyboard should be grabbed (Wayland layer-shell
-    /// keyboard interactivity; X11 grabs separately).
+    /// keyboard interactivity; X11 grabs separately). `outside_close` = the
+    /// menu is modal, so a click outside it should close it (pointer grab on
+    /// X11, click-catcher surfaces on Wayland).
+    #[allow(clippy::too_many_arguments)] // port of the XCreateWindow call
     fn create_window(
         &mut self,
         rect: Rect,
         border_width: i32,
         managed: bool,
         grab: bool,
+        outside_close: bool,
         class_hint: &str,
         bg: Color,
         border_color: Color,
