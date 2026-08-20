@@ -202,6 +202,16 @@ fn apply_values(
     if let Some(q) = &args.menu.placeholder {
         cfg.placeholder = Some(q.clone());
     }
+    if let Some(f) = &args.menu.frecency_cache {
+        /* IDs resolve under the XDG cache dir; absolute paths pass through */
+        cfg.frecency_cache = Some(match menu::resolve_cache_path(f) {
+            Ok(path) => path,
+            Err(e) => {
+                eprintln!("instantmenu: {e}");
+                ExitStatus::Failure.exit();
+            }
+        });
+    }
     if let Some(a) = args.menu.animation {
         cfg.frame_count = a;
         cfg.animated = true;

@@ -10,6 +10,7 @@
 mod animate;
 mod draw;
 mod editor;
+mod frecency;
 mod geometry;
 mod input;
 mod keyboard;
@@ -23,6 +24,7 @@ mod slide;
 mod transition;
 
 use std::io::Write;
+use std::time::SystemTime;
 
 use crate::backend::{Backend, CONTROL_MASK, SHIFT_MASK};
 use crate::config::Config;
@@ -30,6 +32,7 @@ use crate::enums::{ExitStatus, ItemCategory};
 use crate::geom::Rect;
 use crate::render::{Canvas, Painter, Renderer};
 
+use frecency::Frecency;
 use layout::Layout;
 use matcher::{MatchResult, Matcher};
 use measure::{Measure, TextMeasurer};
@@ -38,6 +41,8 @@ use slide::Slider;
 use transition::Transition;
 
 pub use input::{read_stdin, StdinItems};
+
+pub use frecency::resolve_cache_path;
 
 /// FontAwesome glyphs drawn in the left/right command cells. The C version
 /// used U+F0A0/U+F0A1, which are `fa-hdd-o` and `fa-bullhorn` (not arrows);
@@ -64,6 +69,8 @@ pub struct Menu {
     /// `slide` subcommand: Some(_) = slide mode; owns the value state and
     /// receives events instead of the list machinery.
     pub(in crate::menu) slider: Option<Slider>,
+    /// `--frecency-cache`: ranks items on load, records printed selections.
+    pub(in crate::menu) frecency: Option<Frecency>,
 
     /* runtime flags */
     /// -A alt-tab behaviour: toggled off by Alt+Space at runtime.
@@ -84,6 +91,7 @@ pub struct Menu {
 impl Menu {
     pub fn new(cfg: Config, renderer: Renderer, backend: Box<dyn Backend>) -> Self {
         let alt_tab = cfg.alt_tab;
+        let frecency = cfg.frecency_cache.as_deref().map(Frecency::open);
         Menu {
             matcher: Matcher::new(Vec::new(), &cfg),
             editor: editor::Editor::new(),
@@ -95,6 +103,7 @@ impl Menu {
                 columns: cfg.columns,
             },
             slider: cfg.slide.as_ref().map(Slider::new),
+            frecency,
             cfg,
             renderer,
             backend,
@@ -113,6 +122,9 @@ impl Menu {
     pub fn load_items(&mut self, stdin: input::StdinItems) {
         self.stdin_grid = stdin.grid;
         self.matcher.items = stdin.items;
+        if let Some(f) = self.frecency.as_ref() {
+            f.rank(&mut self.matcher.items, SystemTime::now());
+        }
     }
 
     /* ── transition interpretation — the only place with these effects ── */
@@ -338,9 +350,18 @@ impl Menu {
 
     /* ── output helpers ─────────────────────────────────────────────────── */
 
+    /// Emit a selection line. Recording runs after the line is out the door
+    /// so cache I/O never delays the selection. Password input and slider
+    /// values are never recorded (the CLI rejects --frecency-cache for
+    /// slide; the slider guard covers library use).
     pub(in crate::menu) fn println(&mut self, s: &str) {
         let _ = writeln!(self.out, "{s}");
         let _ = self.out.flush();
+        if let Some(f) = self.frecency.as_mut() {
+            if !self.cfg.password && self.slider.is_none() {
+                f.record(s, SystemTime::now());
+            }
+        }
     }
 }
 

@@ -16,6 +16,7 @@ use clap::{Parser, Subcommand};
 
 use crate::backend::BackendChoice;
 use crate::config::{MatchMode, Position};
+use std::path::PathBuf;
 
 /// Long-form description shown by `--help` and the generated man page.
 const LONG_ABOUT: &str = concat!(
@@ -212,6 +213,20 @@ pub struct MenuArgs {
     /// Initial input text.
     #[arg(long, value_name = "TEXT")]
     pub initial_text: Option<String>,
+
+    /// Frecency cache: rank items by past selections and record new ones.
+    ///
+    /// The value is a cache ID resolved under the XDG cache directory
+    /// ($XDG_CACHE_HOME/instantmenu/<ID>, or ~/.cache/instantmenu/<ID>);
+    /// an absolute path is used as the cache file directly. Distinct IDs
+    /// hold independent histories (e.g. one per launcher).
+    ///
+    /// On startup items are reordered best-frecency first (stable — ties
+    /// keep stdin order). Every printed selection — a chosen item or
+    /// free-typed text — is counted with a time decay and persisted.
+    /// Not recorded: password input and slider values.
+    #[arg(long, value_name = "ID")]
+    pub frecency_cache: Option<PathBuf>,
 }
 
 impl MenuArgs {
@@ -282,6 +297,9 @@ impl MenuArgs {
         }
         if self.initial_text.is_some() {
             return Some("--initial-text");
+        }
+        if self.frecency_cache.is_some() {
+            return Some("--frecency-cache");
         }
         None
     }
@@ -889,6 +907,10 @@ mod tests {
             (
                 &["instantmenu", "--initial-text", "x", "slide"][..],
                 "--initial-text",
+            ),
+            (
+                &["instantmenu", "--frecency-cache", "apps", "slide"][..],
+                "--frecency-cache",
             ),
         ] {
             let a = Args::try_parse_from(argv).unwrap();

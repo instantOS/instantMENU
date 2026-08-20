@@ -344,6 +344,99 @@ fn ctrl_v_and_ctrl_y_request_selections() {
     assert!(*stub.state().selection_requests.last().unwrap());
 }
 
+/* ── frecency ──────────────────────────────────────────────────────────── */
+
+/// Unique cache path per test (the suite runs in parallel).
+fn frecency_path(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "instantmenu-frecency-{name}-{}",
+        std::process::id()
+    ))
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+/// --frecency-cache: items load best-frecency first, unseen last, ties in
+/// stdin order.
+#[test]
+fn frecency_ranks_items_on_load() {
+    let path = frecency_path("rank");
+    let now = unix_now();
+    let day = 24 * 60 * 60;
+    std::fs::write(
+        &path,
+        // stale: 3.0 three days ago → 1.78; fresh: 2.0 now → 2.0
+        format!("3.000000 {} stale\n2.000000 {} fresh\n", now - 3 * day, now),
+    )
+    .unwrap();
+    let cfg = Config {
+        frecency_cache: Some(path.clone()),
+        ..Config::default()
+    };
+    let (menu, _stub, _out) = menu_with(cfg, &["stale", "fresh", "unseen"]);
+    let texts: Vec<&str> = menu.matcher.items.iter().map(|i| i.text.as_str()).collect();
+    assert_eq!(texts, vec!["fresh", "stale", "unseen"]);
+    let _ = std::fs::remove_file(&path);
+}
+
+/// Confirming a selection records it into the cache.
+#[test]
+fn frecency_records_selections() {
+    let path = frecency_path("record");
+    let _ = std::fs::remove_file(&path);
+    let cfg = Config {
+        frecency_cache: Some(path.clone()),
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta"]);
+    let t = key(&mut menu, ks::KEY_Return, 0);
+    assert_eq!(menu.perform(t), Some(ExitStatus::Success));
+    let contents = std::fs::read_to_string(&path).unwrap();
+    assert!(contents.contains(" alpha\n"), "{contents}");
+    let _ = std::fs::remove_file(&path);
+}
+
+/// Shift+Return free-typed input is recorded too — how new commands enter
+/// the cache without being in the item list.
+#[test]
+fn frecency_records_free_typed_input() {
+    let path = frecency_path("typed");
+    let _ = std::fs::remove_file(&path);
+    let cfg = Config {
+        frecency_cache: Some(path.clone()),
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta"]);
+    type_text(&mut menu, "newcmd");
+    let t = key(&mut menu, ks::KEY_Return, SHIFT_MASK);
+    assert_eq!(menu.perform(t), Some(ExitStatus::Success));
+    let contents = std::fs::read_to_string(&path).unwrap();
+    assert!(contents.contains(" newcmd\n"), "{contents}");
+    let _ = std::fs::remove_file(&path);
+}
+
+/// --password selections are never written to the cache.
+#[test]
+fn password_mode_never_records() {
+    let path = frecency_path("password");
+    let _ = std::fs::remove_file(&path);
+    let cfg = Config {
+        password: true,
+        frecency_cache: Some(path.clone()),
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta"]);
+    type_text(&mut menu, "secret");
+    let t = key(&mut menu, ks::KEY_Return, 0);
+    assert_eq!(menu.perform(t), Some(ExitStatus::Success));
+    assert!(!path.exists());
+}
+
 /* ── instant and commented modes ───────────────────────────────────────── */
 
 /// -n: typing down to a single fuzzy match prints it and exits mid-edit.

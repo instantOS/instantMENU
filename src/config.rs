@@ -1,6 +1,8 @@
 //! Port of `config.def.h` — default settings; can be overridden by command
 //! line and X resources.
 
+use std::path::PathBuf;
+
 use crate::render::SchemeStrings;
 use clap::ValueEnum;
 
@@ -154,6 +156,8 @@ pub struct Config {
     pub left_command: Option<String>,
     /* --right-command option; command run on shift+right */
     pub right_command: Option<String>,
+    /* --frecency-cache option; file backing the selection frecency store */
+    pub frecency_cache: Option<PathBuf>,
     /* fg / bg / detail per scheme */
     pub colors: [SchemeStrings; 9],
 
@@ -235,6 +239,7 @@ impl Default for Config {
             placeholder: None,
             left_command: None,
             right_command: None,
+            frecency_cache: None,
             colors: [
                 scheme("#DFDFDF", "#121212", "#3E485B"), // Norm
                 scheme("#575E70", "#121212", "#3E485B"), // Fade
