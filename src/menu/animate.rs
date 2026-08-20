@@ -3,8 +3,6 @@
 //! command triggers return a [`Transition`] instead of spawning and exiting
 //! here.
 
-use std::time::Duration;
-
 use super::transition::Transition;
 use super::Menu;
 use crate::enums::{ColorRole, ExitStatus, Scheme, Side};
@@ -28,7 +26,7 @@ impl Menu {
         let line_height = self.cfg.line_height;
         let selected_y = self.selected_y;
 
-        for time in 0..frame_count {
+        for time in 1..=frame_count {
             let t = time as f64 / frame_count as f64;
             let mut p = self.painter();
             p.set_scheme(Scheme::Selected);
@@ -49,7 +47,7 @@ impl Menu {
                 ColorRole::Background,
             );
             self.backend.present(&self.canvas);
-            std::thread::sleep(Duration::from_micros(19000));
+            self.backend.wait_frame();
         }
     }
 
@@ -62,13 +60,13 @@ impl Menu {
             return;
         }
         let frame_count = self.cfg.frame_count;
-        for time in 0..frame_count {
+        for time in 1..=frame_count {
             let f = ease_out_quint(time as f64 / frame_count as f64);
             let mut p = self.painter();
             p.set_scheme(Scheme::Selected);
             p.fill_rect(from.lerp(to, f), ColorRole::Background);
             self.backend.present(&self.canvas);
-            std::thread::sleep(Duration::from_micros(19000));
+            self.backend.wait_frame();
         }
     }
 
