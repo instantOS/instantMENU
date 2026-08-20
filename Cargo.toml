@@ -32,6 +32,9 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # Keyboard state (both backends), links against system libxkbcommon[-x11]
 xkbcommon = { version = "0.9", features = ["x11", "wayland"] }
 
+# Fuzzy matching (safe_read disables the page-boundary over-read optimization)
+frizbee = { version = "0.13", features = ["safe_read"] }
+
 # Shared text rendering (both backends)
 csscolorparser = "0.7"
 cosmic-text = "0.19"

@@ -251,7 +251,9 @@ fn tab_completes_to_selection() {
     assert_eq!(menu.editor.text, "alpha");
 }
 
-/// -r: an edit that empties the match list is reverted.
+/// -r: an edit that empties the match list is reverted. Typo tolerance (one
+/// typo per four characters) keeps near-miss edits like "alphx" accepted;
+/// only edits with no match even accounting for typos are reverted.
 #[test]
 fn reject_no_match_reverts_edit() {
     let cfg = Config {
@@ -260,8 +262,13 @@ fn reject_no_match_reverts_edit() {
     };
     let (mut menu, _stub, _out) = menu_with(cfg, &["alpha"]);
     type_text(&mut menu, "alph");
+    // one slipped key still matches alpha: accepted
     type_text(&mut menu, "x");
-    assert_eq!(menu.editor.text, "alph");
+    assert_eq!(menu.editor.text, "alphx");
+    assert_eq!(menu.matcher.matches, vec![0]);
+    // a second one is past the typo budget: reverted to the last matching text
+    type_text(&mut menu, "y");
+    assert_eq!(menu.editor.text, "alphx");
     assert_eq!(menu.matcher.matches, vec![0]);
 }
 

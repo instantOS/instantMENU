@@ -1,7 +1,7 @@
-//! Item matching — ports of `match` and `fuzzymatch`, pure: no I/O, no
-//! exit. The C version printed and called exit() from inside match(); here
-//! those cases become [`MatchResult`] values the shell translates into
-//! transitions.
+//! Item matching — the token matcher ports the C `match`; fuzzy matching is
+//! delegated to frizbee (SIMD Smith-Waterman). Pure: no I/O, no exit. The C
+//! version printed and called exit() from inside match(); here those cases
+//! become [`MatchResult`] values the shell translates into transitions.
 
 use crate::config::{Config, MatchMode};
 
@@ -178,13 +178,12 @@ impl Matcher {
         MatchResult::Listed
     }
 
-    /// The fuzzy matcher: subsequence match scored by match position and
-    /// spread, best first.
+    /// The fuzzy matcher: frizbee's Smith-Waterman with affine gaps, typo
+    /// tolerant — one typo per four query characters, so a slipped key still
+    /// finds its app. Scores break ties by input order, keeping pipeline
+    /// ordering (history, frecency) intact for equal matches.
     fn fuzzy_search(&mut self, text: &str) -> MatchResult {
-        let text_bytes = text.as_bytes();
-        let text_len = text_bytes.len();
-
-        if text_len == 0 {
+        if text.is_empty() {
             // empty query: everything matches, and — unlike the token
             // matcher — instant mode does not fire (C early return).
             self.matches.clear();
@@ -192,43 +191,22 @@ impl Matcher {
             return MatchResult::Listed;
         }
 
-        /* walk through all items */
-        let mut scored: Vec<(usize, f64)> = Vec::new();
-        for (idx, item) in self.items.iter().enumerate() {
-            let mut pattern_index = 0usize;
-            let mut match_start = None;
-            let mut match_end = None;
-            for (i, &c) in item.text.as_bytes().iter().enumerate() {
-                /* fuzzy match pattern (single byte compare, like
-                 * fstrncmp(&text[pattern_index], &c, 1)) */
-                let equal = pattern_index < text_len
-                    && if self.insensitive {
-                        text_bytes[pattern_index].eq_ignore_ascii_case(&c)
-                    } else {
-                        text_bytes[pattern_index] == c
-                    };
-                if equal {
-                    match_start.get_or_insert(i);
-                    pattern_index += 1;
-                    if pattern_index == text_len {
-                        match_end = Some(i);
-                        break;
-                    }
-                }
-            }
-            /* compute distance:
-             * add penalty if match starts late (log(match_start+2))
-             * add penalty for a long match without many matching characters */
-            if let (Some(start), Some(end)) = (match_start, match_end) {
-                let distance = ((start + 2) as f64).ln() + (end - start) as f64 - text_len as f64;
-                scored.push((idx, distance));
-            }
-        }
-
-        /* sort matches according to distance */
-        scored.sort_by(|a, b| a.1.total_cmp(&b.1));
+        let config = frizbee::Config::default()
+            .max_typos(Some((text.chars().count() / 4) as u16))
+            .casing(if self.insensitive {
+                frizbee::CaseMatching::Ignore
+            } else {
+                frizbee::CaseMatching::Respect
+            });
+        let mut fuzzy = frizbee::Matcher::new(text, &config);
+        let haystacks: Vec<&str> = self.items.iter().map(|i| i.text.as_str()).collect();
         self.matches.clear();
-        self.matches.extend(scored.into_iter().map(|(idx, _)| idx));
+        self.matches.extend(
+            fuzzy
+                .match_list(&haystacks)
+                .into_iter()
+                .map(|m| m.index as usize),
+        );
 
         if self.instant && self.matches.len() == 1 {
             return MatchResult::InstantPick(self.matches[0]);
@@ -279,12 +257,13 @@ mod tests {
     }
 
     /// Smart case starts insensitive; one uppercase letter turns it
-    /// sensitive for good (the C flag was never reset).
+    /// sensitive for good (the C flag was never reset). While insensitive,
+    /// frizbee still ranks the case-identical item first (matching_case_bonus).
     #[test]
     fn smart_case_flips_once_and_never_resets() {
         let mut m = matcher(|c| c.smart_case = true, &["FOO", "foo"]);
         assert_eq!(m.search("foo"), MatchResult::Listed);
-        assert_eq!(m.matches, vec![0, 1]);
+        assert_eq!(m.matches, vec![1, 0]);
 
         m.note_uppercase("Foo");
         assert_eq!(m.search("foo"), MatchResult::Listed);
@@ -372,6 +351,26 @@ mod tests {
         let mut m = matcher(|_| (), &["foobar", "fobar"]);
         assert_eq!(m.search("fb"), MatchResult::Listed);
         assert_eq!(m.matches, vec![1, 0]);
+    }
+
+    /// One typo per four query characters: a slipped key still matches,
+    /// two needle chars without a home are past the budget and filtered.
+    #[test]
+    fn fuzzy_tolerates_typos() {
+        let mut m = matcher(|_| (), &["firefox", "thunderbird"]);
+        assert_eq!(m.search("firefx"), MatchResult::Listed);
+        assert_eq!(m.matches, vec![0]);
+        m.search("firxyx");
+        assert!(m.matches.is_empty());
+    }
+
+    /// Equal scores keep input order (stable ranking), so history/frecency
+    /// ordering survives equal-quality matches.
+    #[test]
+    fn fuzzy_ties_keep_input_order() {
+        let mut m = matcher(|_| (), &["foo", "foo"]);
+        assert_eq!(m.search("foo"), MatchResult::Listed);
+        assert_eq!(m.matches, vec![0, 1]);
     }
 
     /// Exact mode: only exact matches are listed (no prefix/substr ranking).

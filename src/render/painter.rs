@@ -95,7 +95,13 @@ impl<'a> Painter<'a> {
 
     /// Draw text in `cell` with the given [`TextStyle`]. Text wider than the
     /// cell is truncated with an ellipsis.
-    pub fn draw_text_styled(&mut self, cell: Rect, left_padding: i32, text: &str, style: TextStyle) {
+    pub fn draw_text_styled(
+        &mut self,
+        cell: Rect,
+        left_padding: i32,
+        text: &str,
+        style: TextStyle,
+    ) {
         if cell.w <= 0 || cell.h <= 0 {
             return;
         }
@@ -103,11 +109,13 @@ impl<'a> Painter<'a> {
         // Resolve the background fill and the band the text is centered in.
         let (text_color, text_band) = match style {
             TextStyle::Normal => {
-                self.renderer.fill_rect(self.canvas, cell, self.renderer.scheme.bg);
+                self.renderer
+                    .fill_rect(self.canvas, cell, self.renderer.scheme.bg);
                 (self.renderer.scheme.fg, cell)
             }
             TextStyle::Inverted => {
-                self.renderer.fill_rect(self.canvas, cell, self.renderer.scheme.fg);
+                self.renderer
+                    .fill_rect(self.canvas, cell, self.renderer.scheme.fg);
                 (self.renderer.scheme.bg, cell)
             }
             TextStyle::Accented => {
@@ -127,8 +135,9 @@ impl<'a> Painter<'a> {
             text
         } else {
             let ellipsis_width = self.renderer.text_width("...");
-            let (prefix, prefix_width) =
-                self.renderer.fit_text(text, (available - ellipsis_width).max(0));
+            let (prefix, prefix_width) = self
+                .renderer
+                .fit_text(text, (available - ellipsis_width).max(0));
             self.renderer.draw_shaped_text(
                 self.canvas,
                 text_band,
