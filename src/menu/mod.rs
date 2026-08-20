@@ -269,20 +269,20 @@ impl Menu {
         self.renderer.painter(&mut self.canvas)
     }
 
-    /* ── text measurement (the TEXTW macro) ───────────────────────────── */
+    /* ── text measurement ─────────────────────────────────────────────── */
 
-    /// TEXTW macro
-    pub(in crate::menu) fn text_width(&mut self, s: &str) -> i32 {
+    /// Cell width (glyph width plus horizontal padding).
+    pub(in crate::menu) fn cell_width(&mut self, s: &str) -> i32 {
         TextMeasurer::new(
             &mut self.renderer,
             self.cfg.commented,
             self.layout.bar_height,
         )
-        .text_width(s)
+        .cell_width(s)
     }
 
-    /// max_textw — widest item text.
-    pub(in crate::menu) fn max_text_width(&mut self) -> i32 {
+    /// Widest item cell width.
+    pub(in crate::menu) fn max_cell_width(&mut self) -> i32 {
         let commented = self.cfg.commented;
         let horizontal_padding = self.renderer.horizontal_padding;
         let bar_height = self.layout.bar_height;
@@ -311,7 +311,7 @@ impl Menu {
 
     /// Width reserved for the left/right command cells (C's `arrowwidth`).
     pub(in crate::menu) fn command_cell_width(&mut self) -> i32 {
-        self.text_width(RIGHT_GLYPH)
+        self.cell_width(RIGHT_GLYPH)
     }
 
     /// Visible horizontal-list items as `(match_pos, rect)` pairs. The single
@@ -324,12 +324,12 @@ impl Menu {
         let menu_width = self.layout.menu_width;
         let bar_height = self.layout.bar_height;
         let mut m = TextMeasurer::new(&mut self.renderer, self.cfg.commented, bar_height);
-        let mut x = x + input_width + m.text_width("<");
+        let mut x = x + input_width + m.cell_width("<");
         let mut rects = Vec::with_capacity(end.saturating_sub(start));
         for pos in start..end {
             let text = self.matcher.text_of_match(pos);
-            let budget = menu_width - x - m.text_width(">") - m.text_width(&numbers);
-            let width = m.text_width_clamp(text, budget);
+            let budget = menu_width - x - m.cell_width(">") - m.cell_width(&numbers);
+            let width = m.cell_width_clamp(text, budget);
             rects.push((pos, Rect::new(x, 0, width, bar_height)));
             x += width;
         }

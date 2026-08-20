@@ -1,8 +1,7 @@
 //! High-level drawing context bundling [`Renderer`] and [`Canvas`].
 //!
-//! [`Painter`] eliminates boolean blindness and repetitive canvas passing by
-//! providing intention-revealing drawing methods for rectangles, text, and
-//! UI elements.
+//! [`Painter`] resolves the active scheme and canvas into intention-revealing
+//! drawing calls, so callers never pass a canvas or scheme color by hand.
 
 use crate::enums::{ColorRole, Scheme};
 use crate::geom::Rect;
@@ -13,10 +12,18 @@ use super::renderer::Renderer;
 
 /// Height of the detail / accent strip at the bottom of an item or slider bar (pixels).
 pub const ACCENT_STRIP_HEIGHT: i32 = 4;
-/// Maximum height of a rectangle that receives a detail / accent strip.
-pub const ACCENT_MAX_HEIGHT: i32 = 40;
-/// Vertical shift (pixels) for text rendered in an accented cell to keep it visually centered.
-pub const ACCENT_TEXT_Y_OFFSET: i32 = 2;
+
+/// How text is styled inside a cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextStyle {
+    /// Fill the cell with the scheme background, draw the text in the foreground.
+    Normal,
+    /// Like [`TextStyle::Normal`], plus a bottom detail strip; the text is
+    /// centered in the region above the strip.
+    Accented,
+    /// Fill the cell with the scheme foreground, draw the text in the background.
+    Inverted,
+}
 
 /// A drawing context that bundles mutable references to [`Renderer`] and [`Canvas`].
 pub struct Painter<'a> {
@@ -66,65 +73,76 @@ impl<'a> Painter<'a> {
         self.renderer.fill_rect(self.canvas, rect, color);
     }
 
-    /// Fill a rectangle with the active scheme's background color and, if the
-    /// rectangle height is within [`ACCENT_MAX_HEIGHT`], a bottom [`ACCENT_STRIP_HEIGHT`]
-    /// detail strip using the active scheme's detail color.
+    /// Fill a rectangle with the active scheme's background color plus a
+    /// bottom [`ACCENT_STRIP_HEIGHT`] detail strip in the active scheme's
+    /// detail color (the strip is clamped to the rectangle's height).
     pub fn fill_accented_rect(&mut self, rect: Rect) {
         self.fill_rect(rect, ColorRole::Background);
-        if rect.h < ACCENT_MAX_HEIGHT {
-            let strip = Rect::new(
-                rect.x,
-                rect.bottom() - ACCENT_STRIP_HEIGHT,
-                rect.w,
-                ACCENT_STRIP_HEIGHT,
-            );
-            let detail = self.renderer.scheme.detail;
-            self.renderer.fill_rect(self.canvas, strip, detail);
+        let strip_h = ACCENT_STRIP_HEIGHT.min(rect.h);
+        if strip_h <= 0 {
+            return;
         }
+        let strip = Rect::new(rect.x, rect.bottom() - strip_h, rect.w, strip_h);
+        let detail = self.renderer.scheme.detail;
+        self.renderer.fill_rect(self.canvas, strip, detail);
     }
 
-    /// Text width in pixels (delegates to [`Renderer::text_width`]).
-    pub fn text_width(&mut self, text: &str) -> i32 {
-        self.renderer.text_width(text)
+    /// Draw text in `cell` with [`TextStyle::Normal`], starting `left_padding`
+    /// in from the cell's left edge. The cell background is filled.
+    pub fn draw_text(&mut self, cell: Rect, left_padding: i32, text: &str) {
+        self.draw_text_styled(cell, left_padding, text, TextStyle::Normal);
     }
 
-    /// Font height of primary font.
-    pub fn font_height(&self) -> i32 {
-        self.renderer.font_height
-    }
+    /// Draw text in `cell` with the given [`TextStyle`]. Text wider than the
+    /// cell is truncated with an ellipsis.
+    pub fn draw_text_styled(&mut self, cell: Rect, left_padding: i32, text: &str, style: TextStyle) {
+        if cell.w <= 0 || cell.h <= 0 {
+            return;
+        }
 
-    /// Horizontal padding (`lrpad`).
-    pub fn horizontal_padding(&self) -> i32 {
-        self.renderer.horizontal_padding
-    }
+        // Resolve the background fill and the band the text is centered in.
+        let (text_color, text_band) = match style {
+            TextStyle::Normal => {
+                self.renderer.fill_rect(self.canvas, cell, self.renderer.scheme.bg);
+                (self.renderer.scheme.fg, cell)
+            }
+            TextStyle::Inverted => {
+                self.renderer.fill_rect(self.canvas, cell, self.renderer.scheme.fg);
+                (self.renderer.scheme.bg, cell)
+            }
+            TextStyle::Accented => {
+                self.fill_accented_rect(cell);
+                let body_h = (cell.h - ACCENT_STRIP_HEIGHT.min(cell.h)).max(0);
+                let body = Rect::new(cell.x, cell.y, cell.w, body_h);
+                (self.renderer.scheme.fg, body)
+            }
+        };
 
-    /// Draw standard text in `cell` with `left_padding`.
-    pub fn draw_text(&mut self, cell: Rect, left_padding: i32, text: &str) -> i32 {
-        self.renderer
-            .draw_text(self.canvas, cell, left_padding, text, false, false)
-    }
+        if text_band.h <= 0 || cell.w < left_padding {
+            return;
+        }
+        let available = cell.w - left_padding;
+        let full = self.renderer.text_width(text);
+        let shown = if full <= available {
+            text
+        } else {
+            let ellipsis_width = self.renderer.text_width("...");
+            let (prefix, prefix_width) =
+                self.renderer.fit_text(text, (available - ellipsis_width).max(0));
+            self.renderer.draw_shaped_text(
+                self.canvas,
+                text_band,
+                left_padding + prefix_width,
+                "...",
+                text_color,
+            );
+            prefix
+        };
 
-    /// Draw a menu item cell with optional accent styling.
-    ///
-    /// If `is_accented` is true, paints an accented background (with detail strip)
-    /// and shifts the text up by [`ACCENT_TEXT_Y_OFFSET`] to keep it visually centered.
-    pub fn draw_item(
-        &mut self,
-        cell: Rect,
-        left_padding: i32,
-        text: &str,
-        is_accented: bool,
-    ) -> i32 {
-        self.renderer
-            .draw_text(self.canvas, cell, left_padding, text, false, is_accented)
-    }
-
-    /// Draw inverted text: background is painted with `fg` and text is
-    /// painted with `bg`. (Not used by the prompt — the C original draws
-    /// that non-inverted — but available for inverted cells.)
-    pub fn draw_inverted_text(&mut self, cell: Rect, left_padding: i32, text: &str) -> i32 {
-        self.renderer
-            .draw_text(self.canvas, cell, left_padding, text, true, false)
+        if !shown.is_empty() {
+            self.renderer
+                .draw_shaped_text(self.canvas, text_band, left_padding, shown, text_color);
+        }
     }
 }
 
@@ -132,63 +150,8 @@ impl<'a> Painter<'a> {
 mod tests {
     use super::*;
     use crate::geom::Size;
-    use crate::render::{Color, SchemeStrings};
-    use std::collections::HashSet;
-
-    fn make_test_renderer() -> Renderer {
-        let scheme_strings = [
-            SchemeStrings {
-                fg: "#ffffff".to_string(),
-                bg: "#111111".to_string(),
-                detail: "#333333".to_string(),
-            },
-            SchemeStrings {
-                fg: "#aaaaaa".to_string(),
-                bg: "#222222".to_string(),
-                detail: "#444444".to_string(),
-            },
-            SchemeStrings {
-                fg: "#bbbbbb".to_string(),
-                bg: "#333333".to_string(),
-                detail: "#555555".to_string(),
-            },
-            SchemeStrings {
-                fg: "#cccccc".to_string(),
-                bg: "#444444".to_string(),
-                detail: "#666666".to_string(),
-            },
-            SchemeStrings {
-                fg: "#000000".to_string(),
-                bg: "#0055ff".to_string(),
-                detail: "#00aaff".to_string(),
-            },
-            SchemeStrings {
-                fg: "#dddddd".to_string(),
-                bg: "#555555".to_string(),
-                detail: "#777777".to_string(),
-            },
-            SchemeStrings {
-                fg: "#00ff00".to_string(),
-                bg: "#003300".to_string(),
-                detail: "#006600".to_string(),
-            },
-            SchemeStrings {
-                fg: "#ffff00".to_string(),
-                bg: "#333300".to_string(),
-                detail: "#666600".to_string(),
-            },
-            SchemeStrings {
-                fg: "#ff0000".to_string(),
-                bg: "#330000".to_string(),
-                detail: "#660000".to_string(),
-            },
-        ];
-        Renderer::new(
-            &["monospace:size=12".to_string()],
-            &scheme_strings,
-            &HashSet::new(),
-        )
-    }
+    use crate::render::renderer::make_test_renderer;
+    use crate::render::Color;
 
     #[test]
     fn fill_accented_rect_draws_detail_strip() {
@@ -217,23 +180,54 @@ mod tests {
     }
 
     #[test]
-    fn fill_accented_rect_skips_detail_strip_on_large_rectangles() {
+    fn fill_accented_rect_draws_strip_on_large_rectangles() {
         let mut renderer = make_test_renderer();
         let mut canvas = Canvas::new(Size::new(50, 50));
         let mut painter = Painter::new(&mut renderer, &mut canvas);
         painter.set_scheme(Scheme::Selected);
-        // Height 50 >= ACCENT_MAX_HEIGHT (40)
         painter.fill_accented_rect(Rect::new(0, 0, 50, 50));
 
         let sel = painter.scheme();
-        let bg = sel.bg;
+        let detail = sel.detail;
         let bgra = |c: Color| [c.b(), c.g(), c.r(), c.a()];
 
-        // Bottom rows should remain background color, no detail strip
+        // The bottom 4px are the detail strip regardless of the rect height.
         let pixel_bottom: [u8; 4] = painter.canvas.data[(48 * 50 + 25) * 4..][..4]
             .try_into()
             .unwrap();
-        assert_eq!(pixel_bottom, bgra(bg));
+        assert_eq!(pixel_bottom, bgra(detail));
+    }
+
+    #[test]
+    fn draw_text_clips_glyphs_to_the_cell() {
+        let mut renderer = make_test_renderer();
+        let mut canvas = Canvas::new(Size::new(40, 20));
+        let mut painter = Painter::new(&mut renderer, &mut canvas);
+        painter.set_scheme(Scheme::Normal);
+        // Cell only 8px wide with 2px padding: even the ellipsis cannot fit,
+        // so whatever is drawn must be clipped at the cell's right edge.
+        painter.draw_text(Rect::new(0, 0, 8, 20), 2, "abcdefghijklmno");
+
+        // Pixels right of the cell are untouched (canvas still zeroed).
+        let right_of_cell: [u8; 4] = painter.canvas.data[(10 * 40 + 12) * 4..][..4]
+            .try_into()
+            .unwrap();
+        assert_eq!(right_of_cell, [0, 0, 0, 0]);
+        // Something was drawn inside the cell: some pixel between the padding
+        // and the cell edge differs from the pure background fill (the
+        // ellipsis dots sit near the baseline, so scan all rows).
+        let norm = painter.scheme();
+        let bgra = |c: Color| [c.b(), c.g(), c.r(), c.a()];
+        let bg = bgra(norm.bg);
+        let drew = (2..8).any(|x| {
+            (0..20).any(|y| {
+                let pixel: [u8; 4] = painter.canvas.data[(y * 40 + x) * 4..][..4]
+                    .try_into()
+                    .unwrap();
+                pixel != bg
+            })
+        });
+        assert!(drew, "expected clipped ellipsis glyphs inside the cell");
     }
 
     #[test]
@@ -274,5 +268,92 @@ mod tests {
         for pixel in painter.canvas.data.chunks_exact(4) {
             assert_eq!(pixel, bgra(sel.bg));
         }
+    }
+
+    #[test]
+    fn draw_text_fills_the_cell_background() {
+        let mut renderer = make_test_renderer();
+        let mut canvas = Canvas::new(Size::new(40, 20));
+        let mut painter = Painter::new(&mut renderer, &mut canvas);
+        painter.set_scheme(Scheme::Normal);
+        painter.draw_text(Rect::new(0, 0, 40, 20), 6, "x");
+
+        let norm = painter.scheme();
+        let bgra = |c: Color| [c.b(), c.g(), c.r(), c.a()];
+        // Far from the glyph: the cell is pure background.
+        let pixel: [u8; 4] = painter.canvas.data[(10 * 40 + 35) * 4..][..4]
+            .try_into()
+            .unwrap();
+        assert_eq!(pixel, bgra(norm.bg));
+    }
+
+    #[test]
+    fn draw_text_styled_accent_draws_the_detail_strip() {
+        let mut renderer = make_test_renderer();
+        let mut canvas = Canvas::new(Size::new(40, 20));
+        let mut painter = Painter::new(&mut renderer, &mut canvas);
+        painter.set_scheme(Scheme::Selected);
+        painter.draw_text_styled(Rect::new(0, 0, 40, 20), 6, "x", TextStyle::Accented);
+
+        let sel = painter.scheme();
+        let bgra = |c: Color| [c.b(), c.g(), c.r(), c.a()];
+        // Body above the strip, away from the glyph.
+        let body: [u8; 4] = painter.canvas.data[(5 * 40 + 35) * 4..][..4]
+            .try_into()
+            .unwrap();
+        assert_eq!(body, bgra(sel.bg));
+        // The bottom 4px are the detail strip.
+        let strip: [u8; 4] = painter.canvas.data[(18 * 40 + 35) * 4..][..4]
+            .try_into()
+            .unwrap();
+        assert_eq!(strip, bgra(sel.detail));
+    }
+
+    #[test]
+    fn fill_accented_rect_clamps_strip_to_small_height() {
+        let mut renderer = make_test_renderer();
+        let mut canvas = Canvas::new(Size::new(20, 20));
+        let mut painter = Painter::new(&mut renderer, &mut canvas);
+        painter.set_scheme(Scheme::Selected);
+        // Fill a small rect at y=5..7 (height = 2, less than ACCENT_STRIP_HEIGHT 4)
+        painter.fill_accented_rect(Rect::new(0, 5, 20, 2));
+
+        let sel = painter.scheme();
+        let detail = sel.detail;
+        let bgra = |c: Color| [c.b(), c.g(), c.r(), c.a()];
+
+        // Above the rect (y = 4) must NOT be painted (still 0)
+        let pixel_above: [u8; 4] = painter.canvas.data[(4 * 20 + 5) * 4..][..4]
+            .try_into()
+            .unwrap();
+        assert_eq!(pixel_above, [0, 0, 0, 0]);
+
+        // Inside the rect (y = 5, 6) is the detail strip clamped to 2px
+        let pixel_inside: [u8; 4] = painter.canvas.data[(5 * 20 + 5) * 4..][..4]
+            .try_into()
+            .unwrap();
+        assert_eq!(pixel_inside, bgra(detail));
+
+        // Below the rect (y = 7) must NOT be painted (still 0)
+        let pixel_below: [u8; 4] = painter.canvas.data[(7 * 20 + 5) * 4..][..4]
+            .try_into()
+            .unwrap();
+        assert_eq!(pixel_below, [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn draw_text_styled_accent_clamps_on_small_cells() {
+        let mut renderer = make_test_renderer();
+        let mut canvas = Canvas::new(Size::new(20, 20));
+        let mut painter = Painter::new(&mut renderer, &mut canvas);
+        painter.set_scheme(Scheme::Selected);
+        // Cell height = 2 at y = 10
+        painter.draw_text_styled(Rect::new(0, 10, 20, 2), 0, "x", TextStyle::Accented);
+
+        // Above the cell (y = 9) must NOT be painted
+        let pixel_above: [u8; 4] = painter.canvas.data[(9 * 20 + 5) * 4..][..4]
+            .try_into()
+            .unwrap();
+        assert_eq!(pixel_above, [0, 0, 0, 0]);
     }
 }

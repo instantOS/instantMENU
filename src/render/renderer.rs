@@ -1,5 +1,6 @@
-//! The shared drawing context: fontset + color schemes + canvas, port of
-//! `Drw` plus the scheme state of instantmenu.c.
+//! The shared drawing context: fonts, color schemes and the shaped-text cache.
+//! Drawing primitives take the target [`Canvas`] explicitly; the backends blit
+//! that canvas to the window.
 
 use std::collections::{HashMap, HashSet};
 
@@ -14,27 +15,24 @@ use super::canvas::Canvas;
 use super::color::{scheme_from_strings, Color, SchemeColors, SchemeStrings};
 use super::font::{parse_font_name, primary_font_height, resolve_family, FontSpec};
 use super::fontconfig;
-use super::painter::{Painter, ACCENT_STRIP_HEIGHT, ACCENT_TEXT_Y_OFFSET};
+use super::painter::Painter;
 
-/// The shared drawing context: fontset + color schemes + canvas, port of
-/// `Drw` plus the scheme state of instantmenu.c.
+/// The shared drawing context: fonts, color schemes and the shaped-text cache.
 pub struct Renderer {
     pub font_system: FontSystem,
     swash_cache: SwashCache,
-    /// Parsed font specs, primary first (drw `fonts`).
+    /// Parsed font specs, primary first.
     pub fonts: Vec<FontSpec>,
     /// Resolved cosmic-text family names in fontset order.
     families: Vec<String>,
-    /// font height of the primary font (`drw->fonts->h` = ascent + descent).
+    /// Height of the primary font (ascent + descent).
     pub font_height: i32,
-    /// sum of left and right padding (`lrpad`)
+    /// Sum of the left and right text padding inside a cell.
     pub horizontal_padding: i32,
     /// Color schemes.
     pub schemes: Vec<SchemeColors>,
-    /// Currently set scheme (drw_setscheme).
+    /// Currently active color scheme.
     pub scheme: SchemeColors,
-
-    frame_background: Option<Color>,
 
     // Shaped text is reusable for both measurement and drawing.
     layout_cache: HashMap<String, TextLayout>,
@@ -49,8 +47,8 @@ struct TextLayout {
 }
 
 impl Renderer {
-    /// Create the renderer and load the fontset. Mirrors `drw_fontset_create`
-    /// + `drw_scm_create` + `lrpad = drw->fonts->h`.
+    /// Create the renderer: resolve the font families, load the schemes and
+    /// seed the fallback set for the required characters.
     pub fn new(
         fonts: &[String],
         scheme_strings: &[SchemeStrings; 9],
@@ -83,7 +81,6 @@ impl Renderer {
             font_height,
             horizontal_padding: font_height,
             scheme: SchemeColors::default(),
-            frame_background: None,
             layout_cache: HashMap::new(),
             checked_chars,
         };
@@ -103,7 +100,6 @@ impl Renderer {
 
     pub fn clear(&mut self, canvas: &mut Canvas, color: Color) {
         canvas.fill_rect(Rect::with_size(canvas.size()), color.channels());
-        self.frame_background = Some(color);
     }
 
     /// Create a [`Painter`] drawing context bundling this renderer and the given canvas.
@@ -116,7 +112,13 @@ impl Renderer {
         canvas.fill_rect(rect, color.channels());
     }
 
-    /// `drw_fontset_getwidth` — width of `text` (without lrpad).
+    /// Half of the horizontal padding: the left (and right) text inset inside
+    /// a cell.
+    pub fn cell_inset(&self) -> i32 {
+        self.horizontal_padding / 2
+    }
+
+    /// Raw glyph width of `text`, with no padding applied.
     pub fn text_width(&mut self, text: &str) -> i32 {
         if text.is_empty() {
             return 0;
@@ -203,121 +205,47 @@ impl Renderer {
             .ceil() as i32
     }
 
-    /// drw_text — draw `text` in `cell` with `left_padding` padding.
-    /// `invert` swaps fg/bg, `accent` paints a detail strip at the
-    /// bottom and shifts the text up by [`ACCENT_TEXT_Y_OFFSET`]. Text that does not fit is
-    /// truncated with an ellipsis ("..."). Returns the x position after the
-    /// drawn text.
-    pub fn draw_text(
-        &mut self,
-        canvas: &mut Canvas,
-        cell: Rect,
-        left_padding: i32,
-        text: &str,
-        invert: bool,
-        accent: bool,
-    ) -> i32 {
-        let Rect { x, y, w, h } = cell;
-        let render = x != 0 || y != 0 || w != 0 || h != 0;
-        if !render {
-            // measuring call: width of the full text
-            return self.text_width(text);
+    /// Longest UTF-8-boundary prefix of `text` whose glyph width is at most
+    /// `max_width`, together with that prefix's width. Returns the whole text
+    /// when it already fits, and an empty prefix when even the first glyph
+    /// does not.
+    pub(super) fn fit_text<'a>(&mut self, text: &'a str, max_width: i32) -> (&'a str, i32) {
+        let full = self.text_width(text);
+        if full <= max_width {
+            return (text, full);
         }
-        if w == 0 {
-            return x;
+        if max_width <= 0 {
+            return ("", 0);
         }
 
-        // background
-        let fill = if invert {
-            self.scheme.fg
-        } else {
-            self.scheme.bg
-        };
-        if accent {
-            self.fill_rect(canvas, Rect::new(x, y, w, h - ACCENT_STRIP_HEIGHT), fill);
-            self.fill_rect(
-                canvas,
-                Rect::new(x, y + h - ACCENT_STRIP_HEIGHT, w, ACCENT_STRIP_HEIGHT),
-                self.scheme.detail,
-            );
-        } else if self.frame_background != Some(fill) {
-            self.fill_rect(canvas, cell, fill);
-        }
-        if w < left_padding {
-            return x + w;
-        }
-
-        let color = if invert {
-            self.scheme.bg
-        } else {
-            self.scheme.fg
-        };
-        let cosmic_color = CosmicColor::rgba(color.r(), color.g(), color.b(), color.a());
-
-        let available = w - left_padding;
-        let mut display_text = text;
-        let ellipsis_width = self.text_width("...");
-        let full_width = self.text_width(text);
-        let mut drawn_width = full_width;
-        if full_width > available {
-            // find the longest prefix after which an ellipsis still fits
-            let max_text_width = (available - ellipsis_width).max(0);
-            let chars: Vec<(usize, char)> = text.char_indices().collect();
-            // binary search over char count
-            let mut lo = 0usize;
-            let mut hi = chars.len();
-            while lo < hi {
-                let mid = (lo + hi).div_ceil(2);
-                let end = if mid < chars.len() {
-                    chars[mid].0
-                } else {
-                    text.len()
-                };
-                if self.text_width(&text[..end]) <= max_text_width {
-                    lo = mid;
-                } else {
-                    hi = mid - 1;
-                }
-            }
-            let end = if lo < chars.len() {
-                chars[lo].0
-            } else {
-                text.len()
-            };
-            display_text = &text[..end];
-            drawn_width = self.text_width(display_text) + ellipsis_width;
-            // draw ellipsis right after the truncated text
-            let ellipsis_x = x + left_padding + self.text_width(display_text);
-            self.draw_run(canvas, ellipsis_x, y, h, "...", cosmic_color, accent);
-        }
-        if !display_text.is_empty() {
-            self.draw_run(
-                canvas,
-                x + left_padding,
-                y,
-                h,
-                display_text,
-                cosmic_color,
-                accent,
-            );
-        }
-
-        // drw_text returns the advanced x plus remaining w, which is x + w for
-        // the non-overflow case; overflow callers still get the cell edge.
-        let _ = drawn_width;
-        x + w
+        // Byte offset of every char boundary, plus the end. Glyph width is
+        // monotonic in prefix length, so `partition_point` yields the longest
+        // prefix that fits — always cut on a UTF-8 boundary.
+        let mut boundaries: Vec<usize> = text.char_indices().map(|(i, _)| i).collect();
+        boundaries.push(text.len());
+        let fit = boundaries.partition_point(|&end| self.text_width(&text[..end]) <= max_width);
+        let prefix = &text[..boundaries[fit - 1]];
+        (prefix, self.text_width(prefix))
     }
 
-    fn draw_run(
+    /// Draw the glyphs of `text` (shaped on demand) at `band.x + x_offset`,
+    /// vertically centered within `band`. Foreground only — the cell
+    /// background is left untouched, so callers must fill it first.
+    pub(super) fn draw_shaped_text(
         &mut self,
         canvas: &mut Canvas,
-        x: i32,
-        y: i32,
-        h: i32,
+        band: Rect,
+        x_offset: i32,
         text: &str,
-        color: CosmicColor,
-        accent: bool,
+        color: Color,
     ) {
+        if band.w <= 0 || band.h <= 0 {
+            return;
+        }
+
+        // Remove-then-reinsert: the miss path (`make_buffer`) needs `&mut
+        // self`, so we can't hold a cache entry across it. Take the layout
+        // out, draw from it, then put it back.
         let mut layout = self.layout_cache.remove(text).unwrap_or_else(|| {
             let buffer = self.make_buffer(text, None);
             TextLayout {
@@ -328,20 +256,23 @@ impl Renderer {
 
         let width = canvas.width;
         let height = canvas.height;
-        // vertical centering like drw_text:
-        // ty = y + (h - usedfont->h)/2 + ascent, here the buffer baseline sits
-        // at ascent within font_height rows.
-        let y_off = y + (h - self.font_height) / 2 - if accent { ACCENT_TEXT_Y_OFFSET } else { 0 };
+        let min_x = band.x.max(0);
+        let max_x = band.right().min(width);
+        // The shaped buffer occupies `font_height` rows; center that box in
+        // the band. Glyph `gy` is relative to the buffer's top edge.
+        let x = band.x + x_offset;
+        let y = band.y + (band.h - self.font_height) / 2;
+        let cosmic_color = CosmicColor::rgba(color.r(), color.g(), color.b(), color.a());
 
         layout.buffer.draw(
             &mut self.font_system,
             &mut self.swash_cache,
-            color,
+            cosmic_color,
             |gx, gy, _gw, _gh, c| {
                 let px_color = [c.r(), c.g(), c.b(), c.a()];
                 let cx = x + gx;
-                let cy = y_off + gy;
-                if cx < 0 || cy < 0 || cx >= width || cy >= height {
+                let cy = y + gy;
+                if cx < min_x || cx >= max_x || cy < 0 || cy >= height {
                     return;
                 }
                 canvas.blend_pixel(crate::geom::Point::new(cx, cy), px_color);
@@ -352,6 +283,64 @@ impl Renderer {
         }
         self.layout_cache.insert(text.to_owned(), layout);
     }
+}
+
+/// A renderer over a fixed nine-scheme palette and `monospace:size=12`, for
+/// the pixel- and measurement-level tests of this module and `painter`.
+#[cfg(test)]
+pub(super) fn make_test_renderer() -> Renderer {
+    let scheme_strings = [
+        SchemeStrings {
+            fg: "#ffffff".to_string(),
+            bg: "#111111".to_string(),
+            detail: "#333333".to_string(),
+        },
+        SchemeStrings {
+            fg: "#aaaaaa".to_string(),
+            bg: "#222222".to_string(),
+            detail: "#444444".to_string(),
+        },
+        SchemeStrings {
+            fg: "#bbbbbb".to_string(),
+            bg: "#333333".to_string(),
+            detail: "#555555".to_string(),
+        },
+        SchemeStrings {
+            fg: "#cccccc".to_string(),
+            bg: "#444444".to_string(),
+            detail: "#666666".to_string(),
+        },
+        SchemeStrings {
+            fg: "#000000".to_string(),
+            bg: "#0055ff".to_string(),
+            detail: "#00aaff".to_string(),
+        },
+        SchemeStrings {
+            fg: "#dddddd".to_string(),
+            bg: "#555555".to_string(),
+            detail: "#777777".to_string(),
+        },
+        SchemeStrings {
+            fg: "#00ff00".to_string(),
+            bg: "#003300".to_string(),
+            detail: "#006600".to_string(),
+        },
+        SchemeStrings {
+            fg: "#ffff00".to_string(),
+            bg: "#333300".to_string(),
+            detail: "#666600".to_string(),
+        },
+        SchemeStrings {
+            fg: "#ff0000".to_string(),
+            bg: "#330000".to_string(),
+            detail: "#660000".to_string(),
+        },
+    ];
+    Renderer::new(
+        &["monospace:size=12".to_string()],
+        &scheme_strings,
+        &HashSet::new(),
+    )
 }
 
 fn detect_locale() -> String {
@@ -387,5 +376,51 @@ fn char_class(ch: Option<char>) -> CharClass {
             CharClass::Emoji
         }
         _ => CharClass::Normal,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fit_text_returns_the_whole_text_when_it_fits() {
+        let mut r = make_test_renderer();
+        let text = "abcdefghij";
+        let full = r.text_width(text);
+        assert_eq!(r.fit_text(text, full), (text, full));
+        assert_eq!(r.fit_text(text, full + 100), (text, full));
+    }
+
+    #[test]
+    fn fit_text_cuts_on_a_char_boundary() {
+        let mut r = make_test_renderer();
+        // Widths are taken from the renderer itself so the test holds for any
+        // font: the prefix of five ASCII chars must be the longest that fits
+        // in exactly its own width.
+        let text = "aaaaaaaaaaaaaa";
+        let w5 = r.text_width("aaaaa");
+        let (prefix, width) = r.fit_text(text, w5);
+        assert_eq!(prefix, "aaaaa");
+        assert_eq!(width, w5);
+    }
+
+    #[test]
+    fn fit_text_cuts_multi_byte_text_on_a_char_boundary() {
+        let mut r = make_test_renderer();
+        let text = "αααααααα";
+        let w3 = r.text_width("ααα");
+        let (prefix, width) = r.fit_text(text, w3);
+        assert_eq!(prefix, "ααα");
+        assert_eq!(width, w3);
+    }
+
+    #[test]
+    fn fit_text_returns_empty_prefix_when_nothing_fits() {
+        let mut r = make_test_renderer();
+        // Any single glyph at size 12 is wider than 1px.
+        assert_eq!(r.fit_text("abc", 1), ("", 0));
+        assert_eq!(r.fit_text("abc", 0), ("", 0));
+        assert_eq!(r.fit_text("abc", -5), ("", 0));
     }
 }

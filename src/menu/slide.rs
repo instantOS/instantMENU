@@ -13,7 +13,7 @@ use super::transition::Transition;
 use super::Menu;
 use crate::backend::{BackendEvent, MouseButton, CONTROL_MASK};
 use crate::config::SlideSettings;
-use crate::enums::{ColorRole, ExitStatus, Scheme};
+use crate::enums::{ExitStatus, Scheme};
 use crate::geom::{Point, Rect};
 use xkbcommon::xkb::keysyms as ks;
 
@@ -291,8 +291,8 @@ impl Menu {
             Some(p) if !p.is_empty() => format!("{p}  {value}"),
             _ => value.to_string(),
         };
-        let lpad = self.renderer.horizontal_padding / 2;
-        let label_width = self.text_width(&label) + self.renderer.horizontal_padding;
+        let lpad = self.renderer.cell_inset();
+        let label_width = self.cell_width(&label);
 
         let mut p = self.painter();
         p.set_scheme(Scheme::Normal);
@@ -303,9 +303,9 @@ impl Menu {
         p.set_scheme(Scheme::Selected);
         p.fill_accented_rect(Rect::new(0, 0, fill, height));
 
-        // Normal-scheme box so the label stays readable over the fill
+        // Normal-scheme label box over the fill keeps the value readable —
+        // draw_text fills the cell with the scheme background itself.
         p.set_scheme(Scheme::Normal);
-        p.fill_rect(Rect::new(0, 0, label_width, height), ColorRole::Background);
         p.draw_text(Rect::new(0, 0, label_width, height), lpad, &label);
 
         self.backend.present(&self.canvas);

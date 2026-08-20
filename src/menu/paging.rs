@@ -47,8 +47,8 @@ pub(super) fn calc_paging(
     let n = if layout.lines > 0 {
         layout.lines * layout.columns * layout.bar_height
     } else {
-        let langle = measure.text_width("<");
-        let rangle = measure.text_width(">");
+        let langle = measure.cell_width("<");
+        let rangle = measure.cell_width(">");
         layout.menu_width - (layout.prompt_width + layout.input_width + langle + rangle)
     };
 
@@ -61,7 +61,7 @@ pub(super) fn calc_paging(
                 layout.bar_height
             } else {
                 let text = items[matches[pos]].text.as_str();
-                measure.text_width_clamp(text, n)
+                measure.cell_width_clamp(text, n)
             };
             if used > n {
                 next = Some(pos);
@@ -79,7 +79,7 @@ pub(super) fn calc_paging(
             layout.bar_height
         } else {
             let text = items[matches[pos]].text.as_str();
-            measure.text_width_clamp(text, n)
+            measure.cell_width_clamp(text, n)
         };
         if used > n {
             break;
@@ -132,14 +132,14 @@ mod tests {
     struct FakeMeasure;
 
     impl Measure for FakeMeasure {
-        fn text_width(&mut self, s: &str) -> i32 {
+        fn cell_width(&mut self, s: &str) -> i32 {
             10 * s.len() as i32
         }
-        fn text_width_clamp(&mut self, s: &str, n: i32) -> i32 {
+        fn cell_width_clamp(&mut self, s: &str, n: i32) -> i32 {
             if n == 0 {
                 return 0;
             }
-            self.text_width(s).min(n)
+            self.cell_width(s).min(n)
         }
     }
 

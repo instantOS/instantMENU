@@ -152,7 +152,7 @@ impl Menu {
                     + if self.paging.prev == 0
                         || self.selection.current.map(|c| c == 0).unwrap_or(true)
                     {
-                        self.text_width("<")
+                        self.cell_width("<")
                     } else {
                         0
                     })
@@ -186,7 +186,7 @@ impl Menu {
 
     /// left-click on the horizontal list: arrows and items.
     fn horizontal_click(&mut self, state: u32, pos: Point, x: i32) -> Transition {
-        let arrow_width = self.text_width("<");
+        let arrow_width = self.cell_width("<");
         let left_arrow_x = x + self.layout.input_width;
         if (self.paging.prev != 0 || self.selection.current.map(|c| c > 0).unwrap_or(false))
             && pos.x >= left_arrow_x
@@ -210,7 +210,7 @@ impl Menu {
             }
         }
         /* left-click on right arrow */
-        let right_arrow_width = self.text_width(">");
+        let right_arrow_width = self.cell_width(">");
         let right_arrow_x = self.layout.menu_width - right_arrow_width;
         if self.paging.next.is_some()
             && pos.x >= right_arrow_x

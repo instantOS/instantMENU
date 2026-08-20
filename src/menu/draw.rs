@@ -3,7 +3,7 @@
 use super::{Menu, LEFT_GLYPH, RIGHT_GLYPH};
 use crate::enums::{output_offset, ColorRole, ItemCategory, Scheme};
 use crate::geom::Rect;
-use crate::render::Painter;
+use crate::render::TextStyle;
 
 impl Menu {
     /// recalculate_numbers
@@ -83,13 +83,17 @@ impl Menu {
         let left_padding = if self.cfg.commented {
             (self.layout.bar_height - self.renderer.text_width(output)) / 2
         } else {
-            self.renderer.horizontal_padding / 2
+            self.renderer.cell_inset()
         };
 
-        let is_accented = category == ItemCategory::ColoredComment || is_selected;
+        let style = if category == ItemCategory::ColoredComment || is_selected {
+            TextStyle::Accented
+        } else {
+            TextStyle::Normal
+        };
         let rect = Rect::new(label_x, cell.y, label_w, self.layout.bar_height);
-        let mut p = Painter::new(&mut self.renderer, &mut self.canvas);
-        p.draw_item(rect, left_padding, shown, is_accented);
+        let mut p = self.painter();
+        p.draw_text_styled(rect, left_padding, shown, style);
     }
 
     /// Classify an item by its `>`/`:` prefix and set the matching scheme.
@@ -131,8 +135,13 @@ impl Menu {
         // centered like the label and the accent strip sits at the row's
         // bottom edge instead of 4px from its top
         let rect = Rect::new(x, y, temp_padding, self.layout.bar_height);
-        let mut p = Painter::new(&mut self.renderer, &mut self.canvas);
-        p.draw_item(rect, left_padding, icon_text, is_selected);
+        let mut p = self.painter();
+        let style = if is_selected {
+            TextStyle::Accented
+        } else {
+            TextStyle::Normal
+        };
+        p.draw_text_styled(rect, left_padding, icon_text, style);
         let sc = if is_selected {
             Scheme::Hover
         } else {
@@ -155,7 +164,7 @@ impl Menu {
         self.update_commented_prompt();
 
         let scheme_norm = self.renderer.color_scheme(Scheme::Normal);
-        let mut p = Painter::new(&mut self.renderer, &mut self.canvas);
+        let mut p = self.painter();
         p.set_scheme(Scheme::Normal);
         p.clear(scheme_norm.bg);
 
@@ -197,14 +206,14 @@ impl Menu {
                 self.layout.bar_height
             };
             let rect = Rect::new(*x, 0, self.layout.prompt_width, prompt_height);
-            let lpad = self.renderer.horizontal_padding / 2;
-            let mut p = Painter::new(&mut self.renderer, &mut self.canvas);
+            let lpad = self.renderer.cell_inset();
+            let mut p = self.painter();
             p.set_scheme(Scheme::Selected);
-            /* the prompt is drawn with the selected scheme but NOT inverted:
-             * the C calls drw_text(..., 0, 1) where the last argument is
-             * `rounded` — the prompt is a solid (blue) block with the
-             * selected text color on top */
-            *x = p.draw_text(rect, lpad, &prompt);
+            /* The prompt is a solid block in the selected scheme: selected
+             * background fill with the selected foreground text on top (not
+             * inverted, and no detail strip). */
+            p.draw_text(rect, lpad, &prompt);
+            *x += self.layout.prompt_width;
         }
     }
 
@@ -222,25 +231,28 @@ impl Menu {
             0
         };
         let field = Rect::new(field_x, 0, w, self.layout.bar_height);
-        let lpad = self.renderer.horizontal_padding / 2;
+        let lpad = self.renderer.cell_inset();
+
+        // Choose the field text before the painter is created: the painter
+        // mutably borrows the whole menu, so cfg/editor cannot be read while
+        // it is alive. The placeholder is the only variant drawn faded.
+        let (field_text, faded) = if self.cfg.password {
+            (Some(".".repeat(self.editor.text.len())), false)
+        } else if !self.editor.text.is_empty() {
+            (Some(self.editor.text.clone()), false)
+        } else {
+            (self.cfg.placeholder.clone(), self.cfg.placeholder.is_some())
+        };
 
         {
-            let mut p = Painter::new(&mut self.renderer, &mut self.canvas);
-            p.set_scheme(Scheme::Normal);
-            if self.cfg.password {
-                let dots = ".".repeat(self.editor.text.len());
-                p.draw_text(field, lpad, &dots);
-            } else if !self.editor.text.is_empty() {
-                p.draw_text(field, lpad, &self.editor.text);
-            } else if let Some(placeholder) = self.cfg.placeholder.as_deref() {
-                p.set_scheme(Scheme::Fade);
-                p.draw_text(field, lpad, placeholder);
-                p.set_scheme(Scheme::Normal);
+            let mut p = self.painter();
+            p.set_scheme(if faded { Scheme::Fade } else { Scheme::Normal });
+            if let Some(text) = field_text.as_deref() {
+                p.draw_text(field, lpad, text);
             }
         }
 
-        /* C: curpos = TEXTW(text) - TEXTW(&text[cursor]); the lrpad terms
-         * cancel, leaving the width of the text before the cursor. */
+        /* Cursor x = the width of the text before the cursor (full minus suffix). */
         let mut cursor_position = if self.cfg.commented {
             0
         } else {
@@ -249,7 +261,7 @@ impl Menu {
                     .renderer
                     .text_width(&self.editor.text[self.editor.cursor..])
         };
-        cursor_position += self.renderer.horizontal_padding / 2 - 1;
+        cursor_position += self.renderer.cell_inset() - 1;
         if cursor_position < w {
             // disable cursor on password prompt
             if !self.cfg.password && self.cfg.toast == 0 {
@@ -259,7 +271,7 @@ impl Menu {
                     2,
                     font_height - 4,
                 );
-                let mut p = Painter::new(&mut self.renderer, &mut self.canvas);
+                let mut p = self.painter();
                 p.set_scheme(Scheme::Normal);
                 p.fill_rect(cursor_rect, ColorRole::Foreground);
             }
@@ -280,10 +292,10 @@ impl Menu {
     fn draw_horizontal_list(&mut self, x: i32) {
         let bar_height = self.layout.bar_height;
         let left_arrow_x = x + self.layout.input_width;
-        let arrow_width = self.text_width("<");
-        let lpad = self.renderer.horizontal_padding / 2;
+        let arrow_width = self.cell_width("<");
+        let lpad = self.renderer.cell_inset();
         if self.selection.current.map(|c| c > 0).unwrap_or(false) {
-            let mut p = Painter::new(&mut self.renderer, &mut self.canvas);
+            let mut p = self.painter();
             p.set_scheme(Scheme::Normal);
             p.draw_text(
                 Rect::new(left_arrow_x, 0, arrow_width, bar_height),
@@ -297,12 +309,12 @@ impl Menu {
         }
 
         if self.paging.next.is_some() {
-            let arrow_width = self.text_width(">");
+            let arrow_width = self.cell_width(">");
             if self.show_numbers {
                 let numbers = self.numbers.clone();
-                let numbers_width = self.text_width(&numbers);
+                let numbers_width = self.cell_width(&numbers);
                 let menu_width = self.layout.menu_width;
-                let mut p = Painter::new(&mut self.renderer, &mut self.canvas);
+                let mut p = self.painter();
                 p.set_scheme(Scheme::Normal);
                 p.draw_text(
                     Rect::new(
@@ -321,17 +333,17 @@ impl Menu {
     /// Draw the item counter and the left/right command cells.
     fn draw_footer(&mut self, arrow_width: i32) {
         let bar_height = self.layout.bar_height;
-        let lpad = self.renderer.horizontal_padding / 2;
+        let lpad = self.renderer.cell_inset();
         let menu_width = self.layout.menu_width;
         if self.show_numbers {
             let numbers = self.numbers.clone();
-            let numbers_width = self.text_width(&numbers);
+            let numbers_width = self.cell_width(&numbers);
             let right_padding = if self.cfg.right_command.is_some() {
                 arrow_width
             } else {
                 0
             };
-            let mut p = Painter::new(&mut self.renderer, &mut self.canvas);
+            let mut p = self.painter();
             p.set_scheme(Scheme::Normal);
             p.draw_text(
                 Rect::new(
@@ -346,12 +358,12 @@ impl Menu {
         }
         if self.layout.lines > 0 {
             if self.cfg.left_command.is_some() {
-                let mut p = Painter::new(&mut self.renderer, &mut self.canvas);
+                let mut p = self.painter();
                 p.set_scheme(Scheme::Highlight);
                 p.draw_text(Rect::new(0, 0, arrow_width, bar_height), lpad, LEFT_GLYPH);
             }
             if self.cfg.right_command.is_some() {
-                let mut p = Painter::new(&mut self.renderer, &mut self.canvas);
+                let mut p = self.painter();
                 p.set_scheme(Scheme::Highlight);
                 p.draw_text(
                     Rect::new(menu_width - arrow_width, 0, arrow_width, bar_height),

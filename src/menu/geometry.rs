@@ -50,7 +50,7 @@ impl Menu {
         } else {
             match prompt.as_deref() {
                 Some(p) if !p.is_empty() => {
-                    self.text_width(p) - self.renderer.horizontal_padding / 4
+                    self.cell_width(p) - self.renderer.horizontal_padding / 4
                 }
                 _ => 0,
             }
@@ -89,10 +89,10 @@ impl Menu {
         }
         let prompt = self.cfg.prompt.clone();
         let prompt_width = match &prompt {
-            Some(p) => self.text_width(p),
+            Some(p) => self.cell_width(p),
             None => 0,
         };
-        let max_width = (self.max_text_width() as f64 * 1.3 * columns.max(1) as f64
+        let max_width = (self.max_cell_width() as f64 * 1.3 * columns.max(1) as f64
             + prompt_width as f64) as i32;
         if -self.cfg.width > max_width {
             -self.cfg.width
@@ -104,7 +104,7 @@ impl Menu {
     /// Content-based width: widest item text plus the prompt, floored at
     /// [`Config::min_width`] and capped at `cap` (root or parent width).
     fn content_width(&mut self, prompt_width: i32, cap: i32) -> i32 {
-        (self.max_text_width() + prompt_width)
+        (self.max_cell_width() + prompt_width)
             .max(self.cfg.min_width)
             .min(cap)
     }
@@ -116,8 +116,9 @@ impl Menu {
             if width != 0 {
                 layout.menu_width = width;
             } else {
-                // MIN(MAX(max_text_width() + prompt_width, min_width), wa.width);
-                // `wa` still holds the root attributes here in the C code.
+                // width = max(widest item cell + prompt, min_width), capped at
+                // the root width (the C code still had `wa` holding the root
+                // attributes at this point).
                 layout.menu_width = self.content_width(layout.prompt_width, root.w);
             }
             if let Some(pointer) = self.backend.pointer_position() {
