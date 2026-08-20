@@ -8,8 +8,8 @@ use super::matcher::Item;
 use super::transition::Transition;
 use super::Menu;
 use crate::backend::{
-    Backend, BackendEvent, EventPoll, MonitorInfo, MouseButton, CONTROL_MASK, MOD1_MASK, MOD4_MASK,
-    SHIFT_MASK,
+    Backend, BackendEvent, EventPoll, InputSource, MonitorInfo, MouseButton, CONTROL_MASK,
+    MOD1_MASK, MOD4_MASK, SHIFT_MASK,
 };
 use crate::config::{Config, SlideSettings};
 use crate::enums::{ExitStatus, Scheme};
@@ -516,6 +516,18 @@ fn right_click_exits() {
     );
 }
 
+/// An outside click (delivered by the pointer grab on X11, or by a
+/// transparent click-catcher surface on Wayland) closes the modal menu
+/// without a selection.
+#[test]
+fn outside_click_closes_modal_menu() {
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha"]);
+    assert_eq!(
+        menu.perform(Transition::Exit(ExitStatus::Failure)),
+        Some(ExitStatus::Failure)
+    );
+}
+
 /* ── alt-tab ───────────────────────────────────────────────────────────── */
 
 /// -A: Alt+Tab advances without confirming; the following Alt release
@@ -642,7 +654,12 @@ fn run_returns_failure_when_the_connection_dies() {
 #[test]
 fn run_outside_click_exits_with_failure() {
     let (mut menu, stub, _out) = menu_with(Config::default(), &["alpha"]);
-    stub.push(BackendEvent::OutsideClick);
+    stub.push(BackendEvent::ButtonPress {
+        button: MouseButton::Left,
+        state: 0,
+        pos: Point::new(0, 0),
+        source: InputSource::External,
+    });
     assert_eq!(menu.run(), ExitStatus::Failure);
 }
 
@@ -750,11 +767,13 @@ fn run_motion_is_throttled() {
     stub.push(BackendEvent::Motion {
         time: 1000,
         pos: item1,
+        source: InputSource::Menu,
     });
     // 10ms later: within the frame budget, must be dropped
     stub.push(BackendEvent::Motion {
         time: 1010,
         pos: item0,
+        source: InputSource::Menu,
     });
     stub.key(ks::KEY_Escape, 0, "");
     assert_eq!(menu.run(), ExitStatus::Failure);
@@ -765,10 +784,12 @@ fn run_motion_is_throttled() {
     stub.push(BackendEvent::Motion {
         time: 1000,
         pos: item1,
+        source: InputSource::Menu,
     });
     stub.push(BackendEvent::Motion {
         time: 2000,
         pos: item0,
+        source: InputSource::Menu,
     });
     stub.key(ks::KEY_Escape, 0, "");
     assert_eq!(menu.run(), ExitStatus::Failure);
@@ -814,6 +835,7 @@ fn run_motion_selects_items() {
     stub.push(BackendEvent::Motion {
         time: 1000,
         pos: Point::new(rect.x + rect.w / 2, rect.y + rect.h / 2),
+        source: InputSource::Menu,
     });
     stub.key(ks::KEY_Escape, 0, "");
     assert_eq!(menu.run(), ExitStatus::Failure);
@@ -1055,14 +1077,17 @@ fn slide_run_loop() {
         button: MouseButton::Left,
         state: 0,
         pos: Point::new(450, 5),
+        source: InputSource::Menu,
     });
     stub.push(BackendEvent::Motion {
         time: 1000,
         pos: Point::new(600, 5),
+        source: InputSource::Menu,
     });
     stub.push(BackendEvent::ButtonRelease {
         button: MouseButton::Left,
         pos: Point::new(600, 5),
+        source: InputSource::Menu,
     });
     stub.key(ks::KEY_Return, 0, "");
     assert_eq!(menu.run(), ExitStatus::Success);

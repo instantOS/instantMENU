@@ -14,7 +14,7 @@ use std::os::unix::io::RawFd;
 
 use wayland_client::protocol::{
     wl_buffer, wl_callback, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer,
-    wl_keyboard, wl_output, wl_pointer, wl_region, wl_seat, wl_shm, wl_shm_pool, wl_surface,
+    wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_shm_pool, wl_surface,
 };
 use wayland_client::{Connection, EventQueue, QueueHandle};
 use wayland_protocols::wp::primary_selection::zv1::client::{
@@ -38,9 +38,9 @@ pub struct WaylandBackend {
 
 /* ─────────────────────────── dispatch state ─────────────────────────── */
 
-struct OutputEntry {
+pub(super) struct OutputEntry {
     proxy: wl_output::WlOutput,
-    info: MonitorInfo,
+    pub(super) info: MonitorInfo,
 }
 
 struct Xkb {
@@ -72,7 +72,6 @@ struct ShmPool {
 pub(super) struct Shield {
     surface: wl_surface::WlSurface,
     layer_surface: zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
-    region: wl_region::WlRegion,
     buffer: wl_buffer::WlBuffer,
     /// whether the first configure has been acked and the buffer attached
     /// (a layer surface must stay bufferless until then).
@@ -82,6 +81,18 @@ pub(super) struct Shield {
 /// Userdata marker distinguishing shield layer surfaces from the menu's own
 /// (same protocol object, different `Dispatch` impls).
 pub(super) struct ShieldTag;
+
+/// Classification of which surface has pointer focus. Set at Enter; read
+/// on later events so no per-event shield scanning is needed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PointerFocus {
+    /// On the menu window itself; coordinates are menu-local.
+    Menu,
+    /// On one of the click-catcher shields.
+    Shield,
+    /// Outside all our surfaces (e.g. after Leave).
+    None,
+}
 
 /// A selection offer (clipboard or primary) being tracked.
 struct OfferTracker {
@@ -110,14 +121,11 @@ impl OfferTracker {
 }
 
 pub struct EventState {
-    queue_handle: QueueHandle<Self>,
-
-    /* globals */
-    compositor: Option<wl_compositor::WlCompositor>,
-    shm: Option<wl_shm::WlShm>,
-    outputs: Vec<OutputEntry>,
-    /// snapshot of output geometry, taken once after the initial roundtrips
-    monitors: Vec<MonitorInfo>,
+    pub(super) queue_handle: QueueHandle<Self>,
+    pub(super) compositor: Option<wl_compositor::WlCompositor>,
+    pub(super) shm: Option<wl_shm::WlShm>,
+    pub(super) outputs: Vec<OutputEntry>,
+    pub(super) monitors: Vec<MonitorInfo>,
     seat: Option<wl_seat::WlSeat>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     pointer: Option<wl_pointer::WlPointer>,
@@ -125,10 +133,8 @@ pub struct EventState {
      * coordinates on wayland; the position comes from motion/enter) */
     pointer_x: f64,
     pointer_y: f64,
-    /// surface the pointer is currently on: the menu, one of the shields, or
-    /// None between leave/enter. Motion/button events only make sense in
-    /// menu-local coordinates, and a press on a shield is an outside click.
-    pointer_surface: Option<wl_surface::WlSurface>,
+    /// classification of the surface the pointer is currently on.
+    pointer_focus: PointerFocus,
     data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
     data_device: Option<wl_data_device::WlDataDevice>,
     primary_manager:
@@ -167,8 +173,8 @@ pub struct EventState {
 
     /* outside-click shields, one per output */
     shields: Vec<Shield>,
-    /// the pool backing the shield buffers (kept alive with its fd; the
-    /// memory is never mapped client-side — see `create_shields`)
+    /// the pool backing the shield buffers (kept alive for the menu's
+    /// lifetime; the memfd is sparse, see `create_shields`).
     shield_pool: Option<(wl_shm_pool::WlShmPool, RawFd)>,
 
     /* selection offers */
@@ -196,7 +202,7 @@ impl EventState {
             pointer: None,
             pointer_x: 0.0,
             pointer_y: 0.0,
-            pointer_surface: None,
+            pointer_focus: PointerFocus::None,
             data_device_manager: None,
             data_device: None,
             primary_manager: None,
@@ -394,17 +400,47 @@ impl EventState {
         }
     }
 
+    /// Create a memfd of `len` bytes and bind it as a wl_shm_pool. Returns
+    /// `(pool, fd)`; the caller takes ownership of both and must release them
+    /// with `destroy_memfd_pool` on teardown. On any failure the fd is closed
+    /// and `None` is returned.
+    fn create_memfd_pool(&self, len: usize) -> Option<(wl_shm_pool::WlShmPool, RawFd)> {
+        let shm = self.shm.as_ref()?;
+        let name = b"instantmenu\0";
+        let fd = unsafe { libc::memfd_create(name.as_ptr().cast(), 0) };
+        if fd < 0 {
+            return None;
+        }
+        if unsafe { libc::ftruncate(fd, len as libc::off_t) } != 0 {
+            unsafe { libc::close(fd) };
+            return None;
+        }
+        let pool = unsafe {
+            shm.create_pool(
+                BorrowedFd::borrow_raw(fd),
+                len as i32,
+                &self.queue_handle,
+                (),
+            )
+        };
+        Some((pool, fd))
+    }
+
+    /// Tear down a pool created by `create_memfd_pool`.
+    fn destroy_memfd_pool(pool: wl_shm_pool::WlShmPool, fd: RawFd) {
+        pool.destroy();
+        unsafe { libc::close(fd) };
+    }
+
     /// Destroy the shields and their pool (recreated on window re-creation).
     fn destroy_shields(&mut self) {
         for shield in self.shields.drain(..) {
             shield.layer_surface.destroy();
             shield.surface.destroy();
-            shield.region.destroy();
             shield.buffer.destroy();
         }
         if let Some((pool, fd)) = self.shield_pool.take() {
-            pool.destroy();
-            unsafe { libc::close(fd) };
+            Self::destroy_memfd_pool(pool, fd);
         }
     }
 }
@@ -562,9 +598,6 @@ impl WaylandBackend {
         let Some(shell) = self.state.layer_shell.clone() else {
             return;
         };
-        let Some(shm) = self.state.shm.clone() else {
-            return;
-        };
         let qh = self.state.queue_handle.clone();
         let outputs: Vec<(wl_output::WlOutput, Rect)> = self
             .state
@@ -577,23 +610,18 @@ impl WaylandBackend {
             return;
         }
 
-        /* One pool backs every shield buffer. It is sparse: a zero-filled
-         * ARGB buffer is fully transparent, so the memory is never written
-         * (or even mapped client-side) and the pages are never allocated. */
-        let len: i32 = outputs.iter().map(|(_, r)| r.w * r.h * 4).sum();
-        let name = b"instantmenu\0";
-        let fd = unsafe { libc::memfd_create(name.as_ptr().cast(), 0) };
-        if fd < 0 {
+        /* One sparse pool backs every shield buffer. A zero-filled ARGB
+         * buffer is fully transparent, so the memfd pages are never
+         * allocated (or even mapped client-side) — only the buffers are
+         * bound. */
+        let len: usize = outputs.iter().map(|(_, r)| (r.w * r.h * 4) as usize).sum();
+        let Some((pool, fd)) = self.state.create_memfd_pool(len) else {
             return;
-        }
-        if unsafe { libc::ftruncate(fd, len as libc::off_t) } != 0 {
-            unsafe { libc::close(fd) };
-            return;
-        }
-        let pool = unsafe { shm.create_pool(BorrowedFd::borrow_raw(fd), len, &qh, ()) };
+        };
         self.state.shield_pool = Some((pool.clone(), fd));
 
-        let mut offset = 0;
+        let mut offset: i32 = 0;
+        let mut shields = Vec::with_capacity(outputs.len());
         for (output, out_rect) in outputs {
             let shield_surface = compositor.create_surface(&qh, ());
             let layer_surface = shell.get_layer_surface(
@@ -617,7 +645,9 @@ impl WaylandBackend {
                 .set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
             layer_surface.set_size(out_rect.w as u32, out_rect.h as u32);
 
-            /* input region: the whole output minus the menu's part of it */
+            /* input region: the whole output minus the menu's part of it.
+             * The WlRegion role is copied by the compositor, so it can drop
+             * at the end of this iteration. */
             let region = compositor.create_region(&qh, ());
             region.add(0, 0, out_rect.w, out_rect.h);
             let x0 = menu_rect.x.max(out_rect.x);
@@ -628,6 +658,7 @@ impl WaylandBackend {
                 region.subtract(x0 - out_rect.x, y0 - out_rect.y, x1 - x0, y1 - y0);
             }
             shield_surface.set_input_region(Some(&region));
+            drop(region);
             shield_surface.commit();
 
             let buffer = pool.create_buffer(
@@ -640,14 +671,14 @@ impl WaylandBackend {
                 (),
             );
             offset += out_rect.w * out_rect.h * 4;
-            self.state.shields.push(Shield {
+            shields.push(Shield {
                 surface: shield_surface,
                 layer_surface,
-                region,
                 buffer,
                 configured: false,
             });
         }
+        self.state.shields = shields;
     }
 }
 

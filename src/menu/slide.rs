@@ -11,7 +11,7 @@
 use super::animate::spawn_detached;
 use super::transition::Transition;
 use super::Menu;
-use crate::backend::{BackendEvent, MouseButton, CONTROL_MASK};
+use crate::backend::{BackendEvent, InputSource, MouseButton, CONTROL_MASK};
 use crate::config::SlideSettings;
 use crate::enums::{ExitStatus, Scheme};
 use crate::geom::{Point, Rect};
@@ -110,11 +110,15 @@ impl Menu {
             let t = match ev {
                 BackendEvent::KeyPress { sym, state, .. } => self.slide_key(sym, state),
                 BackendEvent::KeyRelease { .. } => continue,
-                BackendEvent::ButtonPress { button, state, pos } => {
-                    self.slide_button(button, state, pos)
-                }
-                BackendEvent::ButtonRelease { button, pos } => self.slide_release(button, pos),
-                BackendEvent::Motion { time, pos } => {
+                BackendEvent::ButtonPress {
+                    source: InputSource::External,
+                    ..
+                } => return ExitStatus::Failure,
+                BackendEvent::ButtonPress {
+                    button, state, pos, ..
+                } => self.slide_button(button, state, pos),
+                BackendEvent::ButtonRelease { button, pos, .. } => self.slide_release(button, pos),
+                BackendEvent::Motion { time, pos, .. } => {
                     if time.wrapping_sub(last_time) <= 1000 / 60 {
                         continue;
                     }
@@ -122,7 +126,6 @@ impl Menu {
                     self.slide_motion(pos)
                 }
                 BackendEvent::Destroyed => return ExitStatus::Failure,
-                BackendEvent::OutsideClick => return ExitStatus::Failure,
                 BackendEvent::Expose => {
                     self.backend.present(&self.canvas);
                     continue;

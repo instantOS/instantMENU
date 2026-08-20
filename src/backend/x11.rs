@@ -15,7 +15,7 @@ use x11rb::xcb_ffi::XCBConnection;
 use xkbcommon::xkb::x11 as xkbx11;
 use xkbcommon::xkb::{self, KeyDirection, Keycode};
 
-use super::{Backend, BackendEvent, EventPoll, MonitorInfo, MouseButton};
+use super::{Backend, BackendEvent, EventPoll, InputSource, MonitorInfo, MouseButton};
 use crate::enums::ExitStatus;
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
@@ -30,11 +30,6 @@ pub struct X11Backend {
     graphics_context: Option<u32>,
     created: bool,
     managed: bool,
-    /// window bounds in root coordinates (content plus border), used to tell
-    /// inside from outside clicks while the pointer grab is active
-    window_rect: Rect,
-    /// whether a click outside the menu should close it (pointer grab)
-    outside_close: bool,
     pointer_grabbed: bool,
 
     /* keyboard (ctx/keymap keep the C-level keymap alive for the state; only
@@ -92,8 +87,6 @@ impl X11Backend {
             graphics_context: None,
             created: false,
             managed: false,
-            window_rect: Rect::default(),
-            outside_close: false,
             pointer_grabbed: false,
             xkb_context,
             xkb_keymap,
@@ -210,23 +203,28 @@ impl X11Backend {
             }
             Event::ButtonPress(b) => {
                 /* while the pointer grab is active, presses outside our
-                 * windows are reported to the grab window (the root) */
-                if self.pointer_grabbed && b.event != self.window {
-                    /* swallow scroll wheels: scrolling outside should not
-                     * dismiss the menu, only a real click does */
-                    if matches!(b.detail, 4..=7) {
-                        return None;
-                    }
-                    let root_pos = Point::new(b.root_x as i32, b.root_y as i32);
-                    if !self.window_rect.contains(root_pos) {
-                        return Some(BackendEvent::OutsideClick);
-                    }
+                 * window arrive at the grab window (the root) under
+                 * owner_events=true; stamp them as External so the run
+                 * loop dismisses the modal menu like a GTK context menu.
+                 * The grab is created only when outside_close was set.
+                 * Scroll wheels outside are swallowed: scrolling outside
+                 * should not dismiss or scroll the menu, only a real
+                 * click dismisses. */
+                if self.pointer_grabbed && b.event != self.window && matches!(b.detail, 4..=7) {
+                    return None;
                 }
+                let on_menu = b.event == self.window || !self.pointer_grabbed;
+                let source = if on_menu {
+                    InputSource::Menu
+                } else {
+                    InputSource::External
+                };
                 let button = mouse_button(b.detail)?;
                 Some(BackendEvent::ButtonPress {
                     button,
                     state: b.state.bits() as u32,
                     pos: Point::new(b.event_x as i32, b.event_y as i32),
+                    source,
                 })
             }
             Event::ButtonRelease(b) => {
@@ -234,11 +232,13 @@ impl X11Backend {
                 Some(BackendEvent::ButtonRelease {
                     button,
                     pos: Point::new(b.event_x as i32, b.event_y as i32),
+                    source: InputSource::Menu,
                 })
             }
             Event::MotionNotify(m) => Some(BackendEvent::Motion {
                 time: m.time,
                 pos: Point::new(m.event_x as i32, m.event_y as i32),
+                source: InputSource::Menu,
             }),
             Event::Expose(e) => {
                 if e.count == 0 {
@@ -458,10 +458,6 @@ impl Backend for X11Backend {
         self.window = window;
         self.created = true;
         self.managed = managed;
-        /* X borders are drawn outside the geometry */
-        let bw = border_width.max(0);
-        self.window_rect = Rect::new(rect.x - bw, rect.y - bw, rect.w + 2 * bw, rect.h + 2 * bw);
-        self.outside_close = outside_close;
         if outside_close {
             self.grab_pointer();
         }

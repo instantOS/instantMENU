@@ -18,8 +18,10 @@ use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_l
 use xkbcommon::xkb::{KeyDirection, Keycode};
 
 use super::selection::{load_keymap, x11_mask};
-use super::{BackendEvent, EventState, MonitorInfo, OfferTracker, OutputEntry, ShieldTag};
-use crate::backend::{MouseButton, XKB_OFFSET};
+use super::{
+    BackendEvent, EventState, MonitorInfo, OfferTracker, OutputEntry, PointerFocus, ShieldTag,
+};
+use crate::backend::{InputSource, MouseButton, XKB_OFFSET};
 use crate::geom::{Point, Rect};
 
 macro_rules! noop_dispatch {
@@ -128,17 +130,13 @@ impl Dispatch<wl_output::WlOutput, ()> for EventState {
                 state.outputs[i].info.rect.y = y;
             }
             wl_output::Event::Mode {
-                flags,
+                flags: WEnum::Value(flags),
                 width,
                 height,
                 ..
-            } => {
-                if let WEnum::Value(f) = flags {
-                    if f.contains(wl_output::Mode::Current) {
-                        state.outputs[i].info.rect.w = width;
-                        state.outputs[i].info.rect.h = height;
-                    }
-                }
+            } if flags.contains(wl_output::Mode::Current) => {
+                state.outputs[i].info.rect.w = width;
+                state.outputs[i].info.rect.h = height;
             }
             wl_output::Event::Name { name } => {
                 state.outputs[i].info.name = name;
@@ -192,13 +190,13 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for EventState {
         _qh: &QueueHandle<Self>,
     ) {
         match event {
-            wl_keyboard::Event::Keymap { format, fd, size } => {
-                if let WEnum::Value(f) = format {
-                    if f == wl_keyboard::KeymapFormat::XkbV1 {
-                        if let Some(xkb) = load_keymap(fd.as_raw_fd(), size as usize) {
-                            state.xkb = Some(xkb);
-                        }
-                    }
+            wl_keyboard::Event::Keymap {
+                format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1),
+                fd,
+                size,
+            } => {
+                if let Some(xkb) = load_keymap(fd.as_raw_fd(), size as usize) {
+                    state.xkb = Some(xkb);
                 }
                 /* fd is an OwnedFd and closes on drop */
             }
@@ -259,44 +257,56 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+        /* Classify the pointer focus once at Enter, then read it on every
+         * later event. The classification is a property of the surface, not
+         * of each event — recomputing per-event meant a linear scan of
+         * `state.shields` for every Motion, Axis, and Button. */
         let mods = state.xkb.as_ref().map(|x| x.mods).unwrap_or(0);
-        /* enter/leave tell which of our surfaces has the pointer; only the
-         * menu's own events carry menu-local coordinates, and a press on a
-         * shield is an outside click */
-        let on_menu = state.pointer_surface.is_some()
-            && state.pointer_surface.as_ref() == state.surface.as_ref();
-        let on_shield = !on_menu
-            && state
-                .shields
-                .iter()
-                .any(|s| state.pointer_surface.as_ref() == Some(&s.surface));
-        match event {
+        let focus = match event {
             wl_pointer::Event::Enter {
                 surface,
                 surface_x,
                 surface_y,
                 ..
             } => {
-                state.pointer_surface = Some(surface);
-                state.pointer_x = surface_x;
-                state.pointer_y = surface_y;
+                let f = if state.surface.as_ref() == Some(&surface) {
+                    /* only menu coordinates are meaningful; shield coords
+                     * (and unknown ones) are discarded */
+                    state.pointer_x = surface_x;
+                    state.pointer_y = surface_y;
+                    PointerFocus::Menu
+                } else if state.shields.iter().any(|s| s.surface == surface) {
+                    PointerFocus::Shield
+                } else {
+                    PointerFocus::None
+                };
+                state.pointer_focus = f;
+                return;
             }
             wl_pointer::Event::Leave { .. } => {
-                state.pointer_surface = None;
+                state.pointer_focus = PointerFocus::None;
+                return;
             }
+            _ => state.pointer_focus,
+        };
+        if focus == PointerFocus::None {
+            /* events that arrived while the pointer is on another client's
+             * surface are dropped at the protocol layer; we never see them */
+            return;
+        }
+        match event {
             wl_pointer::Event::Motion {
                 time,
                 surface_x,
                 surface_y,
-            } => {
+            } if focus == PointerFocus::Menu => {
                 state.pointer_x = surface_x;
                 state.pointer_y = surface_y;
-                if on_menu {
-                    state.events.push_back(BackendEvent::Motion {
-                        time,
-                        pos: Point::new(surface_x as i32, surface_y as i32),
-                    });
-                }
+                state.events.push_back(BackendEvent::Motion {
+                    time,
+                    pos: Point::new(surface_x as i32, surface_y as i32),
+                    source: InputSource::Menu,
+                });
             }
             wl_pointer::Event::Button {
                 button,
@@ -307,11 +317,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
                     WEnum::Value(s) => s,
                     WEnum::Unknown(_) => return,
                 };
-                match button_state {
-                    wl_pointer::ButtonState::Pressed if on_shield => {
-                        state.events.push_back(BackendEvent::OutsideClick);
-                    }
-                    wl_pointer::ButtonState::Pressed if on_menu => {
+                match (button_state, focus) {
+                    (wl_pointer::ButtonState::Pressed, PointerFocus::Shield) => {
                         let Some(button) = evdev_button(button) else {
                             return;
                         };
@@ -319,41 +326,53 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
                             button,
                             state: mods,
                             pos: Point::new(state.pointer_x as i32, state.pointer_y as i32),
+                            source: InputSource::External,
                         });
                     }
-                    wl_pointer::ButtonState::Released if on_menu => {
+                    (wl_pointer::ButtonState::Pressed, PointerFocus::Menu) => {
+                        let Some(button) = evdev_button(button) else {
+                            return;
+                        };
+                        state.events.push_back(BackendEvent::ButtonPress {
+                            button,
+                            state: mods,
+                            pos: Point::new(state.pointer_x as i32, state.pointer_y as i32),
+                            source: InputSource::Menu,
+                        });
+                    }
+                    (wl_pointer::ButtonState::Released, PointerFocus::Menu) => {
                         let Some(button) = evdev_button(button) else {
                             return;
                         };
                         state.events.push_back(BackendEvent::ButtonRelease {
                             button,
                             pos: Point::new(state.pointer_x as i32, state.pointer_y as i32),
+                            source: InputSource::Menu,
                         });
                     }
                     _ => {}
                 }
             }
-            /* wheel: map to the scroll buttons the menu core understands */
-            wl_pointer::Event::Axis { axis, value, .. } => {
-                if on_menu {
-                    if let WEnum::Value(a) = axis {
-                        if a == wl_pointer::Axis::VerticalScroll {
-                            state.events.push_back(BackendEvent::ButtonPress {
-                                button: if value > 0.0 {
-                                    MouseButton::ScrollDown
-                                } else {
-                                    MouseButton::ScrollUp
-                                },
-                                state: mods,
-                                pos: Point::new(-1, -1),
-                            });
-                        }
-                    }
-                }
+            /* wheel: map to the scroll buttons the menu core understands.
+             * Axis events arrive only on the focused surface, which is the
+             * menu (None is filtered above; Shield ignores wheel). */
+            wl_pointer::Event::Axis {
+                axis: WEnum::Value(wl_pointer::Axis::VerticalScroll),
+                value,
+                ..
+            } if focus == PointerFocus::Menu => {
+                state.events.push_back(BackendEvent::ButtonPress {
+                    button: if value > 0.0 {
+                        MouseButton::ScrollDown
+                    } else {
+                        MouseButton::ScrollUp
+                    },
+                    state: mods,
+                    pos: Point::new(-1, -1),
+                    source: InputSource::Menu,
+                });
             }
-            _ => {
-                let _ = mods;
-            }
+            _ => {}
         }
     }
 }

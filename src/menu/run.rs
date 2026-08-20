@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use super::transition::Transition;
 use super::Menu;
-use crate::backend::{BackendEvent, EventPoll};
+use crate::backend::{BackendEvent, EventPoll, InputSource};
 use crate::enums::ExitStatus;
 
 impl Menu {
@@ -56,7 +56,7 @@ impl Menu {
             }
 
             let t = match ev {
-                BackendEvent::Motion { time, pos } => {
+                BackendEvent::Motion { time, pos, .. } => {
                     if time.wrapping_sub(last_time) <= 1000 / 60 {
                         continue;
                     }
@@ -64,15 +64,19 @@ impl Menu {
                     self.set_selection(pos)
                 }
                 BackendEvent::Destroyed => return ExitStatus::Failure,
-                BackendEvent::ButtonPress { button, state, pos } => {
-                    self.button_press(button, state, pos)
-                }
-                BackendEvent::ButtonRelease { .. } => continue,
-                BackendEvent::OutsideClick => {
-                    /* click outside the menu (modal grab): dismiss, like a
-                     * GTK context menu loses its grab */
+                BackendEvent::ButtonPress {
+                    source: InputSource::External,
+                    ..
+                } => {
+                    /* click outside the modal menu (pointer grab on X11,
+                     * shield surface on Wayland): dismiss, like a GTK
+                     * context menu loses its grab */
                     Transition::Exit(ExitStatus::Failure)
                 }
+                BackendEvent::ButtonPress {
+                    button, state, pos, ..
+                } => self.button_press(button, state, pos),
+                BackendEvent::ButtonRelease { .. } => continue,
                 BackendEvent::Expose => {
                     self.backend.present(&self.canvas);
                     continue;

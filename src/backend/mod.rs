@@ -38,6 +38,20 @@ pub enum MouseButton {
     ScrollDown,
 }
 
+/// Which surface a pointer event arrived on. Backends stamp every pointer
+/// event at dispatch time; the run loop dismisses the modal menu whenever a
+/// button arrives with `External` — the shared rule that replaces the
+/// per-backend "outside click" plumbing (X11 pointer grab, Wayland
+/// click-catcher shields).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputSource {
+    /// On the menu window itself; coordinates are menu-local.
+    Menu,
+    /// Anywhere outside the menu window: under the X11 pointer grab this is
+    /// `b.event != window`, on Wayland it is a click on a shield surface.
+    External,
+}
+
 /// Backend-agnostic events, port of the XEvent switch in `run()`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackendEvent {
@@ -57,19 +71,21 @@ pub enum BackendEvent {
         button: MouseButton,
         state: u32,
         pos: Point,
+        source: InputSource,
     },
     ButtonRelease {
         button: MouseButton,
         pos: Point,
+        source: InputSource,
     },
     Motion {
         /// Server timestamp (ms) for the 60fps throttle.
         time: u32,
         pos: Point,
+        /// `Menu` when the pointer is over the menu window; the event is
+        /// dropped otherwise, so this is always `Menu` when present.
+        source: InputSource,
     },
-    /// A button was pressed outside the menu (pointer grab on X11, input
-    /// shield surface on Wayland) — close like a context menu does.
-    OutsideClick,
     /// Redraw needed (Expose on X11).
     Expose,
     /// Focus went to another window — regrab focus.
@@ -116,8 +132,10 @@ pub trait Backend {
     /// Create the menu window (XCreateWindow in setup()).
     /// `grab` = whether the keyboard should be grabbed (Wayland layer-shell
     /// keyboard interactivity; X11 grabs separately). `outside_close` = the
-    /// menu is modal, so a click outside it should close it (pointer grab on
-    /// X11, click-catcher surfaces on Wayland).
+    /// menu is modal, so the backend should arrange for clicks outside the
+    /// menu to be observed (pointer grab on X11, click-catcher surfaces on
+    /// Wayland); the backends stamp the resulting button events with
+    /// [`InputSource::External`] and the run loop dismisses on them.
     #[allow(clippy::too_many_arguments)] // port of the XCreateWindow call
     fn create_window(
         &mut self,
