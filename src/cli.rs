@@ -558,15 +558,18 @@ mod tests {
 
     #[test]
     fn smartrun_invocation_parses() {
-        /* the argv instantmenu_smartrun passes (see instantmenu_smartrun) */
+        /* the argv instantmenu_smartrun passes in its default mode (see
+         * instantmenu_smartrun) */
         let argv = [
             "instantmenu",
+            "--frecency-cache",
+            "smartrun",
             "--right-command",
             "instantmenu_smartrun terminal",
             "--left-command",
             "instantmenu_smartrun desktop",
             "-p",
-            "desktop",
+            "",
             "-i",
             "--fast",
             "--placeholder",
@@ -576,7 +579,7 @@ mod tests {
             "--position",
             "center",
             "--width",
-            "-1",
+            "900",
             "--line-height",
             "-1",
             "--border-width",

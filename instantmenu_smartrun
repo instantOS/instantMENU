@@ -2,6 +2,8 @@
 
 # smart application launcher that remembers often used apps
 # define $1 to run in terminal
+# selections are remembered per mode as frecency caches
+# ($XDG_CACHE_HOME/instantmenu/smartrun[-terminal|-desktop])
 # `--toast TENTHS` makes the launcher noninteractive for startup benchmarks.
 TOAST_ARGS=()
 TOAST_DMENU=""
@@ -16,69 +18,38 @@ if [ "$1" = "--toast" ]; then
 fi
 
 if [ -n "$2" ] || [ -z "$1" ]; then
-    LIST="$HOME/.cache/instantmenuhist"
+    CACHE="smartrun"
     RARGS="terminal"
     LARGS="desktop"
 else
     if [ "$1" = "desktop" ]; then
         shift 1
-        i3-dmenu-desktop --dmenu="instantmenu -p desktop --left-command \"instantmenu_smartrun terminal\" --right-command \"instantmenu_smartrun\" --placeholder \"search apps\" -l 10 --position center -i --width 900 --line-height -1 --border-width 4${TOAST_DMENU}"
+        i3-dmenu-desktop --dmenu="instantmenu -p desktop --frecency-cache smartrun-desktop --left-command \"instantmenu_smartrun terminal\" --right-command \"instantmenu_smartrun\" --placeholder \"search apps\" -l 10 --position center -i --width 900 --line-height -1 --border-width 4${TOAST_DMENU}"
         exit
     fi
-    LIST="$HOME/.cache/instanttermmenuhist"
+    CACHE="smartrun-terminal"
     RARGS="desktop"
     LARGS=""
 fi
 
-if [ -n "$2" ]; then
-    # read history and path
-    # put in initial text
-    read -r SELECTION < <({
-        tac "$LIST"
-        instantmenu_path | sort -u
-    } | perl -nE '$seen{$_}++ or print' |
-        instantmenu --right-command "instantmenu_smartrun $RARGS" --left-command "instantmenu_smartrun $LARGS" \
-            -p "${1}" -i --fast --placeholder "search apps" -l 10 --position center --width 900 --line-height -1 --border-width 4 --initial-text "$2" "${TOAST_ARGS[@]}")
-else
+# instantmenu ranks the executables by frecency and records the selection in
+# the cache the moment it is printed
+INITIAL=()
+[ -n "$2" ] && INITIAL=(--initial-text "$2")
 
-    # read history and path
-    read -r SELECTION < <({
-        tac "$LIST"
-        instantmenu_path | sort -u
-    } | perl -nE '$seen{$_}++ or print' |
-        instantmenu --right-command "instantmenu_smartrun $RARGS" --left-command "instantmenu_smartrun $LARGS" \
-            -p "${1}" -i --fast --placeholder "search apps" -l 10 --position center --width 900 --line-height -1 --border-width 4 "${TOAST_ARGS[@]}")
-fi
-
-# check if the application doesn't exist (indicated by exit code 1 and short runtime)
+read -r SELECTION < <(instantmenu_path | sort -u |
+    instantmenu --frecency-cache "$CACHE" \
+        --right-command "instantmenu_smartrun $RARGS" --left-command "instantmenu_smartrun $LARGS" \
+        -p "${1}" -i --fast --placeholder "search apps" -l 10 --position center --width 900 --line-height -1 --border-width 4 "${INITIAL[@]}" "${TOAST_ARGS[@]}")
 
 if [ -z "$SELECTION" ]; then
     echo "selection empty, exiting"
     exit
 fi
 
-a="$(TZ=UTC0 printf '%(%s)T\n' '-1')" ### `-1`  is the current time
+# detached like instantmenu's own command spawns
 if [ -z "$1" ]; then
-    EXITSTATUS=$({
-        /bin/sh -c "$SELECTION" &>/dev/null && echo "$?"
-    })
+    /bin/sh -c "$SELECTION" &>/dev/null &
 else
-    EXITSTATUS=$({
-        ~/.config/instantos/default/terminal -e "/bin/sh" -c "$SELECTION" &>/dev/null && echo "$?"
-    })
-fi
-
-elapsedseconds=$(($(TZ=UTC0 printf '%(%s)T\n' '-1') - a))
-
-if [ "$elapsedseconds" -gt 5 ] || [ "$EXITSTATUS" = 0 ]; then
-    [ -e "$HOME/.cache" ] || mkdir "$HOME/.cache"
-    echo "$SELECTION" | tee -a "$LIST"
-else
-    echo "error in running $SELECTION: skipping history"
-fi
-
-# max history size
-if [ "$(wc -l "$LIST" | grep -o '^[^ ]*')" -gt 1300 ]; then
-    head -1000 <"$LIST" | tee "${LIST}2"
-    cat "${LIST}2" >"$LIST"
+    ~/.config/instantos/default/terminal -e "/bin/sh" -c "$SELECTION" &>/dev/null &
 fi
