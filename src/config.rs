@@ -205,8 +205,6 @@ pub struct Config {
     pub width: i32,
     /* --embed option; embedding window id */
     pub embed: Option<u32>,
-    /* -f; grab keyboard before reading stdin */
-    pub fast: bool,
     /* `slide` subcommand; Some(_) = slide mode with these settings */
     pub slide: Option<SlideSettings>,
 }
@@ -272,7 +270,6 @@ impl Default for Config {
             y_offset: 0,
             width: 0,
             embed: None,
-            fast: false,
             slide: None,
         }
     }

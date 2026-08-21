@@ -2,8 +2,7 @@
 //! backend and assert on the returned [`Transition`]s — no window, and no
 //! font-dependent pixels (fonts load, but nothing is rasterized).
 
-use super::input::{read_stdin, StdinItems};
-use super::layout::GridShape;
+use super::input::read_stdin;
 use super::matcher::Item;
 use super::transition::Transition;
 use super::Menu;
@@ -28,6 +27,7 @@ struct StubState {
     presents: usize,
     focus_titles: Vec<String>,
     selection_requests: Vec<bool>,
+    resizes: Vec<Rect>,
 }
 
 /// A backend with a feedable event queue; `next_event` pops from it and
@@ -65,7 +65,14 @@ impl Backend for StubBackend {
     fn present(&mut self, _canvas: &Canvas) {
         self.state.lock().unwrap().presents += 1;
     }
-    fn poll_event(&mut self, timeout: Option<Duration>) -> EventPoll {
+    fn resize_window(&mut self, rect: Rect) {
+        self.state.lock().unwrap().resizes.push(rect);
+    }
+    fn poll_event(
+        &mut self,
+        timeout: Option<Duration>,
+        _extra: &[std::os::fd::RawFd],
+    ) -> EventPoll {
         if let Some(ev) = self.feed.lock().unwrap().pop_front() {
             return EventPoll::Event(ev);
         }
@@ -145,14 +152,9 @@ fn menu_with(cfg: Config, items: &[&str]) -> (Menu, StubHandle, SharedOutput) {
         state: state.clone(),
     };
     let mut menu = Menu::new(cfg, renderer, Box::new(backend));
-    menu.load_items(StdinItems {
-        items: items.iter().map(|s| Item::new(*s)).collect(),
-        grid: GridShape {
-            lines: 0,
-            columns: 1,
-        },
-    });
-    // geometry normally computed by setup()
+    menu.add_items(items.iter().map(|s| Item::new(*s)).collect());
+    menu.stream_dirty = false; // the batch-load is not a pending stream settle
+                               // geometry normally computed by setup()
     menu.layout.menu_width = 600;
     menu.layout.menu_height = 240;
     menu.layout.bar_height = 30;
@@ -1183,5 +1185,210 @@ fn slide_ignores_stdin_items() {
         ..Config::default()
     };
     let items = read_stdin(&cfg);
-    assert!(items.items.is_empty());
+    assert!(items.is_empty());
+}
+
+/* ── streaming stdin ───────────────────────────────────────────────────── */
+
+/// A real os pipe with O_NONBLOCK set on the read end, like main() does for
+/// the streaming startup. Dropping closes the read end; the write end is
+/// closed explicitly via [`close_write`](TestPipe::close_write).
+struct TestPipe {
+    read_fd: std::os::fd::RawFd,
+    write_fd: std::os::fd::RawFd,
+}
+
+impl TestPipe {
+    fn new() -> Self {
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let flags = unsafe { libc::fcntl(fds[0], libc::F_GETFL) };
+        unsafe { libc::fcntl(fds[0], libc::F_SETFL, flags | libc::O_NONBLOCK) };
+        TestPipe {
+            read_fd: fds[0],
+            write_fd: fds[1],
+        }
+    }
+    fn write(&self, bytes: &[u8]) {
+        let n = unsafe { libc::write(self.write_fd, bytes.as_ptr().cast(), bytes.len()) };
+        assert_eq!(n, bytes.len() as isize);
+    }
+    /// Close the write end: the reader sees EOF once the buffer is drained.
+    fn close_write(&self) {
+        unsafe { libc::close(self.write_fd) };
+    }
+}
+
+impl Drop for TestPipe {
+    fn drop(&mut self) {
+        unsafe { libc::close(self.read_fd) };
+    }
+}
+
+/// Items stream in batch by batch; the menu keeps running until EOF, which
+/// flushes the unterminated tail line.
+#[test]
+fn streamed_items_arrive_before_eof_and_finalize_on_it() {
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &[]);
+    let pipe = TestPipe::new();
+    menu.begin_stream(pipe.read_fd);
+    assert!(menu.stream_active());
+
+    pipe.write(b"alpha\nbeta\n");
+    assert!(!menu.drain_stdin(), "writer still open");
+    assert!(menu.stream_active());
+    assert_eq!(
+        menu.matcher
+            .items
+            .iter()
+            .map(|i| i.text.as_str())
+            .collect::<Vec<_>>(),
+        vec!["alpha", "beta"]
+    );
+
+    pipe.write(b"gamma");
+    pipe.close_write();
+    assert!(menu.drain_stdin(), "write end closed");
+    assert!(!menu.stream_active());
+    assert_eq!(
+        menu.matcher
+            .items
+            .iter()
+            .map(|i| i.text.as_str())
+            .collect::<Vec<_>>(),
+        vec!["alpha", "beta", "gamma"]
+    );
+}
+
+/// The run loop settles EOF on its own: finalize runs once, then the menu
+/// behaves like a fully loaded one (Return prints the selection).
+#[test]
+fn run_settles_eof_then_behaves_like_a_loaded_menu() {
+    let (mut menu, stub, out) = menu_with(Config::default(), &[]);
+    let pipe = TestPipe::new();
+    pipe.write(b"alpha\nbeta\ngamma\n");
+    pipe.close_write(); // everything already in the pipe
+    menu.begin_stream(pipe.read_fd);
+
+    stub.key(ks::KEY_Return, 0, "");
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert_eq!(out.contents(), "alpha\n"); // first item selected after EOF
+}
+
+/// Instant mode must not conclude from a partial corpus: a single match
+/// mid-stream stays listed, and only fires once EOF settled.
+#[test]
+fn instant_pick_waits_for_eof_when_streaming() {
+    let cfg = Config {
+        instant: true,
+        match_mode: crate::config::MatchMode::Dmenu,
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &["abc", "other"]);
+    let pipe = TestPipe::new(); // idle pipe: streaming, nothing ever drained
+    menu.begin_stream(pipe.read_fd);
+    menu.editor.set_text("abc");
+
+    assert_eq!(menu.do_match(), Transition::Nop, "mid-stream pick deferred");
+    assert_eq!(menu.matcher.matches, vec![0]);
+
+    menu.stream_eof = true;
+    assert_eq!(
+        menu.do_match(),
+        Transition::PrintAndExit("abc".into()),
+        "pick fires at EOF"
+    );
+}
+
+/// reject-no-match is suspended while items stream in — an empty match list
+/// means "nothing arrived yet", not "no match" — and resumes at EOF.
+#[test]
+fn reject_no_match_is_suspended_while_items_stream_in() {
+    let cfg = Config {
+        reject_no_match: true,
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &["alpha"]);
+    let pipe = TestPipe::new(); // idle pipe: streaming, nothing ever drained
+    menu.begin_stream(pipe.read_fd);
+
+    // mid-stream: garbage is accepted
+    type_text(&mut menu, "z");
+    assert_eq!(menu.editor.text, "z");
+
+    // corpus complete: garbage reverts again
+    menu.stream_eof = true;
+    type_text(&mut menu, "q");
+    assert_eq!(menu.editor.text, "z");
+}
+
+/// A batch landing under the user's arrow keys keeps the selection instead
+/// of yanking it back to the top.
+#[test]
+fn streamed_batches_preserve_the_selection() {
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &["a1", "a2", "a3"]);
+    let pipe = TestPipe::new(); // idle pipe: streaming, nothing ever drained
+    menu.begin_stream(pipe.read_fd);
+
+    assert_eq!(menu.do_match(), Transition::Nop);
+    key(&mut menu, ks::KEY_Down, 0);
+    assert_eq!(menu.selection.selected, Some(1));
+
+    menu.add_items(vec![Item::new("a4")]);
+    assert_eq!(menu.do_match(), Transition::Nop);
+    assert_eq!(menu.selection.selected, Some(1), "selection survives");
+
+    // ...but resets once the corpus is final, like a fresh load always did
+    menu.stream_eof = true;
+    assert_eq!(menu.do_match(), Transition::Nop);
+    assert_eq!(menu.selection.selected, Some(0));
+}
+
+/// Reflow resizes the window when streamed items change the derived grid:
+/// `-l 3` starts bar-only (zero items) and grows to four rows.
+#[test]
+fn reflow_resizes_the_window_when_the_grid_grows() {
+    let cfg = Config {
+        lines: 3,
+        ..Config::default()
+    };
+    let (mut menu, stub, _out) = menu_with(cfg, &[]);
+    assert!(menu.setup().is_none());
+    let initial_height = menu.layout.menu_height;
+    assert_eq!(stub.state().resizes.len(), 0);
+
+    menu.add_items(["a", "b", "c"].iter().map(|s| Item::new(*s)).collect());
+    menu.reflow();
+
+    assert!(menu.layout.menu_height > initial_height);
+    let resizes = stub.state().resizes.clone();
+    assert_eq!(resizes.len(), 1);
+    assert_eq!(resizes[0].h, menu.layout.menu_height);
+}
+
+/// A grid change that keeps the window rectangle identical (columns grow
+/// inside a fixed `-w` width) must still be adopted.
+#[test]
+fn reflow_adopts_grid_changes_that_keep_the_rect() {
+    let cfg = Config {
+        lines: 2,
+        columns: 3,
+        width: 600,
+        ..Config::default()
+    };
+    let (mut menu, stub, _out) = menu_with(cfg, &[]);
+    assert!(menu.setup().is_none());
+
+    // 4 items fill the 2x2 grid; the window grows from bar-only
+    menu.add_items(["a", "b", "c", "d"].iter().map(|s| Item::new(*s)).collect());
+    menu.reflow();
+    assert_eq!(menu.layout.columns, 2);
+    assert_eq!(stub.state().resizes.len(), 1);
+
+    // 6 items widen the grid to 2x3 — same rect, different shape
+    menu.add_items(["e", "f"].iter().map(|s| Item::new(*s)).collect());
+    menu.reflow();
+    assert_eq!(menu.layout.lines, 2);
+    assert_eq!(menu.layout.columns, 3, "grid shape adopted");
+    assert_eq!(stub.state().resizes.len(), 1, "no redundant resize");
 }

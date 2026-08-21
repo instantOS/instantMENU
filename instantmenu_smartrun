@@ -40,7 +40,7 @@ INITIAL=()
 read -r SELECTION < <(instantmenu_path | sort -u |
     instantmenu --frecency-cache "$CACHE" \
         --right-command "instantmenu_smartrun $RARGS" --left-command "instantmenu_smartrun $LARGS" \
-        -p "${1}" -i --fast --placeholder "search apps" -l 10 --position center --width 900 --line-height -1 --border-width 4 "${INITIAL[@]}" "${TOAST_ARGS[@]}")
+        -p "${1}" -i --placeholder "search apps" -l 10 --position center --width 900 --line-height -1 --border-width 4 "${INITIAL[@]}" "${TOAST_ARGS[@]}")
 
 if [ -z "$SELECTION" ]; then
     echo "selection empty, exiting"

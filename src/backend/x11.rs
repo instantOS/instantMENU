@@ -1,6 +1,6 @@
 //! X11 backend — x11rb (XCB) + libxkbcommon-x11 for keysym/text lookup.
 
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, RawFd};
 use std::time::Duration;
 
 use x11rb::connection::Connection;
@@ -602,7 +602,24 @@ impl Backend for X11Backend {
         }
     }
 
-    fn poll_event(&mut self, timeout: Option<Duration>) -> EventPoll {
+    fn resize_window(&mut self, rect: Rect) {
+        if !self.created {
+            return;
+        }
+        /* the border is a server-side X border and keeps its creation-time
+         * width; only the content geometry moves here */
+        let _ = self.connection.configure_window(
+            self.window,
+            &ConfigureWindowAux::new()
+                .x(rect.x)
+                .y(rect.y)
+                .width(rect.w.max(1) as u32)
+                .height(rect.h.max(1) as u32),
+        );
+        self.flush();
+    }
+
+    fn poll_event(&mut self, timeout: Option<Duration>, extra: &[RawFd]) -> EventPoll {
         let start = std::time::Instant::now();
         loop {
             match self.connection.poll_for_event() {
@@ -628,14 +645,24 @@ impl Backend for X11Backend {
                 None => -1,
             };
 
-            let mut pfd = libc::pollfd {
+            let mut fds: Vec<libc::pollfd> = Vec::with_capacity(1 + extra.len());
+            fds.push(libc::pollfd {
                 fd: self.connection.as_raw_fd(),
                 events: libc::POLLIN,
                 revents: 0,
-            };
+            });
+            let extra_start = fds.len();
+            for &fd in extra {
+                fds.push(libc::pollfd {
+                    fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                });
+            }
 
             let n = loop {
-                let n = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
+                let n =
+                    unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
                 if n >= 0 {
                     break n;
                 }
@@ -647,6 +674,14 @@ impl Backend for X11Backend {
 
             if n == 0 {
                 return EventPoll::Timeout;
+            }
+
+            /* extras first: a blocked pipe producer is more time-critical
+             * than an X event that is already queued in the server */
+            for (i, pfd) in fds.iter().enumerate().skip(extra_start) {
+                if pfd.revents & (libc::POLLIN | libc::POLLERR | libc::POLLHUP) != 0 {
+                    return EventPoll::Readable(i - extra_start);
+                }
             }
         }
     }

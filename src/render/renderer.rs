@@ -136,15 +136,27 @@ impl Renderer {
         width
     }
 
-    fn make_buffer(&mut self, text: &str, max_width: Option<f32>) -> Buffer {
-        let new_chars: HashSet<char> = text
-            .chars()
+    /// Load fallback fonts covering `chars` into the live font database.
+    /// Called with the characters of each streamed-in item batch before it
+    /// is measured or drawn, so late arrivals render correctly even though
+    /// the startup database was seeded from a corpus that did not exist
+    /// yet. Chars already checked are skipped.
+    pub fn add_fallbacks(&mut self, chars: &HashSet<char>) {
+        let new_chars: HashSet<char> = chars
+            .iter()
+            .copied()
             .filter(|ch| !self.checked_chars.contains(ch))
             .collect();
-        if !new_chars.is_empty() {
-            fontconfig::add_fallbacks(self.font_system.db_mut(), &new_chars);
-            self.checked_chars.extend(new_chars);
+        if new_chars.is_empty() {
+            return;
         }
+        fontconfig::add_fallbacks(self.font_system.db_mut(), &new_chars);
+        self.checked_chars.extend(new_chars);
+    }
+
+    fn make_buffer(&mut self, text: &str, max_width: Option<f32>) -> Buffer {
+        let chars: HashSet<char> = text.chars().collect();
+        self.add_fallbacks(&chars);
         let pixel_size = self.fonts[0].pixel_size;
         let metrics = Metrics::new(pixel_size, self.font_height as f32);
         let mut buffer = Buffer::new(&mut self.font_system, metrics);

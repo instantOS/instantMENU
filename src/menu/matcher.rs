@@ -73,9 +73,15 @@ impl Matcher {
         }
     }
 
-    /// Port of match(): recompute `matches` for `text`.
-    pub fn search(&mut self, text: &str) -> MatchResult {
-        if self.commented {
+    /// Port of match(): recompute `matches` for `text`. `complete` tells
+    /// whether the item corpus is final (stdin reached EOF, or there is no
+    /// stream). While items are still streaming in, the pick-and-exit
+    /// conclusions (instant mode, commented mode) are deferred: a single
+    /// match can still gain competitors, and the first item starting with a
+    /// byte may not have arrived yet. Commented mode falls back to normal
+    /// matching for display until then.
+    pub fn search(&mut self, text: &str, complete: bool) -> MatchResult {
+        if self.commented && complete {
             // instantASSIST: the first byte of the query picks the first
             // item starting with it; an empty query falls through to the
             // normal matcher (C behaviour).
@@ -89,9 +95,9 @@ impl Matcher {
         }
 
         if self.mode == MatchMode::Fuzzy {
-            self.fuzzy_search(text)
+            self.fuzzy_search(text, complete)
         } else {
-            self.token_search(text)
+            self.token_search(text, complete)
         }
     }
 
@@ -139,7 +145,7 @@ impl Matcher {
     /// The dmenu/exact matcher: every whitespace-separated token must appear
     /// in the item; exact, then prefix, then substring matches (dmenu mode
     /// only ranks prefixes; exact mode lists everything that matches).
-    fn token_search(&mut self, text: &str) -> MatchResult {
+    fn token_search(&mut self, text: &str, complete: bool) -> MatchResult {
         // separate input text into tokens to be matched individually
         // (strtok collapses runs of spaces)
         let tokens: Vec<&str> = text.split(' ').filter(|t| !t.is_empty()).collect();
@@ -172,7 +178,7 @@ impl Matcher {
         self.matches.extend(prefix);
         self.matches.extend(substr);
 
-        if self.instant && self.matches.len() == 1 && !had_substr {
+        if self.instant && complete && self.matches.len() == 1 && !had_substr {
             return MatchResult::InstantPick(self.matches[0]);
         }
         MatchResult::Listed
@@ -182,7 +188,7 @@ impl Matcher {
     /// tolerant — one typo per four query characters, so a slipped key still
     /// finds its app. Scores break ties by input order, keeping pipeline
     /// ordering (history, frecency) intact for equal matches.
-    fn fuzzy_search(&mut self, text: &str) -> MatchResult {
+    fn fuzzy_search(&mut self, text: &str, complete: bool) -> MatchResult {
         if text.is_empty() {
             // empty query: everything matches, and — unlike the token
             // matcher — instant mode does not fire (C early return).
@@ -208,7 +214,7 @@ impl Matcher {
                 .map(|m| m.index as usize),
         );
 
-        if self.instant && self.matches.len() == 1 {
+        if self.instant && complete && self.matches.len() == 1 {
             return MatchResult::InstantPick(self.matches[0]);
         }
         MatchResult::Listed
@@ -233,7 +239,7 @@ mod tests {
             |c| c.match_mode = MatchMode::Dmenu,
             &["foobar", "foo", "xfoo", "barfoo"],
         );
-        assert_eq!(m.search("foo"), MatchResult::Listed);
+        assert_eq!(m.search("foo", true), MatchResult::Listed);
         assert_eq!(m.matches, vec![1, 0, 2, 3]);
     }
 
@@ -245,14 +251,14 @@ mod tests {
             |c| c.match_mode = MatchMode::Dmenu,
             &["foo bar", "foo", "bar"],
         );
-        assert_eq!(m.search("bar foo"), MatchResult::Listed);
+        assert_eq!(m.search("bar foo", true), MatchResult::Listed);
         assert_eq!(m.matches, vec![0]);
     }
 
     #[test]
     fn insensitive_matches_across_case() {
         let mut m = matcher(|c| c.insensitive = true, &["foo", "bar"]);
-        assert_eq!(m.search("FOO"), MatchResult::Listed);
+        assert_eq!(m.search("FOO", true), MatchResult::Listed);
         assert_eq!(m.matches, vec![0]);
     }
 
@@ -262,16 +268,16 @@ mod tests {
     #[test]
     fn smart_case_flips_once_and_never_resets() {
         let mut m = matcher(|c| c.smart_case = true, &["FOO", "foo"]);
-        assert_eq!(m.search("foo"), MatchResult::Listed);
+        assert_eq!(m.search("foo", true), MatchResult::Listed);
         assert_eq!(m.matches, vec![1, 0]);
 
         m.note_uppercase("Foo");
-        assert_eq!(m.search("foo"), MatchResult::Listed);
+        assert_eq!(m.search("foo", true), MatchResult::Listed);
         assert_eq!(m.matches, vec![1]);
 
         // lowercase input must not switch back
         m.note_uppercase("foo");
-        assert_eq!(m.search("foo"), MatchResult::Listed);
+        assert_eq!(m.search("foo", true), MatchResult::Listed);
         assert_eq!(m.matches, vec![1]);
     }
 
@@ -279,7 +285,7 @@ mod tests {
     #[test]
     fn default_matching_is_case_sensitive() {
         let mut m = matcher(|_| (), &["foo"]);
-        assert_eq!(m.search("FOO"), MatchResult::Listed);
+        assert_eq!(m.search("FOO", true), MatchResult::Listed);
         assert!(m.matches.is_empty());
     }
 
@@ -288,9 +294,9 @@ mod tests {
     #[test]
     fn commented_mode_picks_by_first_byte() {
         let mut m = matcher(|c| c.commented = true, &["yes", "no", "maybe"]);
-        assert_eq!(m.search("n"), MatchResult::CommentPick(Some(1)));
-        assert_eq!(m.search("zzz"), MatchResult::CommentPick(None));
-        assert_eq!(m.search(""), MatchResult::Listed);
+        assert_eq!(m.search("n", true), MatchResult::CommentPick(Some(1)));
+        assert_eq!(m.search("zzz", true), MatchResult::CommentPick(None));
+        assert_eq!(m.search("", true), MatchResult::Listed);
         assert_eq!(m.matches, vec![0, 1, 2]);
     }
 
@@ -303,7 +309,7 @@ mod tests {
             },
             &["abc", "bcd"],
         );
-        assert_eq!(m.search("abc"), MatchResult::InstantPick(0));
+        assert_eq!(m.search("abc", true), MatchResult::InstantPick(0));
     }
 
     /// A lone substring match suppresses instant mode — the C had_substr
@@ -317,7 +323,7 @@ mod tests {
             },
             &["xab"],
         );
-        assert_eq!(m.search("ab"), MatchResult::Listed);
+        assert_eq!(m.search("ab", true), MatchResult::Listed);
         assert_eq!(m.matches, vec![0]);
     }
 
@@ -332,7 +338,7 @@ mod tests {
             },
             &["only"],
         );
-        assert_eq!(m.search(""), MatchResult::InstantPick(0));
+        assert_eq!(m.search("", true), MatchResult::InstantPick(0));
     }
 
     /// ...but the fuzzy matcher returns early on an empty query, before the
@@ -340,8 +346,35 @@ mod tests {
     #[test]
     fn instant_mode_does_not_fire_on_empty_fuzzy_query() {
         let mut m = matcher(|c| c.instant = true, &["only"]);
-        assert_eq!(m.search(""), MatchResult::Listed);
+        assert_eq!(m.search("", true), MatchResult::Listed);
         assert_eq!(m.matches, vec![0]);
+    }
+
+    /// While the corpus is still streaming in (`complete == false`), instant
+    /// mode is deferred: one match can still gain competitors.
+    #[test]
+    fn instant_pick_is_deferred_until_the_corpus_is_complete() {
+        let mut m = matcher(
+            |c| {
+                c.match_mode = MatchMode::Dmenu;
+                c.instant = true;
+            },
+            &["abc"],
+        );
+        assert_eq!(m.search("abc", false), MatchResult::Listed);
+        // the same query concludes once stdin has reached EOF
+        assert_eq!(m.search("abc", true), MatchResult::InstantPick(0));
+    }
+
+    /// Commented mode with an incomplete corpus falls back to normal
+    /// matching for display instead of picking (and exiting) by the first
+    /// byte — the item that would win may not have arrived yet.
+    #[test]
+    fn commented_pick_is_deferred_until_the_corpus_is_complete() {
+        let mut m = matcher(|c| c.commented = true, &["yes", "no", "maybe"]);
+        assert_eq!(m.search("n", false), MatchResult::Listed);
+        assert_eq!(m.matches, vec![1]); // normal matching filters instead
+        assert_eq!(m.search("n", true), MatchResult::CommentPick(Some(1)));
     }
 
     /// Fuzzy scores by subsequence position: same spread but a later start
@@ -349,7 +382,7 @@ mod tests {
     #[test]
     fn fuzzy_ranks_tighter_matches_first() {
         let mut m = matcher(|_| (), &["foobar", "fobar"]);
-        assert_eq!(m.search("fb"), MatchResult::Listed);
+        assert_eq!(m.search("fb", true), MatchResult::Listed);
         assert_eq!(m.matches, vec![1, 0]);
     }
 
@@ -358,9 +391,9 @@ mod tests {
     #[test]
     fn fuzzy_tolerates_typos() {
         let mut m = matcher(|_| (), &["firefox", "thunderbird"]);
-        assert_eq!(m.search("firefx"), MatchResult::Listed);
+        assert_eq!(m.search("firefx", true), MatchResult::Listed);
         assert_eq!(m.matches, vec![0]);
-        m.search("firxyx");
+        m.search("firxyx", true);
         assert!(m.matches.is_empty());
     }
 
@@ -369,7 +402,7 @@ mod tests {
     #[test]
     fn fuzzy_ties_keep_input_order() {
         let mut m = matcher(|_| (), &["foo", "foo"]);
-        assert_eq!(m.search("foo"), MatchResult::Listed);
+        assert_eq!(m.search("foo", true), MatchResult::Listed);
         assert_eq!(m.matches, vec![0, 1]);
     }
 
@@ -377,7 +410,7 @@ mod tests {
     #[test]
     fn exact_mode_lists_only_exact_matches() {
         let mut m = matcher(|c| c.match_mode = MatchMode::Exact, &["foo", "foobar"]);
-        assert_eq!(m.search("foo"), MatchResult::Listed);
+        assert_eq!(m.search("foo", true), MatchResult::Listed);
         assert_eq!(m.matches, vec![0]);
     }
 }

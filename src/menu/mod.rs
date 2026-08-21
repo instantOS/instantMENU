@@ -21,9 +21,12 @@ mod mouse;
 mod paging;
 mod run;
 mod slide;
+mod stream;
 mod transition;
 
+use std::collections::HashSet;
 use std::io::Write;
+use std::os::fd::RawFd;
 use std::time::SystemTime;
 
 use crate::backend::{Backend, CONTROL_MASK, SHIFT_MASK};
@@ -34,15 +37,17 @@ use crate::render::{Canvas, Painter, Renderer};
 
 use frecency::Frecency;
 use layout::Layout;
-use matcher::{MatchResult, Matcher};
+use matcher::{Item, MatchResult, Matcher};
 use measure::{Measure, TextMeasurer};
 use paging::{Paging, Selection};
 use slide::Slider;
 use transition::Transition;
 
-pub use input::{read_stdin, StdinItems};
+pub use input::read_stdin;
 
 pub use frecency::resolve_cache_path;
+
+use stream::{Gate, LineParser};
 
 /// FontAwesome glyphs drawn in the left/right command cells. The C version
 /// used U+F0A0/U+F0A1, which are `fa-hdd-o` and `fa-bullhorn` (not arrows);
@@ -52,7 +57,7 @@ const RIGHT_GLYPH: &str = "\u{f061}";
 
 /// The menu shell: pure-core state plus the display machinery. All field
 /// access is module-internal; the public surface is
-/// [`Menu::new`]/[`Menu::load_items`]/[`Menu::setup`]/[`Menu::run`].
+/// [`Menu::new`]/[`Menu::add_items`]/[`Menu::begin_stream`]/[`Menu::setup`]/[`Menu::run`].
 pub struct Menu {
     cfg: Config,
     renderer: Renderer,
@@ -64,13 +69,39 @@ pub struct Menu {
     pub(in crate::menu) selection: Selection,
     pub(in crate::menu) paging: Paging,
     pub(in crate::menu) layout: Layout,
-    /// -l/-g as adjusted by stdin (item count), consumed by setup().
+    /// The -l/-g grid as adjusted for the current item count, recomputed
+    /// whenever items stream in (the C version computed it once after
+    /// reading all of stdin).
     pub(in crate::menu) stdin_grid: layout::GridShape,
     /// `slide` subcommand: Some(_) = slide mode; owns the value state and
     /// receives events instead of the list machinery.
     pub(in crate::menu) slider: Option<Slider>,
     /// `--frecency-cache`: ranks items on load, records printed selections.
     pub(in crate::menu) frecency: Option<Frecency>,
+
+    /* ── streaming stdin ──────────────────────────────────────────────── */
+    /// fd of the streaming stdin pipe, -1 when items are not streamed (no
+    /// pipe, a tty, or a mode that ignores stdin). Stays set after EOF.
+    stream_fd: RawFd,
+    /// stdin reached end-of-file: the corpus is final and pick conclusions
+    /// (instant/commented/pre-match) may fire.
+    stream_eof: bool,
+    /// EOF has been settled (rematch + final draw done) exactly once.
+    stream_finalized: bool,
+    /// Items arrived since the last settle.
+    stream_dirty: bool,
+    parser: LineParser,
+    gate: Gate,
+    /// Characters from not-yet-settled items, resolved against fontconfig in
+    /// one batch per settle.
+    pending_chars: HashSet<char>,
+    /// --pre-match runs once, when the corpus it matches against is final.
+    pre_match_applied: bool,
+    /// The -it seed, for the deferred pre-match "text is still the seed"
+    /// check.
+    initial_seed: Option<String>,
+    /// resolve_auto_width warned about measuring a large corpus already.
+    auto_width_warned: bool,
 
     /* runtime flags */
     /// -A alt-tab behaviour: toggled off by Alt+Space at runtime.
@@ -104,6 +135,16 @@ impl Menu {
             },
             slider: cfg.slide.as_ref().map(Slider::new),
             frecency,
+            stream_fd: -1,
+            stream_eof: false,
+            stream_finalized: false,
+            stream_dirty: false,
+            parser: LineParser::default(),
+            gate: Gate::default(),
+            pending_chars: HashSet::new(),
+            pre_match_applied: false,
+            initial_seed: None,
+            auto_width_warned: false,
             cfg,
             renderer,
             backend,
@@ -118,13 +159,44 @@ impl Menu {
         }
     }
 
-    /// Provide the stdin items and the -l/-g values adjusted for their count.
-    pub fn load_items(&mut self, stdin: input::StdinItems) {
-        self.stdin_grid = stdin.grid;
-        self.matcher.items = stdin.items;
-        if let Some(f) = self.frecency.as_ref() {
-            f.rank(&mut self.matcher.items, SystemTime::now());
+    /// Append items to the candidate list. Used by both the blocking load
+    /// (tty/toast startup) and every streamed-in batch. New characters are
+    /// remembered for the next font-fallback pass; frecency ranks each
+    /// appended slice immediately so arrival order stays meaningful while
+    /// the list grows.
+    pub fn add_items(&mut self, items: Vec<Item>) {
+        if items.is_empty() {
+            return;
         }
+        for item in &items {
+            self.pending_chars.extend(item.text.chars());
+        }
+        let start = self.matcher.items.len();
+        self.matcher.items.extend(items);
+        if let Some(f) = self.frecency.as_ref() {
+            f.rank(&mut self.matcher.items[start..], SystemTime::now());
+        }
+        self.stream_dirty = true;
+    }
+
+    /// Start streaming items in from `fd` (an O_NONBLOCK stdin). The menu
+    /// window exists by now; run() polls the fd alongside the backend and
+    /// settles batches through the coalescing gate until EOF.
+    pub fn begin_stream(&mut self, fd: RawFd) {
+        self.stream_fd = fd;
+    }
+
+    /// True while items may still arrive.
+    pub(super) fn stream_active(&self) -> bool {
+        self.stream_fd >= 0 && !self.stream_eof
+    }
+
+    /// True when the item corpus is final: nothing streams, or EOF was seen.
+    /// Pick conclusions (instant/commented/pre-match) and reject-no-match
+    /// only act on a complete corpus — mid-stream they would answer from a
+    /// prefix of the data.
+    pub(super) fn stream_complete(&self) -> bool {
+        !self.stream_active()
     }
 
     /* ── transition interpretation — the only place with these effects ── */
@@ -184,11 +256,22 @@ impl Menu {
 
     /// Run the matcher for the current text and reset selection/paging.
     /// The C version printed and exited from inside match(); those cases are
-    /// transitions here.
+    /// transitions here. While items stream in, pick conclusions are
+    /// deferred (see [`Matcher::search`]) and an existing selection survives
+    /// the rematch — a batch landing under a user's arrow keys must not yank
+    /// the highlight back to the top.
     pub(in crate::menu) fn do_match(&mut self) -> Transition {
-        match self.matcher.search(&self.editor.text) {
+        let complete = self.stream_complete();
+        match self.matcher.search(&self.editor.text, complete) {
             MatchResult::Listed => {
+                let keep = (!complete)
+                    .then_some(self.selection.selected)
+                    .flatten()
+                    .filter(|&pos| pos < self.matcher.matches.len());
                 self.selection = Selection::from_match(self.matcher.matches.len());
+                if let Some(pos) = keep {
+                    self.selection.selected = Some(pos);
+                }
                 self.recalc_paging();
                 Transition::Nop
             }

@@ -35,6 +35,7 @@ bump can also be selected manually from the workflow dispatch form.
 - icon prefixes
 - comments
 - slider mode (`instantmenu slide 'brightnessctl s'`)
+- streamed input: the menu opens instantly and items appear as stdin produces them
 
 ## is this dmenu?
 

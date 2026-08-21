@@ -33,11 +33,16 @@ impl Menu {
     }
 
     /// Compute the whole layout: bar height, prompt width, monitor choice
-    /// and clamping. Fails only when embedding has no parent window.
+    /// and clamping. Fails only when embedding has no parent window. The
+    /// grid shape is derived from the current item count, so this can run
+    /// again whenever streamed items change it ([`Menu::reflow`]).
     fn compute_layout(&mut self) -> Result<Layout, ExitStatus> {
+        let count = self.matcher.items.len() as i32;
+        let grid = super::layout::adjusted_grid(self.cfg.lines, self.cfg.columns, count);
+        self.stdin_grid = grid;
         let mut layout = Layout {
-            lines: self.stdin_grid.lines.max(0),
-            columns: self.stdin_grid.columns,
+            lines: grid.lines.max(0),
+            columns: grid.columns,
             ..Layout::default()
         };
         let width = self.resolve_auto_width(layout.columns);
@@ -80,7 +85,8 @@ impl Menu {
             return self.cfg.width;
         }
         const AUTO_WIDTH_WARNING_ITEMS: usize = 256;
-        if self.matcher.items.len() >= AUTO_WIDTH_WARNING_ITEMS {
+        if !self.auto_width_warned && self.matcher.items.len() >= AUTO_WIDTH_WARNING_ITEMS {
+            self.auto_width_warned = true;
             eprintln!(
                 "instantmenu: warning: --width {} requires measuring all {} items; use a positive width for large lists",
                 self.cfg.width,
@@ -254,12 +260,22 @@ impl Menu {
         }
     }
 
-    /// Prematch: select the item that first matched the pretyped text.
-    fn apply_pre_match(&mut self) -> Option<ExitStatus> {
-        if !(self.cfg.pre_match && !self.matcher.matches.is_empty() && !self.editor.text.is_empty())
+    /// Prematch: select the item that first matched the pretyped text. Runs
+    /// once, and only against a complete corpus — mid-stream the winning
+    /// item may not have arrived yet. When the corpus completes after the
+    /// menu opened (streaming), it only fires while the input still holds
+    /// the untouched `-it` seed; editing the text opts out.
+    pub(in crate::menu) fn apply_pre_match(&mut self) -> Option<ExitStatus> {
+        if !(self.cfg.pre_match
+            && !self.pre_match_applied
+            && self.stream_complete()
+            && !self.matcher.matches.is_empty()
+            && !self.editor.text.is_empty()
+            && self.initial_seed.as_deref() == Some(self.editor.text.as_str()))
         {
             return None;
         }
+        self.pre_match_applied = true;
         // remember the item that was the first match for the pretyped text
         let first_match_item = self.matcher.matches[0];
         let t = self.insert(EditOp::Delete(self.editor.cursor));
@@ -338,6 +354,48 @@ impl Menu {
             .resize(Size::new(self.layout.menu_width, self.layout.menu_height));
         self.draw_menu();
         None
+    }
+
+    /// Recompute the layout for the current item count and resize the
+    /// window when the derived shape changed. Called when a streamed batch
+    /// settles and at EOF: with `-l N` the grid shrinks to fit the items,
+    /// so the window grows as the list fills (and auto-width tracks the
+    /// widest item seen). No-op when nothing moved — the common fast case
+    /// where EOF lands inside the first coalescing window and the corpus is
+    /// already final before the first layout.
+    pub(in crate::menu) fn reflow(&mut self) {
+        let Ok(new_layout) = self.compute_layout() else {
+            return;
+        };
+        let rect = Rect::new(
+            new_layout.x,
+            new_layout.y,
+            new_layout.menu_width,
+            new_layout.menu_height,
+        );
+        let old_rect = Rect::new(
+            self.layout.x,
+            self.layout.y,
+            self.layout.menu_width,
+            self.layout.menu_height,
+        );
+        /* input_width derives from menu_width; bar_height from the font.
+         * Anything that moves the drawn pixels means: adopt the layout,
+         * resize canvas + window and let the caller redraw. The grid shape
+         * is compared too: in multi-column mode columns can shrink/grow
+         * while the window rectangle stays the same. */
+        let rect_moved = rect != old_rect;
+        let shape_changed = rect_moved
+            || new_layout.lines != self.layout.lines
+            || new_layout.columns != self.layout.columns;
+        if !shape_changed {
+            return;
+        }
+        self.layout = new_layout;
+        if rect_moved {
+            self.canvas.resize(Size::new(rect.w.max(1), rect.h.max(1)));
+            self.backend.resize_window(rect);
+        }
     }
 }
 

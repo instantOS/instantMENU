@@ -4,7 +4,7 @@
 .SH NAME
 instantmenu \- A dynamic menu for X11 and Wayland (instantMENU, Rust port)
 .SH SYNOPSIS
-\fBinstantmenu\fR [\fB\-\-backend\fR] [\fB\-\-position\fR] [\fB\-\-follow\-cursor\fR] [\fB\-\-monospace\fR] [\fB\-\-no\-grab\fR] [\fB\-\-no\-outside\-close\fR] [\fB\-\-managed\fR] [\fB\-x\fR|\fB\-\-x\-offset\fR] [\fB\-y\fR|\fB\-\-y\-offset\fR] [\fB\-w\fR|\fB\-\-width\fR] [\fB\-m\fR|\fB\-\-monitor\fR] [\fB\-p\fR|\fB\-\-prompt\fR] [\fB\-\-font\fR] [\fB\-\-line\-height\fR] [\fB\-\-normal\-bg\fR] [\fB\-\-normal\-fg\fR] [\fB\-\-selected\-bg\fR] [\fB\-\-selected\-fg\fR] [\fB\-\-embed\fR] [\fB\-\-border\-width\fR] [\fB\-r\fR|\fB\-\-reject\-no\-match\fR] [\fB\-f\fR|\fB\-\-fast\fR] [\fB\-\-toast\fR] [\fB\-\-commented\fR] [\fB\-\-input\-only\fR] [\fB\-s\fR|\fB\-\-smart\-case\fR] [\fB\-\-match\-mode\fR] [\fB\-\-pre\-match\fR] [\fB\-\-space\-confirm\fR] [\fB\-\-full\-height\fR] [\fB\-i\fR|\fB\-\-insensitive\fR] [\fB\-n\fR|\fB\-\-instant\fR] [\fB\-\-password\fR] [\fB\-\-alt\-tab\fR] [\fB\-\-right\-command\fR] [\fB\-\-left\-command\fR] [\fB\-g\fR|\fB\-\-columns\fR] [\fB\-l\fR|\fB\-\-lines\fR] [\fB\-\-placeholder\fR] [\fB\-a\fR|\fB\-\-animation\fR] [\fB\-\-preselect\fR] [\fB\-\-initial\-text\fR] [\fB\-\-frecency\-cache\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIsubcommands\fR]
+\fBinstantmenu\fR [\fB\-\-backend\fR] [\fB\-\-position\fR] [\fB\-\-follow\-cursor\fR] [\fB\-\-monospace\fR] [\fB\-\-no\-grab\fR] [\fB\-\-no\-outside\-close\fR] [\fB\-\-managed\fR] [\fB\-x\fR|\fB\-\-x\-offset\fR] [\fB\-y\fR|\fB\-\-y\-offset\fR] [\fB\-w\fR|\fB\-\-width\fR] [\fB\-m\fR|\fB\-\-monitor\fR] [\fB\-p\fR|\fB\-\-prompt\fR] [\fB\-\-font\fR] [\fB\-\-line\-height\fR] [\fB\-\-normal\-bg\fR] [\fB\-\-normal\-fg\fR] [\fB\-\-selected\-bg\fR] [\fB\-\-selected\-fg\fR] [\fB\-\-embed\fR] [\fB\-\-border\-width\fR] [\fB\-r\fR|\fB\-\-reject\-no\-match\fR] [\fB\-\-toast\fR] [\fB\-\-commented\fR] [\fB\-\-input\-only\fR] [\fB\-s\fR|\fB\-\-smart\-case\fR] [\fB\-\-match\-mode\fR] [\fB\-\-pre\-match\fR] [\fB\-\-space\-confirm\fR] [\fB\-\-full\-height\fR] [\fB\-i\fR|\fB\-\-insensitive\fR] [\fB\-n\fR|\fB\-\-instant\fR] [\fB\-\-password\fR] [\fB\-\-alt\-tab\fR] [\fB\-\-right\-command\fR] [\fB\-\-left\-command\fR] [\fB\-g\fR|\fB\-\-columns\fR] [\fB\-l\fR|\fB\-\-lines\fR] [\fB\-\-placeholder\fR] [\fB\-a\fR|\fB\-\-animation\fR] [\fB\-\-preselect\fR] [\fB\-\-initial\-text\fR] [\fB\-\-frecency\-cache\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIsubcommands\fR]
 .SH DESCRIPTION
 instantmenu reads a newline\-separated list of items from stdin and displays them in a menu. Selecting an item and pressing Return prints it to stdout and exits; typing narrows the list to matching items.
 .PP
@@ -131,11 +131,6 @@ Adds a border around the menu.
 .TP
 \fB\-r\fR, \fB\-\-reject\-no\-match\fR
 Reject input if it results in no matches
-.TP
-\fB\-f\fR, \fB\-\-fast\fR
-Grab the keyboard before reading stdin.
-
-Only done when stdin is not a tty. Faster, but locks up X until stdin reaches end\-of\-file.
 .TP
 \fB\-\-toast\fR \fI<TENTHS>\fR
 Toast mode that times out after a while (tenths of seconds).

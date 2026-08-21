@@ -1,7 +1,7 @@
-//! The resolved window geometry: computed once during setup, immutable
-//! afterwards. Owns the effective `-l`/`-g` values (after stdin adjustment
-//! and monitor clamping), so runtime code never re-reads them from the
-//! config.
+//! The resolved window geometry: computed during setup and recomputed on
+//! demand when streamed-in items change the derived grid shape. Owns the
+//! effective `-l`/`-g` values (after item-count adjustment and monitor
+//! clamping), so runtime code never re-reads them from the config.
 
 use crate::geom::Rect;
 
@@ -21,12 +21,27 @@ pub(super) struct Layout {
     pub columns: i32,
 }
 
-/// The -l/-g pair before monitor clamping: as adjusted by stdin's item
-/// count, consumed by [`Menu::setup`](super::Menu::setup).
+/// The -l/-g pair before monitor clamping: as adjusted for the current item
+/// count. Recomputed whenever items stream in; the window is resized to fit
+/// when the shape changes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GridShape {
     pub lines: i32,
     pub columns: i32,
+}
+
+/// The -l/-g adjustment the C version made after reading stdin: lines shrink
+/// to fit the item count, then columns shrink to the widest actually-needed
+/// grid (only when the grid is multi-column).
+pub(super) fn adjusted_grid(lines: i32, columns: i32, count: i32) -> GridShape {
+    let i = count;
+    let lines = lines.min(i / columns + (i % columns != 0) as i32);
+    let columns = if columns != 1 && lines != 0 {
+        (i / lines + (i % lines != 0) as i32).min(columns)
+    } else {
+        columns
+    };
+    GridShape { lines, columns }
 }
 
 impl Layout {

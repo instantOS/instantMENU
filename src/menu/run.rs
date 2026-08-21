@@ -1,5 +1,6 @@
 //! The menu event loop (port of `run()`).
 
+use std::os::fd::RawFd;
 use std::time::{Duration, Instant};
 
 use super::transition::Transition;
@@ -10,6 +11,12 @@ use crate::enums::ExitStatus;
 impl Menu {
     /// run — port of the event loop in run(). Interprets the handlers'
     /// transitions; returns the exit status.
+    ///
+    /// While stdin streams items in (`begin_stream`), the loop polls the
+    /// stdin fd alongside the backend and settles coalesced batches at the
+    /// top of every iteration — so handler `continue`s can never starve a
+    /// pending settle. EOF settles once with the deferred conclusions
+    /// (instant/commented picks, pre-match, preselection).
     pub fn run(&mut self) -> ExitStatus {
         if self.slider.is_some() {
             return self.run_slide();
@@ -26,7 +33,7 @@ impl Menu {
                     return ExitStatus::Success;
                 }
                 let remaining = deadline - now;
-                match self.backend.poll_event(Some(remaining)) {
+                match self.backend.poll_event(Some(remaining), &[]) {
                     EventPoll::Event(BackendEvent::Destroyed) => return ExitStatus::Failure,
                     EventPoll::Event(BackendEvent::Expose) => {
                         self.backend.present(&self.canvas);
@@ -34,26 +41,60 @@ impl Menu {
                     EventPoll::Event(_) => {
                         // Toast mode ignores all user input
                     }
-                    EventPoll::Timeout => return ExitStatus::Success,
+                    EventPoll::Readable(_) | EventPoll::Timeout => return ExitStatus::Success,
                     EventPoll::Closed => return ExitStatus::Failure,
                 }
             }
         }
 
+        /* whatever is already buffered lands before the first wait; for a
+         * fast producer this is usually the whole corpus plus EOF */
+        if self.stream_active() {
+            self.drain_stdin();
+        }
+
         let mut last_time: u32 = 0;
         let mut preselected = self.cfg.preselected;
+        /* when streaming, --preselect applies at EOF against the full list */
+        let deferred_preselect = self.stream_fd >= 0;
         loop {
-            let Some(ev) = self.backend.next_event() else {
-                return ExitStatus::Failure;
-            };
+            let now = Instant::now();
+            if self.stream_settle_due(now) {
+                if self.stream_eof {
+                    if let Some(status) = self.finalize_stream() {
+                        return status;
+                    }
+                } else {
+                    self.settle_stream();
+                }
+            }
 
-            if preselected != 0 {
+            if preselected != 0 && !deferred_preselect {
                 for _ in 0..preselected {
                     self.select_next();
                 }
                 self.draw_menu();
                 preselected = 0;
             }
+
+            let extra_fds = [self.stream_fd];
+            let extra: &[RawFd] = if self.stream_active() {
+                &extra_fds
+            } else {
+                &[]
+            };
+            let timeout = self.stream_poll_budget(now);
+
+            let ev = match self.backend.poll_event(timeout, extra) {
+                EventPoll::Event(ev) => ev,
+                EventPoll::Readable(_) => {
+                    self.drain_stdin();
+                    continue;
+                }
+                /* window closed: loop back and settle what arrived */
+                EventPoll::Timeout => continue,
+                EventPoll::Closed => return ExitStatus::Failure,
+            };
 
             let t = match ev {
                 BackendEvent::Motion { time, pos, .. } => {

@@ -54,20 +54,41 @@ fn main() {
         *cfg.colors[scheme as usize].role_mut(role) = value;
     }
 
-    /* Read candidates before constructing the font database so only fallback
-     * fonts needed by the actual corpus have to be loaded. */
+    /* Startup ordering. Streaming is the default: the keyboard is grabbed
+     * before anything slow happens, the window opens immediately, and the
+     * rest of stdin is consumed while the menu runs — items appear as they
+     * arrive, coalesced so a fast producer still produces exactly one
+     * rematch + redraw. The exceptions keep the blocking load:
+     * - a tty stdin: the user types items interactively and ends with
+     *   Ctrl-D; grabbing first would lock their terminal mid-typing.
+     * - toast mode: passive display, no grab, no interaction.
+     * - password/input-only/slide: never read stdin at all. */
+    let interactive_tty = std::io::stdin().is_terminal();
+    let ignores_stdin = cfg.password || cfg.input_only || cfg.slide.is_some();
+    let streaming = cfg.toast == 0 && !interactive_tty && !ignores_stdin;
+
     let grab = cfg.toast == 0 && !cfg.no_grab;
-    let fast = cfg.fast && !std::io::stdin().is_terminal();
-    if fast && grab {
+    if streaming && grab {
         backend.grab_keyboard();
     }
-    let stdin = menu::read_stdin(&cfg);
-    if !fast && grab {
+
+    /* Read candidates before constructing the font database so only fallback
+     * fonts needed by the actual corpus have to be loaded. Streamed items
+     * resolve their fonts lazily per batch instead (renderer.add_fallbacks).
+     * When nothing streams, everything arrives here. */
+    let preloaded = if streaming {
+        None
+    } else if ignores_stdin {
+        Some(Vec::new())
+    } else {
+        Some(menu::read_stdin(&cfg))
+    };
+    if !streaming && grab {
         backend.grab_keyboard();
     }
 
     let mut required_chars = std::collections::HashSet::new();
-    for item in &stdin.items {
+    for item in preloaded.iter().flatten() {
         required_chars.extend(item.text.chars());
     }
     for text in [
@@ -100,12 +121,50 @@ fn main() {
             status.exit();
         }
     }
-    menu.load_items(stdin);
+    if let Some(items) = preloaded {
+        menu.add_items(items);
+    }
 
     if let Some(status) = menu.setup() {
         status.exit();
     }
-    menu.run().exit();
+
+    let _nonblock_stdin = streaming.then(|| {
+        menu.begin_stream(libc::STDIN_FILENO);
+        NonBlockingStdin::new(libc::STDIN_FILENO)
+    });
+
+    let status = menu.run();
+    drop(_nonblock_stdin); // restore the stdin flags before exiting
+    status.exit();
+}
+
+/// O_NONBLOCK on the streaming stdin, restored on drop. The drain loop must
+/// never block on its final read (the producer may stall between chunks),
+/// and the flag lives on the open file description — so it is undone before
+/// the process exits rather than left behind for whoever inherits stdin.
+struct NonBlockingStdin {
+    fd: i32,
+    saved_flags: Option<i32>,
+}
+
+impl NonBlockingStdin {
+    fn new(fd: i32) -> Self {
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        let saved_flags = (flags >= 0).then_some(flags);
+        if let Some(flags) = saved_flags {
+            unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
+        }
+        NonBlockingStdin { fd, saved_flags }
+    }
+}
+
+impl Drop for NonBlockingStdin {
+    fn drop(&mut self) {
+        if let Some(flags) = self.saved_flags {
+            unsafe { libc::fcntl(self.fd, libc::F_SETFL, flags) };
+        }
+    }
 }
 
 /// Boolean flags: applied before the value options they gate.
@@ -163,7 +222,6 @@ fn apply_flags(args: &cli::Args, cfg: &mut Config) {
     if args.window.managed {
         cfg.managed = true;
     }
-    cfg.fast = args.menu.fast;
 }
 
 /// Value options, plus the temporary font/color overrides applied after X

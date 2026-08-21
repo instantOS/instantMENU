@@ -6,6 +6,8 @@ pub mod x11;
 
 use clap::ValueEnum;
 
+use std::os::fd::RawFd;
+
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
 
@@ -105,6 +107,9 @@ pub enum BackendEvent {
 pub enum EventPoll {
     /// An event arrived from the backend.
     Event(BackendEvent),
+    /// The extra fd at the given index of the `extra` slice passed to
+    /// [`Backend::poll_event`] became readable (or hung up).
+    Readable(usize),
     /// The timeout expired before an event arrived.
     Timeout,
     /// The backend connection died or was closed.
@@ -169,13 +174,23 @@ pub trait Backend {
     }
     /// Raise the window (XRaiseWindow on VisibilityNotify).
     fn raise(&mut self) {}
+    /// Move and resize the menu window. The rect is in content coordinates,
+    /// exactly like the `rect` passed to [`Backend::create_window`] (the
+    /// backends add their own border handling). A no-op default is fine for
+    /// surfaces whose geometry the compositor owns (managed Wayland windows).
+    fn resize_window(&mut self, _rect: Rect) {}
     /// Poll for the next event, up to `timeout`. `None` waits indefinitely.
-    fn poll_event(&mut self, timeout: Option<std::time::Duration>) -> EventPoll;
+    /// `extra` fds are watched alongside the backend's own sources; when one
+    /// becomes readable (or hangs up), `EventPoll::Readable` returns its
+    /// index without consuming anything — the caller owns those fds. Extras
+    /// are checked before queued backend events: a blocked pipe writer is
+    /// more time-critical than an already-queued event.
+    fn poll_event(&mut self, timeout: Option<std::time::Duration>, extra: &[RawFd]) -> EventPoll;
     /// Block for the next event, None when the connection died.
     fn next_event(&mut self) -> Option<BackendEvent> {
-        match self.poll_event(None) {
+        match self.poll_event(None, &[]) {
             EventPoll::Event(ev) => Some(ev),
-            EventPoll::Timeout | EventPoll::Closed => None,
+            EventPoll::Readable(_) | EventPoll::Timeout | EventPoll::Closed => None,
         }
     }
     /// Ask for the selection/clipboard contents (XConvertSelection).

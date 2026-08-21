@@ -765,6 +765,27 @@ impl Backend for WaylandBackend {
         let _ = self.connection.flush();
     }
 
+    fn resize_window(&mut self, rect: Rect) {
+        let border = self.state.border_width;
+        let w = (rect.w + 2 * border).max(1);
+        let h = (rect.h + 2 * border).max(1);
+        if let Some(layer_surface) = &self.state.layer_surface {
+            /* the anchor/margins from create_layer stay valid: a top-anchored
+             * surface grows downward and a bottom-anchored one grows upward,
+             * which is exactly what reflowing the item grid wants */
+            layer_surface.set_size(w as u32, h as u32);
+            if let Some(surface) = &self.state.surface {
+                surface.commit();
+            }
+        }
+        /* managed (xdg-toplevel) windows: the WM owns the geometry */
+        if !self.state.shields.is_empty() {
+            /* recreate the click-catchers so their input region holes track
+             * the new menu rectangle */
+            self.create_shields(Rect::new(rect.x, rect.y, w, h));
+        }
+    }
+
     fn wait_frame(&mut self) {
         /* Block until the frame committed by the last present() is on screen.
          * The frame callback is dispatched by the queue, so release events for
@@ -777,7 +798,7 @@ impl Backend for WaylandBackend {
         }
     }
 
-    fn poll_event(&mut self, timeout: Option<std::time::Duration>) -> EventPoll {
+    fn poll_event(&mut self, timeout: Option<std::time::Duration>, extra: &[RawFd]) -> EventPoll {
         let start = std::time::Instant::now();
         loop {
             if let Some(ev) = self.state.events.pop_front() {
@@ -806,7 +827,7 @@ impl Backend for WaylandBackend {
              * blocking_dispatch() here would only wake on wayland events, so
              * the clipboard/primary transfer pipes would never be pumped. */
             let guard = self.queue.prepare_read();
-            let mut fds: Vec<libc::pollfd> = Vec::with_capacity(3);
+            let mut fds: Vec<libc::pollfd> = Vec::with_capacity(3 + extra.len());
             if let Some(g) = &guard {
                 fds.push(libc::pollfd {
                     fd: g.connection_fd().as_raw_fd(),
@@ -840,6 +861,16 @@ impl Backend for WaylandBackend {
                     });
                 }
             }
+            /* caller-owned fds (streaming stdin); watched last so the
+             * internal indices stay stable */
+            let extra_start = fds.len();
+            for &fd in extra {
+                fds.push(libc::pollfd {
+                    fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                });
+            }
             let n = loop {
                 let n =
                     unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
@@ -854,6 +885,14 @@ impl Backend for WaylandBackend {
             if n == 0 {
                 drop(guard);
                 return EventPoll::Timeout;
+            }
+            /* extras first: a blocked pipe producer is more time-critical
+             * than already-queued compositor work */
+            for (i, pfd) in fds.iter().enumerate().skip(extra_start) {
+                if pfd.revents & (libc::POLLIN | libc::POLLERR | libc::POLLHUP) != 0 {
+                    drop(guard);
+                    return EventPoll::Readable(i - extra_start);
+                }
             }
             /* read + dispatch only when the wayland socket is ready; when
              * only a selection pipe fired, drop the guard (cancels the

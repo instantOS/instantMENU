@@ -23,7 +23,10 @@ const LONG_ABOUT: &str = concat!(
     "instantmenu reads a newline-separated list of items from stdin and ",
     "displays them in a menu. Selecting an item and pressing Return prints ",
     "it to stdout and exits; typing narrows the list to matching items.\n\n",
-    "With the `slide` subcommand it shows a value slider instead: Return ",
+    "The menu opens immediately and items stream in: the keyboard is ",
+    "grabbed before stdin is read, and the list grows as the input ",
+    "produces it (a fast producer collapses into a single refresh). With ",
+    "the `slide` subcommand it shows a value slider instead: Return ",
     "prints the value and exits, every change runs --command with the value ",
     "appended.",
 );
@@ -95,13 +98,6 @@ pub struct MenuArgs {
     /// Reject input if it results in no matches.
     #[arg(long, short = 'r')]
     pub reject_no_match: bool,
-
-    /// Grab the keyboard before reading stdin.
-    ///
-    /// Only done when stdin is not a tty. Faster, but locks up X until
-    /// stdin reaches end-of-file.
-    #[arg(long, short = 'f')]
-    pub fast: bool,
 
     /// Toast mode that times out after a while (tenths of seconds).
     ///
@@ -234,9 +230,6 @@ impl MenuArgs {
     pub fn active_flag(&self) -> Option<&'static str> {
         if self.reject_no_match {
             return Some("--reject-no-match");
-        }
-        if self.fast {
-            return Some("--fast");
         }
         if self.toast.is_some() {
             return Some("--toast");
@@ -578,7 +571,6 @@ mod tests {
             "-p",
             "",
             "-i",
-            "--fast",
             "--placeholder",
             "search apps",
             "-l",
@@ -872,7 +864,6 @@ mod tests {
                 &["instantmenu", "--reject-no-match", "slide"][..],
                 "--reject-no-match",
             ),
-            (&["instantmenu", "--fast", "slide"][..], "--fast"),
             (&["instantmenu", "--toast", "5", "slide"][..], "--toast"),
             (&["instantmenu", "--commented", "slide"][..], "--commented"),
             (

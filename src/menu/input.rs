@@ -1,20 +1,15 @@
 //! Input pipeline shell glue: edits → smart-case → re-match → reject
-//! revert (port of `insert()`), plus stdin item loading.
+//! revert (port of `insert()`), plus the blocking stdin load used when
+//! items cannot stream (tty startup, toast mode).
 
 use std::io::Read;
 
-use super::layout::GridShape;
 use super::matcher::Item;
+use super::stream::LineParser;
 use super::transition::Transition;
 use super::Menu;
 use crate::config::Config;
 use crate::enums::{EditOp, ExitStatus};
-
-/// The items read from stdin plus the -l/-g values adjusted for their count.
-pub struct StdinItems {
-    pub items: Vec<Item>,
-    pub grid: GridShape,
-}
 
 impl Menu {
     /// Port of insert(): edit the text, re-match, and revert the edit when
@@ -40,34 +35,35 @@ impl Menu {
         t
     }
 
-    /// insert() with the configured reject_no_match behaviour.
+    /// insert() with the configured reject_no_match behaviour. While items
+    /// are still streaming in the gate is off: an empty match list means
+    /// "nothing arrived yet", not "no match", so typing must never be
+    /// rejected against a partial corpus.
     pub(super) fn insert(&mut self, op: EditOp) -> Transition {
-        let reject = self.cfg.reject_no_match;
+        let reject = self.cfg.reject_no_match && self.stream_complete();
         self.insert_op(op, reject)
     }
 
     /// -it — initial input text, applied with reject_no_match temporarily
-    /// disabled (port of the insert() call in the argv loop; items are empty
-    /// at that point, so this only seeds text/cursor/smartcase).
+    /// disabled (port of the insert() call in the argv loop; runs before any
+    /// items exist, so this only seeds text/cursor/smartcase). The seed is
+    /// remembered: a deferred --pre-match only fires if the user has not
+    /// edited the text since.
     pub fn initial_text(&mut self, s: &str) -> Option<ExitStatus> {
+        self.initial_seed = Some(s.to_string());
         let t = self.insert_op(EditOp::Insert(s), false);
         self.settle(t)
     }
 }
 
-/// read_stdin — getline-per-line semantics: split on '\n' (a final chunk
-/// without trailing newline is still an item), then strip ONE trailing
-/// '\n' or '\t' byte and cut at the first NUL like strdup would. The
-/// returned grid carries the -l/-g values adjusted for the item count.
-pub fn read_stdin(cfg: &Config) -> StdinItems {
+/// read_stdin — the blocking load for paths where streaming does not apply
+/// (interactive tty startup, toast mode). Same getline-per-line semantics as
+/// the streamed parse: split on '\n' (a final chunk without trailing newline
+/// is still an item), strip ONE trailing '\n' or '\t' byte per line, cut at
+/// the first NUL like strdup would, drop invalid UTF-8.
+pub fn read_stdin(cfg: &Config) -> Vec<Item> {
     if cfg.password || cfg.input_only || cfg.slide.is_some() {
-        return StdinItems {
-            items: Vec::new(),
-            grid: GridShape {
-                lines: 0,
-                columns: cfg.columns,
-            },
-        };
+        return Vec::new();
     }
 
     /* read each line from stdin and add it to the item list */
@@ -75,89 +71,16 @@ pub fn read_stdin(cfg: &Config) -> StdinItems {
     if std::io::stdin().read_to_end(&mut input).is_err() {
         /* keep whatever we got, like getline erroring mid-way */
     }
-    let mut items = Vec::new();
-    let input = input.strip_suffix(b"\n").unwrap_or(&input);
-    for raw in input.split(|&b| b == b'\n').filter(|_| !input.is_empty()) {
-        let raw = raw.strip_suffix(b"\t").unwrap_or(raw);
-        let cut = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
-        let Ok(line) = std::str::from_utf8(&raw[..cut]) else {
-            /* C strdup keeps invalid bytes; items are drawn as text so
-             * drop-lossy lines are the closest safe equivalent.
-             * They are not counted either, so items.len() stays the true count. */
-            continue;
-        };
+    let mut parser = LineParser::default();
+    let mut items: Vec<Item> = Vec::new();
+    for line in parser.feed(&input) {
         items.push(Item::new(line));
     }
-
-    let count = items.len() as i32;
-    StdinItems {
-        items,
-        grid: adjusted_grid(cfg.lines, cfg.columns, count),
+    for line in parser.finish() {
+        items.push(Item::new(line));
     }
-}
-
-/// The -l/-g adjustment read_stdin made in the C version: lines shrink to
-/// fit the item count, then columns shrink to the widest actually-needed
-/// grid (only when the grid is multi-column).
-pub fn adjusted_grid(lines: i32, columns: i32, count: i32) -> GridShape {
-    let i = count;
-    let lines = lines.min(i / columns + (i % columns != 0) as i32);
-    let columns = if columns != 1 && lines != 0 {
-        (i / lines + (i % lines != 0) as i32).min(columns)
-    } else {
-        columns
-    };
-    GridShape { lines, columns }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn lines_shrink_to_the_item_count() {
-        assert_eq!(
-            adjusted_grid(10, 1, 3),
-            GridShape {
-                lines: 3,
-                columns: 1
-            }
-        );
-        // a single column never shrinks further
-        assert_eq!(
-            adjusted_grid(10, 1, 0),
-            GridShape {
-                lines: 0,
-                columns: 1
-            }
-        );
+    if parser.spurious_lone_newline() {
+        items.pop();
     }
-
-    #[test]
-    fn multi_column_grids_shrink_to_fit() {
-        // 5 items, 2 columns → 3 rows needed → still 2 columns
-        assert_eq!(
-            adjusted_grid(10, 2, 5),
-            GridShape {
-                lines: 3,
-                columns: 2
-            }
-        );
-        // 4 items, 3 columns → 2 rows → 2 columns suffice
-        assert_eq!(
-            adjusted_grid(4, 3, 4),
-            GridShape {
-                lines: 2,
-                columns: 2
-            }
-        );
-        // no items: lines drop to 0, the -g value survives
-        assert_eq!(
-            adjusted_grid(5, 2, 0),
-            GridShape {
-                lines: 0,
-                columns: 2
-            }
-        );
-    }
+    items
 }
