@@ -71,9 +71,24 @@ impl Menu {
         if monitors.is_empty() {
             self.embed_geometry(root, width, &mut layout)?;
         } else {
-            let i = select_monitor(&monitors, self.cfg.monitor, self.backend.as_ref());
+            /* Follow-cursor needs the pointer for both monitor selection and
+             * placement. Fetch it once: on X11 this avoids a second request;
+             * on Wayland it bounds the temporary input-probe lifetime to one
+             * query. */
+            let follow_pointer = self
+                .cfg
+                .follow_cursor
+                .then(|| self.backend.pointer_position())
+                .flatten();
+            let i = select_monitor(
+                &monitors,
+                self.cfg.monitor,
+                self.backend.as_mut(),
+                self.cfg.follow_cursor,
+                follow_pointer,
+            );
             let monitor = monitors[i].rect;
-            self.monitor_geometry(monitor, root, width, &mut layout);
+            self.monitor_geometry(monitor, root, width, follow_pointer, &mut layout);
             self.adjust_geometry(monitor, root, &mut layout);
         }
         Ok(layout)
@@ -116,7 +131,14 @@ impl Menu {
 
     /// Geometry on a selected monitor: follow the cursor, or sit at an
     /// anchor with a pixel nudge.
-    fn monitor_geometry(&mut self, monitor: Rect, root: Size, width: i32, layout: &mut Layout) {
+    fn monitor_geometry(
+        &mut self,
+        monitor: Rect,
+        root: Size,
+        width: i32,
+        follow_pointer: Option<Point>,
+        layout: &mut Layout,
+    ) {
         if self.cfg.follow_cursor {
             if width != 0 {
                 layout.menu_width = width;
@@ -126,7 +148,7 @@ impl Menu {
                 // attributes at this point).
                 layout.menu_width = self.content_width(layout.prompt_width, root.w);
             }
-            if let Some(pointer) = self.backend.pointer_position() {
+            if let Some(pointer) = follow_pointer {
                 let mut x = pointer.x;
                 let mut y = pointer.y;
                 if x > monitor.x + (root.w - monitor.x) / 2 {
@@ -419,45 +441,188 @@ fn anchor_origin(position: Position, area: Rect, width: i32, height: i32) -> Poi
 }
 
 /// Pick the monitor from `--monitor`, the focused monitor, or the pointer.
-fn select_monitor(monitors: &[MonitorInfo], choice: MonitorChoice, backend: &dyn Backend) -> usize {
+fn select_monitor(
+    monitors: &[MonitorInfo],
+    choice: MonitorChoice,
+    backend: &mut dyn Backend,
+    pointer_first: bool,
+    preferred_pointer: Option<Point>,
+) -> usize {
     let n = monitors.len();
     if let MonitorChoice::Index(idx) = choice {
         if (idx as usize) < n {
             return idx as usize;
         }
-        /* an out-of-range index falls back to the focused monitor */
-        if let Some(focused) = backend.focused_monitor() {
-            if focused < n {
-                return focused;
-            }
-        }
+        /* Explicit means explicit: an invalid index deterministically falls
+         * back to zero and does not activate focus-tracking machinery. */
         return 0;
     }
-    /* Auto: follow keyboard focus, then the pointer */
+    /* Follow-cursor's already-fetched point takes priority over keyboard
+     * focus; otherwise the menu could be placed relative to a cursor on a
+     * different output than the selected monitor. */
+    if pointer_first {
+        return preferred_pointer
+            .and_then(|pointer| monitor_containing(monitors, pointer))
+            .unwrap_or(0);
+    }
+    /* Ordinary Auto: follow keyboard focus, then the pointer. */
     if let Some(focused) = backend.focused_monitor() {
         if focused < n {
             return focused;
         }
     }
-    let mut i = 0usize;
     if let Some(pointer) = backend.pointer_position() {
-        for (idx, monitor) in monitors.iter().enumerate() {
-            /* half-open bounds: a point on a shared monitor edge belongs to
-             * the left/top one */
-            if monitor.rect.contains_exclusive(pointer) {
-                i = idx;
-                break;
-            }
-        }
+        return monitor_containing(monitors, pointer).unwrap_or(0);
     }
-    i
+    0
+}
+
+fn monitor_containing(monitors: &[MonitorInfo], pointer: Point) -> Option<usize> {
+    monitors
+        .iter()
+        .position(|monitor| monitor.rect.contains_exclusive(pointer))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::anchor_origin;
-    use crate::config::Position;
-    use crate::geom::{Point, Rect};
+    use super::{anchor_origin, select_monitor};
+    use crate::backend::{Backend, EventPoll, MonitorInfo};
+    use crate::config::{MonitorChoice, Position};
+    use crate::geom::{Point, Rect, Size};
+    use crate::render::{Canvas, Color};
+    use std::cell::Cell;
+
+    struct GeometryBackend {
+        focused: Option<usize>,
+        pointer: Option<Point>,
+        focus_calls: Cell<usize>,
+        pointer_calls: usize,
+    }
+
+    impl Backend for GeometryBackend {
+        fn monitors(&self) -> &[MonitorInfo] {
+            &[]
+        }
+
+        fn root_size(&self) -> Size {
+            Size::new(200, 100)
+        }
+
+        fn pointer_position(&mut self) -> Option<Point> {
+            self.pointer_calls += 1;
+            self.pointer
+        }
+
+        fn focused_monitor(&self) -> Option<usize> {
+            self.focus_calls.set(self.focus_calls.get() + 1);
+            self.focused
+        }
+
+        fn create_window(
+            &mut self,
+            _rect: Rect,
+            _border_width: i32,
+            _managed: bool,
+            _grab: bool,
+            _outside_close: bool,
+            _class_hint: &str,
+            _bg: Color,
+            _border_color: Color,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn grab_focus(&mut self, _title: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn set_title(&mut self, _title: &str) {}
+
+        fn present(&mut self, _canvas: &Canvas) {}
+
+        fn poll_event(
+            &mut self,
+            _timeout: Option<std::time::Duration>,
+            _extra: &[std::os::fd::RawFd],
+        ) -> EventPoll {
+            EventPoll::Closed
+        }
+
+        fn request_selection(&mut self, _clipboard: bool) {}
+    }
+
+    fn monitors() -> Vec<MonitorInfo> {
+        vec![
+            MonitorInfo {
+                rect: Rect::new(0, 0, 100, 100),
+                name: "left".into(),
+            },
+            MonitorInfo {
+                rect: Rect::new(100, 0, 100, 100),
+                name: "right".into(),
+            },
+        ]
+    }
+
+    fn backend(focused: Option<usize>, pointer: Option<Point>) -> GeometryBackend {
+        GeometryBackend {
+            focused,
+            pointer,
+            focus_calls: Cell::new(0),
+            pointer_calls: 0,
+        }
+    }
+
+    #[test]
+    fn explicit_monitor_never_queries_focus_or_pointer() {
+        let mut backend = backend(Some(1), Some(Point::new(150, 50)));
+        assert_eq!(
+            select_monitor(
+                &monitors(),
+                MonitorChoice::Index(99),
+                &mut backend,
+                false,
+                None,
+            ),
+            0
+        );
+        assert_eq!(backend.focus_calls.get(), 0);
+        assert_eq!(backend.pointer_calls, 0);
+    }
+
+    #[test]
+    fn follow_cursor_uses_prefetched_pointer_before_focus() {
+        let mut backend = backend(Some(0), None);
+        assert_eq!(
+            select_monitor(
+                &monitors(),
+                MonitorChoice::Auto,
+                &mut backend,
+                true,
+                Some(Point::new(100, 50)),
+            ),
+            1
+        );
+        assert_eq!(backend.focus_calls.get(), 0);
+        assert_eq!(backend.pointer_calls, 0);
+    }
+
+    #[test]
+    fn auto_uses_focus_then_queries_pointer_as_fallback() {
+        let mut focused = backend(Some(1), Some(Point::new(10, 10)));
+        assert_eq!(
+            select_monitor(&monitors(), MonitorChoice::Auto, &mut focused, false, None,),
+            1
+        );
+        assert_eq!(focused.pointer_calls, 0);
+
+        let mut fallback = backend(None, Some(Point::new(150, 50)));
+        assert_eq!(
+            select_monitor(&monitors(), MonitorChoice::Auto, &mut fallback, false, None,),
+            1
+        );
+        assert_eq!(fallback.pointer_calls, 1);
+    }
 
     /// Each anchor places the window's top-left corner at the matching
     /// corner/edge-center of the area, before any nudge.

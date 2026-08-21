@@ -338,7 +338,7 @@ impl Backend for X11Backend {
         Size::new(self.root_width, self.root_height)
     }
 
-    fn pointer_position(&self) -> Option<Point> {
+    fn pointer_position(&mut self) -> Option<Point> {
         let reply = self
             .connection
             .query_pointer(self.root)

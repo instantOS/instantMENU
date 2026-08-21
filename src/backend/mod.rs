@@ -140,11 +140,14 @@ pub trait Backend {
     fn monitors(&self) -> &[MonitorInfo];
     /// Size of the root window / total output area (`drw->w/h`).
     fn root_size(&self) -> Size;
-    /// Root pointer position (`getrootptr`).
-    fn pointer_position(&self) -> Option<Point> {
+    /// Global pointer position (`getrootptr`). The Wayland implementation may
+    /// block briefly while it maps and tears down temporary input surfaces;
+    /// callers should only ask when pointer coordinates are actually needed.
+    fn pointer_position(&mut self) -> Option<Point> {
         None
     }
-    /// Monitor index of the focused window, if known (X11 only).
+    /// Monitor index of the focused window, if knowable (X11: input focus +
+    /// geometry query; Wayland: `zwlr_foreign_toplevel_management`).
     fn focused_monitor(&self) -> Option<usize> {
         None
     }
@@ -250,13 +253,21 @@ pub(crate) fn translate_key(state: &mut xkb::State, code: Keycode, pressed: bool
 /// Wayland when WAYLAND_DISPLAY is set and falls back to X11; `X11` and
 /// `Wayland` honor the explicit choice and error out instead of falling back.
 /// `embed` is the `-W` window id (X11 only; ignored on Wayland).
-pub fn open(embed: Option<u32>, choice: BackendChoice) -> Result<Box<dyn Backend>, String> {
+/// `track_focused_monitor` enables Wayland's foreign-toplevel snapshot; keep
+/// it false when geometry will use an explicit monitor or the pointer.
+pub fn open(
+    embed: Option<u32>,
+    choice: BackendChoice,
+    track_focused_monitor: bool,
+) -> Result<Box<dyn Backend>, String> {
     match choice {
         BackendChoice::X11 => Ok(Box::new(x11::X11Backend::new(embed)?)),
-        BackendChoice::Wayland => Ok(Box::new(wayland::WaylandBackend::new()?)),
+        BackendChoice::Wayland => Ok(Box::new(wayland::WaylandBackend::new(
+            track_focused_monitor,
+        )?)),
         BackendChoice::Auto => {
             if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-                match wayland::WaylandBackend::new() {
+                match wayland::WaylandBackend::new(track_focused_monitor) {
                     Ok(b) => return Ok(Box::new(b)),
                     Err(e) => {
                         eprintln!("instantmenu: wayland connection failed ({e}), trying X11")

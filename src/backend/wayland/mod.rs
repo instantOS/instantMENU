@@ -21,7 +21,12 @@ use wayland_protocols::wp::primary_selection::zv1::client::{
     zwp_primary_selection_device_manager_v1, zwp_primary_selection_device_v1,
     zwp_primary_selection_offer_v1,
 };
+use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
+use wayland_protocols::xdg::xdg_output::zv1::client::{zxdg_output_manager_v1, zxdg_output_v1};
+use wayland_protocols_wlr::foreign_toplevel::v1::client::{
+    zwlr_foreign_toplevel_handle_v1, zwlr_foreign_toplevel_manager_v1,
+};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 use xkbcommon::xkb;
 
@@ -142,6 +147,40 @@ pub(super) struct Shield {
 /// (same protocol object, different `Dispatch` impls).
 pub(super) struct ShieldTag;
 
+/// Userdata marker for the pointer-probe layer surfaces.
+pub(super) struct ProbeTag;
+
+/// A temporary fullscreen input surface mapped on demand to learn where
+/// the pointer is. Wayland only reports pointer coordinates for surfaces
+/// under the pointer, so before the menu exists there is nothing to ask —
+/// mapping an invisible surface beneath the stationary cursor makes the
+/// compositor deliver `wl_pointer.enter` with the current position. It is
+/// destroyed before [`Backend::pointer_position`] returns so it cannot
+/// intercept input during unrelated startup work.
+pub(super) struct Probe {
+    surface: wl_surface::WlSurface,
+    layer_surface: zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+    buffer: wl_buffer::WlBuffer,
+    /// Scales a 1x1 transparent buffer to the configured surface size when
+    /// wp_viewporter is available, avoiding full-output SHM buffers.
+    viewport: Option<wp_viewport::WpViewport>,
+    /// whether the first configure has been acked and the buffer attached
+    /// (a layer surface must stay bufferless until then)
+    configured: bool,
+    /// index into `outputs`; turns surface-local enter coordinates into
+    /// global ones via the output origin
+    output_index: usize,
+}
+
+/// The focus-relevant snapshot of a foreign toplevel (`activated` marks the
+/// window with keyboard focus; its entered outputs say which monitor that
+/// window is on).
+struct ToplevelInfo {
+    proxy: zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1,
+    activated: bool,
+    outputs: Vec<wl_output::WlOutput>,
+}
+
 /// Classification of which surface has pointer focus. Set at Enter; read
 /// on later events so no per-event shield scanning is needed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,6 +241,25 @@ pub struct EventState {
     primary_device: Option<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1>,
     layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
     wm_base: Option<xdg_wm_base::XdgWmBase>,
+    /// logical monitor geometry (wl_output mode sizes are physical pixels,
+    /// which misplaces everything on scaled outputs)
+    xdg_output_manager: Option<zxdg_output_manager_v1::ZxdgOutputManagerV1>,
+    xdg_outputs: Vec<zxdg_output_v1::ZxdgOutputV1>,
+    /// Optional zero-copy scaling for the temporary 1x1 pointer-probe buffers.
+    viewporter: Option<wp_viewporter::WpViewporter>,
+    /// focused-window tracking for `focused_monitor`
+    track_focused_monitor: bool,
+    foreign_manager: Option<zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1>,
+    toplevels: Vec<ToplevelInfo>,
+    /// Immutable startup snapshot. More than one entry is deliberately
+    /// treated as ambiguous by `focused_monitor`.
+    focused_outputs: Vec<wl_output::WlOutput>,
+
+    /* pointer probe: temporary input surfaces mapped only during a query */
+    probes: Vec<Probe>,
+    probe_pool: Option<(wl_shm_pool::WlShmPool, RawFd)>,
+    /// global cursor position once a probe has seen the pointer
+    probe_answer: Option<Point>,
 
     /* keyboard */
     xkb: Option<Xkb>,
@@ -248,7 +306,7 @@ pub struct EventState {
 }
 
 impl EventState {
-    fn new(queue_handle: QueueHandle<Self>) -> Self {
+    fn new(queue_handle: QueueHandle<Self>, track_focused_monitor: bool) -> Self {
         EventState {
             queue_handle,
             compositor: None,
@@ -267,6 +325,16 @@ impl EventState {
             primary_device: None,
             layer_shell: None,
             wm_base: None,
+            xdg_output_manager: None,
+            xdg_outputs: Vec::new(),
+            viewporter: None,
+            track_focused_monitor,
+            foreign_manager: None,
+            toplevels: Vec::new(),
+            focused_outputs: Vec::new(),
+            probes: Vec::new(),
+            probe_pool: None,
+            probe_answer: None,
             xkb: None,
             surface: None,
             layer_surface: None,
@@ -499,36 +567,204 @@ impl EventState {
             Self::destroy_memfd_pool(pool, fd);
         }
     }
+
+    /// Map one invisible fullscreen surface per output for the active
+    /// `pointer_position` query. No-op when there is no pointer or no
+    /// layer-shell support (the query then returns None, like before).
+    fn create_probes(&mut self) {
+        if !self.probes.is_empty() || self.probe_answer.is_some() || self.pointer.is_none() {
+            return;
+        }
+        let Some(compositor) = self.compositor.clone() else {
+            return;
+        };
+        let Some(shell) = self.layer_shell.clone() else {
+            return;
+        };
+        let qh = self.queue_handle.clone();
+        let outputs: Vec<(usize, wl_output::WlOutput, Rect)> = self
+            .outputs
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| o.info.rect.w > 0 && o.info.rect.h > 0)
+            .map(|(i, o)| (i, o.proxy.clone(), o.info.rect))
+            .collect();
+        if outputs.is_empty() {
+            return;
+        }
+
+        /* With wp_viewporter each surface needs only a 1x1 transparent
+         * buffer. The fallback uses full-size sparse buffers. All Wayland
+         * SHM sizes and offsets are signed 32-bit values, so reject layouts
+         * that cannot be represented instead of overflowing. */
+        let scaled = self.viewporter.is_some();
+        let len = if scaled {
+            outputs.len().checked_mul(4)
+        } else {
+            outputs.iter().try_fold(0usize, |total, (_, _, rect)| {
+                let bytes = (rect.w as usize)
+                    .checked_mul(rect.h as usize)?
+                    .checked_mul(4)?;
+                total.checked_add(bytes)
+            })
+        };
+        let Some(len) = len.filter(|len| *len <= i32::MAX as usize) else {
+            return;
+        };
+        let Some((pool, fd)) = self.create_memfd_pool(len) else {
+            return;
+        };
+        self.probe_pool = Some((pool.clone(), fd));
+
+        let mut offset: i32 = 0;
+        let mut probes = Vec::with_capacity(outputs.len());
+        for (idx, output, rect) in outputs {
+            let surface = compositor.create_surface(&qh, ());
+            let viewport = self.viewporter.as_ref().map(|viewporter| {
+                let viewport = viewporter.get_viewport(&surface, &qh, ());
+                viewport.set_destination(rect.w, rect.h);
+                viewport
+            });
+            let layer_surface = shell.get_layer_surface(
+                &surface,
+                Some(&output),
+                zwlr_layer_shell_v1::Layer::Top,
+                "instantmenu".to_string(),
+                &qh,
+                ProbeTag,
+            );
+            layer_surface.set_anchor(
+                zwlr_layer_surface_v1::Anchor::Top
+                    | zwlr_layer_surface_v1::Anchor::Bottom
+                    | zwlr_layer_surface_v1::Anchor::Left
+                    | zwlr_layer_surface_v1::Anchor::Right,
+            );
+            layer_surface.set_exclusive_zone(-1);
+            layer_surface
+                .set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
+            layer_surface.set_size(rect.w as u32, rect.h as u32);
+            /* the default input region is the whole surface — exactly what
+             * a probe wants */
+            surface.commit();
+            let (buffer_w, buffer_h) = if scaled { (1, 1) } else { (rect.w, rect.h) };
+            let buffer = pool.create_buffer(
+                offset,
+                buffer_w,
+                buffer_h,
+                buffer_w * 4,
+                wl_shm::Format::Argb8888,
+                &qh,
+                (),
+            );
+            offset += buffer_w * buffer_h * 4;
+            probes.push(Probe {
+                surface,
+                layer_surface,
+                buffer,
+                viewport,
+                configured: false,
+                output_index: idx,
+            });
+        }
+        self.probes = probes;
+    }
+
+    /// Destroy the probe surfaces once the position is known or the bounded
+    /// query gives up. `create_window` also calls this defensively.
+    fn destroy_probes(&mut self) {
+        for probe in self.probes.drain(..) {
+            if let Some(viewport) = probe.viewport {
+                viewport.destroy();
+            }
+            probe.layer_surface.destroy();
+            probe.surface.destroy();
+            probe.buffer.destroy();
+        }
+        if let Some((pool, fd)) = self.probe_pool.take() {
+            Self::destroy_memfd_pool(pool, fd);
+        }
+    }
+
+    /// Freeze the foreign-toplevel state into the small snapshot geometry
+    /// needs, then unsubscribe. instantmenu does not need a taskbar-style
+    /// stream of every window update for the rest of its lifetime.
+    fn finish_toplevel_snapshot(&mut self) {
+        self.focused_outputs = self
+            .toplevels
+            .iter()
+            .find(|t| t.activated)
+            .map(|t| t.outputs.clone())
+            .unwrap_or_default();
+        for toplevel in self.toplevels.drain(..) {
+            toplevel.proxy.destroy();
+        }
+        if let Some(manager) = self.foreign_manager.take() {
+            manager.stop();
+        }
+    }
+
+    fn finish_xdg_outputs(&mut self) {
+        for output in self.xdg_outputs.drain(..) {
+            output.destroy();
+        }
+        if let Some(manager) = self.xdg_output_manager.take() {
+            manager.destroy();
+        }
+    }
 }
 
 impl Drop for EventState {
     fn drop(&mut self) {
         self.destroy_pool();
         self.destroy_shields();
+        self.destroy_probes();
+        self.finish_xdg_outputs();
+        for toplevel in self.toplevels.drain(..) {
+            toplevel.proxy.destroy();
+        }
     }
 }
 
 /* ──────────────────────── Backend impl ─────────────────────────────── */
 
 impl WaylandBackend {
-    pub fn new() -> Result<WaylandBackend, String> {
+    pub fn new(track_focused_monitor: bool) -> Result<WaylandBackend, String> {
         let connection =
             Connection::connect_to_env().map_err(|e| format!("cannot connect: {e}"))?;
         let mut queue: EventQueue<EventState> = connection.new_event_queue();
         let queue_handle = queue.handle();
-        let mut state = EventState::new(queue_handle.clone());
+        let mut state = EventState::new(queue_handle.clone(), track_focused_monitor);
         let _ = connection.display().get_registry(&state.queue_handle, ());
-        /* The first sync discovers globals; the second receives events from
-         * the binds performed while dispatching the first sync. */
-        for _ in 0..2 {
-            if queue.roundtrip(&mut state).is_err() {
-                return Err("roundtrip failed".to_string());
+        /* The first sync discovers globals. Create derived xdg-output
+         * objects before the second sync so wl_output, logical-output and
+         * foreign-toplevel initial state all arrive in that existing trip. */
+        queue
+            .roundtrip(&mut state)
+            .map_err(|error| format!("registry roundtrip failed: {error}"))?;
+        if let Some(manager) = state.xdg_output_manager.clone() {
+            for (i, output) in state.outputs.iter().enumerate() {
+                state.xdg_outputs.push(manager.get_xdg_output(
+                    &output.proxy,
+                    &state.queue_handle,
+                    i,
+                ));
             }
         }
+        queue
+            .roundtrip(&mut state)
+            .map_err(|error| format!("initial-state roundtrip failed: {error}"))?;
         if state.shm.is_none() {
             return Err("compositor has no wl_shm".to_string());
         }
+
+        /* xdg-output has now refined mode pixels into logical geometry. */
         state.monitors = state.outputs.iter().map(|o| o.info.clone()).collect();
+        state.finish_xdg_outputs();
+        state.finish_toplevel_snapshot();
+        connection
+            .flush()
+            .map_err(|error| format!("initial Wayland flush failed: {error}"))?;
+
         Ok(WaylandBackend {
             connection,
             queue,
@@ -612,17 +848,13 @@ impl WaylandBackend {
             .unwrap_or(rect);
 
         let mut anchor = zwlr_layer_surface_v1::Anchor::Left;
-        let top;
-        let bottom;
-        if rect.y + rect.h / 2 >= monitor.y + monitor.h / 2 {
+        let (top, bottom) = if rect.y + rect.h / 2 >= monitor.y + monitor.h / 2 {
             anchor |= zwlr_layer_surface_v1::Anchor::Bottom;
-            top = 0;
-            bottom = (monitor.bottom() - rect.bottom()).max(0);
+            (0, (monitor.bottom() - rect.bottom()).max(0))
         } else {
             anchor |= zwlr_layer_surface_v1::Anchor::Top;
-            top = (rect.y - monitor.y).max(0);
-            bottom = 0;
-        }
+            ((rect.y - monitor.y).max(0), 0)
+        };
         let left = (rect.x - monitor.x).max(0);
 
         layer_surface.set_anchor(anchor);
@@ -744,6 +976,13 @@ fn bordered(rect: Rect, border: i32) -> Rect {
     Rect::new(rect.x, rect.y, rect.w + 2 * border, rect.h + 2 * border)
 }
 
+/// Maximum lifetime of the temporary input surfaces used by
+/// `pointer_position`. Keeping the whole probe inside this bounded call is
+/// more important than overlapping it with unrelated startup work: while
+/// mapped, the surfaces necessarily receive pointer input instead of the
+/// application beneath them.
+const PROBE_TIMEOUT_MS: u64 = 100;
+
 impl Backend for WaylandBackend {
     fn monitors(&self) -> &[MonitorInfo] {
         &self.state.monitors
@@ -768,6 +1007,66 @@ impl Backend for WaylandBackend {
         }
     }
 
+    fn pointer_position(&mut self) -> Option<Point> {
+        if let Some(pos) = self.state.probe_answer {
+            return Some(pos);
+        }
+        self.state.create_probes();
+        if self.state.probes.is_empty() {
+            return None;
+        }
+        if self.connection.flush().is_err() {
+            self.state.dead = true;
+            self.state.destroy_probes();
+            return None;
+        }
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_millis(PROBE_TIMEOUT_MS);
+        while self.state.probe_answer.is_none() && !self.state.dead {
+            let Ok(ms) = remaining_ms(start, Some(timeout)) else {
+                break;
+            };
+            let Some(guard) = self.queue.prepare_read() else {
+                /* events already queued: dispatch them, then re-check */
+                if self.queue.dispatch_pending(&mut self.state).is_err() {
+                    break;
+                }
+                continue;
+            };
+            let mut fds = [poll_in(guard.connection_fd().as_raw_fd())];
+            match poll_fds(&mut fds, ms) {
+                PollOutcome::Timeout => break,
+                PollOutcome::Closed => {
+                    self.state.dead = true;
+                    break;
+                }
+                PollOutcome::Ready => {}
+            }
+            if guard.read().is_err() {
+                self.state.dead = true;
+                break;
+            }
+            if self.queue.dispatch_pending(&mut self.state).is_err() {
+                break;
+            }
+        }
+        self.state.destroy_probes();
+        self.state.probe_answer
+    }
+
+    fn focused_monitor(&self) -> Option<usize> {
+        /* A window visible on multiple outputs has no protocol-defined
+         * primary output. Report that as ambiguous so Auto can fall back to
+         * the pointer instead of depending on arbitrary output_enter order. */
+        let [focused] = self.state.focused_outputs.as_slice() else {
+            return None;
+        };
+        self.state
+            .outputs
+            .iter()
+            .position(|output| &output.proxy == focused)
+    }
+
     fn create_window(
         &mut self,
         rect: Rect,
@@ -779,6 +1078,8 @@ impl Backend for WaylandBackend {
         _bg: Color,
         border_color: Color,
     ) -> Result<(), String> {
+        /* Defensive cleanup if a future probe path exits unexpectedly. */
+        self.state.destroy_probes();
         let border_width = border_width.max(0);
         self.state.border_width = border_width;
         self.state.border_color = border_color;

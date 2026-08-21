@@ -54,7 +54,7 @@ impl Canvas {
         let row_start = y0 * stride + x0 * 4;
         let row_end = y0 * stride + x1 * 4;
         let bgra = [rgba[2], rgba[1], rgba[0], rgba[3]];
-        for pixel in self.data[row_start..row_end].chunks_exact_mut(4) {
+        for pixel in self.data[row_start..row_end].as_chunks_mut::<4>().0 {
             pixel.copy_from_slice(&bgra);
         }
         for row in y0 + 1..y1 {

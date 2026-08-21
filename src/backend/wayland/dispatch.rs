@@ -13,13 +13,19 @@ use wayland_protocols::wp::primary_selection::zv1::client::{
     zwp_primary_selection_device_manager_v1, zwp_primary_selection_device_v1,
     zwp_primary_selection_offer_v1,
 };
+use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
+use wayland_protocols::xdg::xdg_output::zv1::client::{zxdg_output_manager_v1, zxdg_output_v1};
+use wayland_protocols_wlr::foreign_toplevel::v1::client::{
+    zwlr_foreign_toplevel_handle_v1, zwlr_foreign_toplevel_manager_v1,
+};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 use xkbcommon::xkb::Keycode;
 
 use super::selection::load_keymap;
 use super::{
-    BackendEvent, EventState, MonitorInfo, OfferTracker, OutputEntry, PointerFocus, ShieldTag,
+    BackendEvent, EventState, MonitorInfo, OfferTracker, OutputEntry, PointerFocus, ProbeTag,
+    ShieldTag, ToplevelInfo,
 };
 use crate::backend::{translate_key, InputSource, MouseButton};
 use crate::geom::{Point, Rect};
@@ -54,6 +60,9 @@ noop_dispatch!(
     wl_data_device_manager::WlDataDeviceManager,
     zwp_primary_selection_device_manager_v1::ZwpPrimarySelectionDeviceManagerV1,
     zwlr_layer_shell_v1::ZwlrLayerShellV1,
+    zxdg_output_manager_v1::ZxdgOutputManagerV1,
+    wp_viewporter::WpViewporter,
+    wp_viewport::WpViewport,
     wl_surface::WlSurface,
 );
 
@@ -103,6 +112,19 @@ impl Dispatch<wl_registry::WlRegistry, ()> for EventState {
                     }
                     "zwlr_layer_shell_v1" => {
                         state.layer_shell = Some(registry.bind(name, max_version.min(4), qh, ()))
+                    }
+                    "zxdg_output_manager_v1" => {
+                        state.xdg_output_manager =
+                            Some(registry.bind(name, max_version.min(3), qh, ()))
+                    }
+                    "wp_viewporter" => state.viewporter = Some(registry.bind(name, 1, qh, ())),
+                    "zwlr_foreign_toplevel_manager_v1" => {
+                        /* Focus state and output_enter/output_leave are all
+                         * present in v1; v2 only adds fullscreen controls. */
+                        if state.track_focused_monitor {
+                            state.foreign_manager =
+                                Some(registry.bind(name, max_version.min(3), qh, ()))
+                        }
                     }
                     "xdg_wm_base" => {
                         state.wm_base = Some(registry.bind(name, max_version.min(6), qh, ()))
@@ -270,6 +292,21 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
                     PointerFocus::Menu
                 } else if state.shields.iter().any(|s| s.surface == surface) {
                     PointerFocus::Shield
+                } else if let Some(probe) = state.probes.iter().find(|p| p.surface == surface) {
+                    /* the probes exist only to learn the cursor position:
+                     * the enter coordinates are surface-local, so add the
+                     * output origin (surface coordinates are 1:1 with the
+                     * logical space this backend works in) */
+                    let origin = state
+                        .outputs
+                        .get(probe.output_index)
+                        .map(|o| o.info.rect.origin())
+                        .unwrap_or_else(|| Point::new(0, 0));
+                    state.probe_answer = Some(Point::new(
+                        origin.x + surface_x as i32,
+                        origin.y + surface_y as i32,
+                    ));
+                    PointerFocus::None
                 } else {
                     PointerFocus::None
                 };
@@ -390,6 +427,159 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for EventState {
                 state.events.push_back(BackendEvent::Destroyed);
             }
             _ => {}
+        }
+    }
+}
+
+/// xdg_output logical geometry overrides (the `usize` userdata is the index
+/// into `outputs` the xdg_output was created for). wl_output mode sizes are
+/// physical pixels; these events carry the logical size placement math
+/// needs, which also makes scaled outputs lay out correctly.
+impl Dispatch<zxdg_output_v1::ZxdgOutputV1, usize> for EventState {
+    fn event(
+        state: &mut Self,
+        _proxy: &zxdg_output_v1::ZxdgOutputV1,
+        event: zxdg_output_v1::Event,
+        data: &usize,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        let Some(output) = state.outputs.get_mut(*data) else {
+            return;
+        };
+        match event {
+            zxdg_output_v1::Event::LogicalPosition { x, y } => {
+                output.info.rect.x = x;
+                output.info.rect.y = y;
+            }
+            zxdg_output_v1::Event::LogicalSize { width, height } if width > 0 && height > 0 => {
+                output.info.rect.w = width;
+                output.info.rect.h = height;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Foreign toplevels: track which window is activated (keyboard focus) and
+/// which outputs it has entered — together those answer
+/// `focused_monitor`.
+impl Dispatch<zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1, ()> for EventState {
+    fn event(
+        state: &mut Self,
+        _proxy: &zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1,
+        event: zwlr_foreign_toplevel_manager_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwlr_foreign_toplevel_manager_v1::Event::Toplevel { toplevel } => {
+                state.toplevels.push(ToplevelInfo {
+                    proxy: toplevel,
+                    activated: false,
+                    outputs: Vec::new(),
+                });
+            }
+            zwlr_foreign_toplevel_manager_v1::Event::Finished => {
+                for toplevel in state.toplevels.drain(..) {
+                    toplevel.proxy.destroy();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    wayland_client::event_created_child!(EventState, zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1, [
+        zwlr_foreign_toplevel_manager_v1::EVT_TOPLEVEL_OPCODE => (
+            zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1,
+            ()
+        ),
+    ]);
+}
+
+impl Dispatch<zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1, ()> for EventState {
+    fn event(
+        state: &mut Self,
+        proxy: &zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1,
+        event: zwlr_foreign_toplevel_handle_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        let Some(i) = state.toplevels.iter().position(|t| t.proxy == *proxy) else {
+            return;
+        };
+        match event {
+            zwlr_foreign_toplevel_handle_v1::Event::State { state: states } => {
+                state.toplevels[i].activated = states_contain_activated(&states);
+            }
+            zwlr_foreign_toplevel_handle_v1::Event::OutputEnter { output } => {
+                let toplevel = &mut state.toplevels[i];
+                if !toplevel.outputs.contains(&output) {
+                    toplevel.outputs.push(output);
+                }
+            }
+            zwlr_foreign_toplevel_handle_v1::Event::OutputLeave { output } => {
+                state.toplevels[i].outputs.retain(|o| o != &output);
+            }
+            zwlr_foreign_toplevel_handle_v1::Event::Closed => {
+                state.toplevels.remove(i).proxy.destroy();
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Whether a `state` array contains ACTIVATED (2). The array is a run of
+/// u32s in native endianness.
+fn states_contain_activated(bytes: &[u8]) -> bool {
+    bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .any(|bytes| u32::from_ne_bytes(*bytes) == 2)
+}
+
+/// Probe layer surfaces (userdata [`ProbeTag`]): ack the configure, then
+/// attach the transparent buffer — only a mapped surface receives
+/// `wl_pointer.enter`, and a layer surface must stay bufferless until its
+/// first configure has been acked.
+impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ProbeTag> for EventState {
+    fn event(
+        state: &mut Self,
+        surface: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+        event: zwlr_layer_surface_v1::Event,
+        _data: &ProbeTag,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let zwlr_layer_surface_v1::Event::Configure {
+            serial,
+            width,
+            height,
+        } = event
+        {
+            surface.ack_configure(serial);
+            if let Some(probe) = state
+                .probes
+                .iter_mut()
+                .find(|p| &p.layer_surface == surface)
+            {
+                if !probe.configured {
+                    probe.configured = true;
+                    if let (Some(viewport), Ok(width), Ok(height)) =
+                        (&probe.viewport, i32::try_from(width), i32::try_from(height))
+                    {
+                        if width > 0 && height > 0 {
+                            viewport.set_destination(width, height);
+                        }
+                    }
+                    let buffer = probe.buffer.clone();
+                    probe.surface.attach(Some(&buffer), 0, 0);
+                    probe.surface.commit();
+                }
+            }
         }
     }
 }
@@ -630,5 +820,30 @@ fn evdev_button(code: u32) -> Option<MouseButton> {
         0x111 => Some(MouseButton::Right),
         0x112 => Some(MouseButton::Middle),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::states_contain_activated;
+
+    fn states(values: &[u32]) -> Vec<u8> {
+        values
+            .iter()
+            .flat_map(|value| value.to_ne_bytes())
+            .collect()
+    }
+
+    #[test]
+    fn foreign_toplevel_state_finds_activated_anywhere() {
+        assert!(states_contain_activated(&states(&[0, 3, 2])));
+        assert!(!states_contain_activated(&states(&[0, 1, 3])));
+    }
+
+    #[test]
+    fn foreign_toplevel_state_ignores_incomplete_trailing_word() {
+        let mut bytes = states(&[1]);
+        bytes.extend_from_slice(&2_u32.to_ne_bytes()[..3]);
+        assert!(!states_contain_activated(&bytes));
     }
 }

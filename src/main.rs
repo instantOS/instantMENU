@@ -5,7 +5,7 @@
 use clap::Parser;
 use instantmenu::backend;
 use instantmenu::cli;
-use instantmenu::config::{Config, LineHeight, SlideSettings};
+use instantmenu::config::{Config, LineHeight, MonitorChoice, SlideSettings};
 use instantmenu::enums::{ColorRole, ExitStatus, Scheme};
 use instantmenu::menu::{self, Menu};
 use instantmenu::render::Renderer;
@@ -31,10 +31,12 @@ fn main() {
 
     /* open backend (wayland by default when WAYLAND_DISPLAY is set;
      * --backend x11/wayland forces the choice) */
-    let mut backend = backend::open(cfg.embed, args.window.backend).unwrap_or_else(|e| {
-        eprintln!("instantmenu: {e}");
-        ExitStatus::Failure.exit();
-    });
+    let track_focused_monitor = cfg.monitor == MonitorChoice::Auto && !cfg.follow_cursor;
+    let mut backend = backend::open(cfg.embed, args.window.backend, track_focused_monitor)
+        .unwrap_or_else(|e| {
+            eprintln!("instantmenu: {e}");
+            ExitStatus::Failure.exit();
+        });
 
     /* readxresources(): X resources are the base layer under the CLI */
     apply_resources(backend.as_ref(), &mut cfg);
