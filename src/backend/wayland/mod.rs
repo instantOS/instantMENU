@@ -282,7 +282,9 @@ pub struct EventState {
     /// proxy destroys the callback, so the `done` event would never arrive
     /// and `wait_frame` would block forever.
     frame_callback: Option<wl_callback::WlCallback>,
-    /// canvas copy drawn once the first Configure arrives
+    /// Latest canvas awaiting a drawable buffer. Before the first Configure
+    /// this is the initial frame; later it also coalesces redraws while both
+    /// SHM slots are owned by the compositor. New frames replace old ones.
     pending_frame: Option<(Vec<u8>, i32, i32)>,
 
     pool: Option<ShmPool>,
@@ -374,6 +376,9 @@ impl EventState {
             self.pending_frame = Some((bgra.to_vec(), w, h));
             return;
         }
+        /* This call is newer than any previously queued canvas. If it cannot
+         * acquire a slot below it will queue itself again. */
+        self.pending_frame = None;
         let content_w = w.max(1) as usize;
         let content_h = h.max(1) as usize;
         let border = self.border_width.max(0) as usize;
@@ -403,7 +408,11 @@ impl EventState {
             None => {
                 let offset = pool.slots.len() * needed;
                 if offset + needed > pool.len {
-                    return; // pool full and nothing released: drop the frame
+                    /* Never leave stale pixels indefinitely. The buffer release
+                     * handler submits the newest queued frame; intermediate
+                     * frames are intentionally coalesced. */
+                    self.pending_frame = Some((bgra.to_vec(), w, h));
+                    return;
                 }
                 let buffer = pool.pool.create_buffer(
                     offset as i32,
@@ -838,33 +847,22 @@ impl WaylandBackend {
             (),
         );
 
-        /* translate the X11-style absolute geometry into an anchor and
-         * margins on the chosen output: anchor the edge the menu sits on,
-         * offset from the left; set_size is then honored for both axes */
+        /* Translate the core's absolute rectangle into layer-shell geometry.
+         * The core owns placement, so use one stable top-left coordinate
+         * system rather than choosing an anchor from the initial height.
+         * Choosing Top/Bottom dynamically made later streamed resizes preserve
+         * the old edge while the core recomputed a new centered rectangle. */
         let monitor = state
             .outputs
             .get(output_index)
             .map(|o| o.info.rect)
             .unwrap_or(rect);
-
-        let mut anchor = zwlr_layer_surface_v1::Anchor::Left;
-        let (top, bottom) = if rect.y + rect.h / 2 >= monitor.y + monitor.h / 2 {
-            anchor |= zwlr_layer_surface_v1::Anchor::Bottom;
-            (0, (monitor.bottom() - rect.bottom()).max(0))
-        } else {
-            anchor |= zwlr_layer_surface_v1::Anchor::Top;
-            ((rect.y - monitor.y).max(0), 0)
-        };
-        let left = (rect.x - monitor.x).max(0);
-
-        layer_surface.set_anchor(anchor);
-        layer_surface.set_margin(top, 0, bottom, left);
+        place_layer(&layer_surface, rect, monitor);
         layer_surface.set_keyboard_interactivity(if grab {
             zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive
         } else {
             zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand
         });
-        layer_surface.set_size(rect.w.max(1) as u32, rect.h.max(1) as u32);
         surface.commit();
         state.surface = Some(surface.clone());
         state.layer_surface = Some(layer_surface);
@@ -974,6 +972,25 @@ impl WaylandBackend {
 /// footprint; X11 gets its border from the server, Wayland paints it).
 fn bordered(rect: Rect, border: i32) -> Rect {
     Rect::new(rect.x, rect.y, rect.w + 2 * border, rect.h + 2 * border)
+}
+
+/// Express an absolute core rectangle as layer-shell state. Keeping the
+/// anchor fixed makes move+resize an exact operation: both initial creation
+/// and every streamed reflow update the same top/left margins and size.
+fn place_layer(
+    layer_surface: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+    rect: Rect,
+    monitor: Rect,
+) {
+    layer_surface
+        .set_anchor(zwlr_layer_surface_v1::Anchor::Top | zwlr_layer_surface_v1::Anchor::Left);
+    let (top, left) = layer_margins(rect, monitor);
+    layer_surface.set_margin(top, 0, 0, left);
+    layer_surface.set_size(rect.w.max(1) as u32, rect.h.max(1) as u32);
+}
+
+fn layer_margins(rect: Rect, monitor: Rect) -> (i32, i32) {
+    ((rect.y - monitor.y).max(0), (rect.x - monitor.x).max(0))
 }
 
 /// Maximum lifetime of the temporary input surfaces used by
@@ -1124,11 +1141,15 @@ impl Backend for WaylandBackend {
         let full = bordered(rect, self.state.border_width);
         let w = full.w.max(1);
         let h = full.h.max(1);
+        let output_index = self.state.output_for_point(full.origin());
+        let monitor = self
+            .state
+            .outputs
+            .get(output_index)
+            .map(|o| o.info.rect)
+            .unwrap_or(full);
         if let Some(layer_surface) = &self.state.layer_surface {
-            /* the anchor/margins from create_layer stay valid: a top-anchored
-             * surface grows downward and a bottom-anchored one grows upward,
-             * which is exactly what reflowing the item grid wants */
-            layer_surface.set_size(w as u32, h as u32);
+            place_layer(layer_surface, Rect::new(full.x, full.y, w, h), monitor);
             if let Some(surface) = &self.state.surface {
                 surface.commit();
             }
@@ -1284,5 +1305,34 @@ impl Backend for WaylandBackend {
         /* flush so the compositor actually receives the request and writes
          * to the pipe (next_event() polls it only after this) */
         let _ = self.connection.flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::layer_margins;
+    use crate::geom::Rect;
+
+    #[test]
+    fn layer_margins_follow_every_absolute_reflow() {
+        let monitor = Rect::new(100, 50, 1600, 900);
+        let initial = Rect::new(450, 480, 900, 30);
+        let grown = Rect::new(450, 340, 900, 310);
+
+        assert_eq!(layer_margins(initial, monitor), (430, 350));
+        assert_eq!(layer_margins(grown, monitor), (290, 350));
+    }
+
+    #[test]
+    fn layer_margins_are_monitor_local_and_clamped() {
+        let monitor = Rect::new(-1920, -1080, 1920, 1080);
+        assert_eq!(
+            layer_margins(Rect::new(-1800, -1000, 600, 300), monitor),
+            (80, 120)
+        );
+        assert_eq!(
+            layer_margins(Rect::new(-2000, -1200, 600, 300), monitor),
+            (0, 0)
+        );
     }
 }

@@ -310,7 +310,8 @@ pub struct WindowArgs {
     /// Select monitor by index.
     ///
     /// Monitor numbers start from 0. `auto` follows keyboard focus, then
-    /// the pointer (the default).
+    /// uses the first monitor (the default). `--follow-cursor` explicitly
+    /// selects the monitor containing the pointer.
     #[arg(
         long,
         short = 'm',

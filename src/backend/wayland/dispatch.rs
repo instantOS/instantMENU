@@ -692,12 +692,22 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for EventState {
         _qh: &QueueHandle<Self>,
     ) {
         if let wl_buffer::Event::Release = event {
+            let mut released = false;
             if let Some(pool) = &mut state.pool {
                 for slot in &mut pool.slots {
                     if slot.buffer == *buffer {
                         slot.released = true;
+                        released = true;
                         break;
                     }
+                }
+            }
+            /* A redraw that arrived while both slots were busy is the latest
+             * authoritative canvas. Submit it as soon as a slot becomes
+             * reusable instead of waiting for unrelated user input. */
+            if released {
+                if let Some((frame, w, h)) = state.pending_frame.take() {
+                    state.draw(&frame, w, h);
                 }
             }
         }

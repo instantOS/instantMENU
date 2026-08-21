@@ -1,7 +1,7 @@
 //! Window geometry, monitor selection and menu setup. Computes the
-//! immutable [`Layout`] once; the C version's mutations of the config
-//! (clamped lines, normalized offsets, resolved negative width) happen in
-//! locals here instead.
+//! complete [`Layout`] at setup and whenever streamed input changes the grid;
+//! the C version's mutations of the config (clamped lines, normalized offsets,
+//! resolved negative width) happen in locals here instead.
 
 use super::layout::Layout;
 use super::Menu;
@@ -15,11 +15,10 @@ impl Menu {
     /// Returns Some(status) when the menu cannot start, or an early
     /// instant/commented pick already ended it.
     pub fn setup(&mut self) -> Option<ExitStatus> {
-        let mut layout = match self.compute_layout() {
+        let layout = match self.compute_layout() {
             Ok(layout) => layout,
             Err(status) => return Some(status),
         };
-        layout.input_width = layout.menu_width / if self.cfg.commented { 10 } else { 3 };
         self.layout = layout;
 
         let t = self.do_match();
@@ -91,6 +90,11 @@ impl Menu {
             self.monitor_geometry(monitor, width, follow_pointer, &mut layout);
             self.adjust_geometry(monitor, &mut layout);
         }
+        /* Every Layout leaving this function is complete. Keeping this out of
+         * setup() matters because streamed input replaces the Layout during
+         * reflow; a partially-derived replacement used to silently reset the
+         * input width to zero. */
+        layout.input_width = layout.menu_width / if self.cfg.commented { 10 } else { 3 };
         Ok(layout)
     }
 
@@ -402,13 +406,18 @@ impl Menu {
         let shape_changed = rect_moved
             || new_layout.lines != self.layout.lines
             || new_layout.columns != self.layout.columns;
-        if !shape_changed {
-            return;
-        }
-        self.layout = new_layout;
-        if rect_moved {
-            self.canvas.resize(Size::new(rect.w.max(1), rect.h.max(1)));
-            self.backend.resize_window(rect);
+        if shape_changed {
+            self.layout = new_layout;
+            if rect_moved {
+                self.canvas.resize(Size::new(rect.w.max(1), rect.h.max(1)));
+                self.backend.resize_window(rect);
+            }
+            /* Paging is derived from Layout. do_match() may have calculated it
+             * immediately before this reflow against the old (often initial
+             * horizontal) shape, so installing a new Layout and leaving the
+             * old page boundary alive is never valid. Drawing and hit-testing
+             * both consume this boundary. */
+            self.recalc_paging();
         }
     }
 }
@@ -461,7 +470,10 @@ fn clamp_origin_to_monitor(origin: Point, menu: Size, monitor: Rect, border: i32
     Point::new(x, y)
 }
 
-/// Pick the monitor from `--monitor`, the focused monitor, or the pointer.
+/// Pick the monitor from `--monitor` or the focused monitor. Pointer probing
+/// is reserved for explicit follow-cursor placement: ordinary startup must
+/// not map temporary fullscreen surfaces and synchronously wait just to choose
+/// a fallback monitor.
 fn select_monitor(
     monitors: &[MonitorInfo],
     choice: MonitorChoice,
@@ -486,14 +498,13 @@ fn select_monitor(
             .and_then(|pointer| monitor_containing(monitors, pointer))
             .unwrap_or(0);
     }
-    /* Ordinary Auto: follow keyboard focus, then the pointer. */
+    /* Ordinary Auto: follow keyboard focus, then deterministically use the
+     * first output. A pointer lookup on Wayland is an active, blocking probe,
+     * not a cheap fallback query. */
     if let Some(focused) = backend.focused_monitor() {
         if focused < n {
             return focused;
         }
-    }
-    if let Some(pointer) = backend.pointer_position() {
-        return monitor_containing(monitors, pointer).unwrap_or(0);
     }
     0
 }
@@ -629,7 +640,7 @@ mod tests {
     }
 
     #[test]
-    fn auto_uses_focus_then_queries_pointer_as_fallback() {
+    fn auto_uses_focus_then_falls_back_without_pointer_probe() {
         let mut focused = backend(Some(1), Some(Point::new(10, 10)));
         assert_eq!(
             select_monitor(&monitors(), MonitorChoice::Auto, &mut focused, false, None,),
@@ -640,9 +651,9 @@ mod tests {
         let mut fallback = backend(None, Some(Point::new(150, 50)));
         assert_eq!(
             select_monitor(&monitors(), MonitorChoice::Auto, &mut fallback, false, None,),
-            1
+            0
         );
-        assert_eq!(fallback.pointer_calls, 1);
+        assert_eq!(fallback.pointer_calls, 0);
     }
 
     /// Each anchor places the window's top-left corner at the matching

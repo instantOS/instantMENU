@@ -71,7 +71,7 @@ impl LineHeight {
 /// Monitor selection (`--monitor`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MonitorChoice {
-    /// Follow keyboard focus, then the pointer.
+    /// Follow keyboard focus, then use the first monitor.
     Auto,
     /// A specific monitor index (0-based).
     Index(u32),
@@ -238,7 +238,7 @@ pub struct Config {
     pub reject_no_match: bool,
     /* --commented option; instantASSIST mode */
     pub commented: bool,
-    /* -m option; monitor index or auto (focus, then pointer) */
+    /* -m option; monitor index or auto (focus, then first monitor) */
     pub monitor: MonitorChoice,
     /* -x option: horizontal nudge from the anchor */
     pub x_offset: i32,

@@ -834,9 +834,11 @@ fn run_destroyed_exits_with_failure() {
     assert_eq!(menu.run(), ExitStatus::Failure);
 }
 
-/// Motion is throttled to ~60fps: events closer than one frame are dropped.
+/// Every crossed row is observed, including the final event before the
+/// pointer stops. Timestamp throttling used to drop the second event here and
+/// leave the highlight permanently stale.
 #[test]
-fn run_motion_is_throttled() {
+fn run_motion_does_not_drop_the_final_position() {
     let (mut menu, stub, _out) = menu_with(Config::default(), &["alpha", "beta"]);
     let rects = menu.horizontal_item_rects(0);
     let item0 = Point::new(rects[0].1.x + 5, rects[0].1.y + 5);
@@ -847,25 +849,9 @@ fn run_motion_is_throttled() {
         pos: item1,
         source: InputSource::Menu,
     });
-    // 10ms later: within the frame budget, must be dropped
+    // 10ms later: still the authoritative latest pointer position
     stub.push(BackendEvent::Motion {
         time: 1010,
-        pos: item0,
-        source: InputSource::Menu,
-    });
-    stub.key(ks::KEY_Escape, M_NONE, "");
-    assert_eq!(menu.run(), ExitStatus::Failure);
-    assert_eq!(menu.selection.selected, Some(1));
-
-    // well past the budget, the same event applies
-    let (mut menu, stub, _out) = menu_with(Config::default(), &["alpha", "beta"]);
-    stub.push(BackendEvent::Motion {
-        time: 1000,
-        pos: item1,
-        source: InputSource::Menu,
-    });
-    stub.push(BackendEvent::Motion {
-        time: 2000,
         pos: item0,
         source: InputSource::Menu,
     });
@@ -1435,6 +1421,69 @@ fn reflow_resizes_the_window_when_the_grid_grows() {
     let resizes = stub.state().resizes.clone();
     assert_eq!(resizes.len(), 1);
     assert_eq!(resizes[0].h, menu.layout.menu_height);
+    assert_eq!(menu.layout.input_width, menu.layout.menu_width / 3);
+}
+
+/// Regression for the streamed smartrun startup: setup begins with no items
+/// and therefore a horizontal one-row layout. The completed corpus changes it
+/// to a ten-row list; paging and hover must use that new shape immediately,
+/// before any PageDown/PageUp workaround.
+#[test]
+fn streamed_reflow_recalculates_visible_rows_and_hit_testing() {
+    let cfg = Config {
+        lines: 10,
+        width: Width::Fixed(900),
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &[]);
+    assert!(menu.setup().is_none());
+    assert_eq!(menu.layout.lines, 0);
+
+    menu.add_items((0..12).map(|i| Item::new(format!("item-{i}"))).collect());
+    assert!(menu.finalize_stream().is_none());
+
+    assert_eq!(menu.layout.lines, 10);
+    assert_eq!(menu.paging.next, Some(10));
+    let header = menu.header();
+    let last_visible = menu.layout.grid_cell_rect(9, header.content_x);
+    let normal = menu.renderer.color_scheme(Scheme::Normal).bg.channels();
+    let normal_bgra = [normal[2], normal[1], normal[0], normal[3]];
+    let stride = menu.canvas.width as usize * 4;
+    let painted = (last_visible.y..last_visible.bottom()).any(|y| {
+        let start = y as usize * stride + last_visible.x.max(0) as usize * 4;
+        let end = y as usize * stride + last_visible.right().min(menu.canvas.width) as usize * 4;
+        menu.canvas.data[start..end]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|pixel| pixel != &normal_bgra)
+    });
+    assert!(painted, "the tenth row must be painted on the first frame");
+    assert_eq!(
+        menu.set_selection(Point::new(last_visible.x + 1, last_visible.y + 1)),
+        Transition::Redraw
+    );
+    assert_eq!(menu.selection.selected, Some(9));
+}
+
+/// Deferred preselection is another paging consumer: it must walk the final
+/// ten-row page, not turn at the stale horizontal boundary from empty setup.
+#[test]
+fn streamed_preselection_uses_the_final_layout() {
+    let cfg = Config {
+        lines: 10,
+        preselected: 9,
+        width: Width::Fixed(900),
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &[]);
+    assert!(menu.setup().is_none());
+    menu.add_items((0..12).map(|i| Item::new(format!("item-{i}"))).collect());
+
+    assert!(menu.finalize_stream().is_none());
+    assert_eq!(menu.selection.selected, Some(9));
+    assert_eq!(menu.selection.current, Some(0));
+    assert_eq!(menu.paging.next, Some(10));
 }
 
 /// A grid change that keeps the window rectangle identical (columns grow

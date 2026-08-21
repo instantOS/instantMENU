@@ -102,7 +102,6 @@ impl Menu {
     pub(in crate::menu) fn run_slide(&mut self) -> ExitStatus {
         self.dispatch_slide_command();
 
-        let mut last_time: u32 = 0;
         loop {
             let Some(ev) = self.backend.next_event() else {
                 return ExitStatus::Failure;
@@ -119,12 +118,7 @@ impl Menu {
                 } => self.slide_button(button, mods, pos),
                 BackendEvent::ButtonRelease { button, pos, .. } => self.slide_release(button, pos),
                 BackendEvent::Scroll { delta } => self.slide_scroll(delta),
-                BackendEvent::Motion { time, pos, .. } => {
-                    if Menu::motion_throttled(&mut last_time, time) {
-                        continue;
-                    }
-                    self.slide_motion(pos)
-                }
+                BackendEvent::Motion { pos, .. } => self.slide_motion(pos),
                 BackendEvent::Destroyed => return ExitStatus::Failure,
                 BackendEvent::Expose => {
                     self.backend.present(&self.canvas);

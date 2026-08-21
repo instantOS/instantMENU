@@ -216,14 +216,14 @@ impl Menu {
     }
 
     /// A batch settled: resolve fonts for the new characters in one
-    /// fontconfig pass, re-match against the grown corpus, resize if the
-    /// derived grid changed, redraw once. Pick conclusions stay deferred
-    /// while the corpus is incomplete.
+    /// fontconfig pass, install the layout derived from the grown corpus,
+    /// re-match/paginate against that layout, and redraw once. Pick
+    /// conclusions stay deferred while the corpus is incomplete.
     pub(super) fn settle_stream(&mut self) {
         let chars = std::mem::take(&mut self.pending_chars);
         self.renderer.add_fallbacks(&chars);
-        let _ = self.do_match();
         self.reflow();
+        let _ = self.do_match();
         self.draw_menu();
         self.gate.reset();
         self.stream_dirty = false;
@@ -237,6 +237,10 @@ impl Menu {
         self.stream_finalized = true;
         let chars = std::mem::take(&mut self.pending_chars);
         self.renderer.add_fallbacks(&chars);
+        /* Layout precedes every consumer derived from it. In particular,
+         * do_match calculates page boundaries and deferred preselection may
+         * cross them; neither may run against the initial empty layout. */
+        self.reflow();
         let t = self.do_match();
         if let Some(status) = self.perform(t) {
             return Some(status);
@@ -245,7 +249,6 @@ impl Menu {
             return Some(status);
         }
         self.apply_deferred_preselect();
-        self.reflow();
         self.draw_menu();
         self.stream_dirty = false;
         None

@@ -455,17 +455,6 @@ impl Menu {
 
     /* ── output helpers ─────────────────────────────────────────────────── */
 
-    /// Motion throttle: true when `time` is within one 60 Hz frame of the
-    /// previously accepted timestamp (the event should be dropped). The
-    /// wrapping subtraction is correct across the u32 server-time wrap.
-    pub(in crate::menu) fn motion_throttled(last: &mut u32, time: u32) -> bool {
-        if time.wrapping_sub(*last) <= 1000 / 60 {
-            return true;
-        }
-        *last = time;
-        false
-    }
-
     /// Emit a selection line. Recording runs after the line is out the door
     /// so cache I/O never delays the selection. Password input and slider
     /// values are never recorded (the CLI rejects --frecency-cache for

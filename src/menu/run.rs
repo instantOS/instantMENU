@@ -52,7 +52,6 @@ impl Menu {
             self.drain_stdin();
         }
 
-        let mut last_time: u32 = 0;
         let mut preselected = self.cfg.preselected;
         /* when streaming, --preselect applies at EOF against the full list */
         let deferred_preselect = self.stream_fd >= 0;
@@ -96,12 +95,11 @@ impl Menu {
             };
 
             let t = match ev {
-                BackendEvent::Motion { time, pos, .. } => {
-                    if Menu::motion_throttled(&mut last_time, time) {
-                        continue;
-                    }
-                    self.set_selection(pos)
-                }
+                /* set_selection is already cheap within a row (Nop), and a
+                 * changed row redraws once. Dropping motion by timestamp can
+                 * discard the final event before the pointer stops, leaving
+                 * a permanently stale highlight. */
+                BackendEvent::Motion { pos, .. } => self.set_selection(pos),
                 BackendEvent::Destroyed => return ExitStatus::Failure,
                 BackendEvent::ButtonPress {
                     source: InputSource::External,
