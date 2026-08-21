@@ -91,21 +91,26 @@ pub(super) fn start_transfer<T: OfferReceive>(
 pub(super) fn pump_offer<T>(slot: &mut Option<(T, OfferTracker)>) -> Option<String> {
     let (_, tracker) = slot.as_mut()?;
     let fd = tracker.read_fd?;
+    /// Close out a finished (or fatally errored) transfer and hand over
+    /// everything accumulated so far. Taking `pending` matters: the offer
+    /// object outlives one paste, and the next transfer from the same offer
+    /// must not append to this one's leftovers.
+    fn finish(tracker: &mut OfferTracker, fd: RawFd) -> String {
+        unsafe { libc::close(fd) };
+        tracker.read_fd = None;
+        String::from_utf8_lossy(&std::mem::take(&mut tracker.pending)).into_owned()
+    }
     let mut buf = [0u8; 4096];
     loop {
         let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
         if n > 0 {
             tracker.pending.extend_from_slice(&buf[..n as usize]);
         } else if n == 0 {
-            unsafe { libc::close(fd) };
-            tracker.read_fd = None;
-            return Some(String::from_utf8_lossy(&tracker.pending).into_owned());
+            return Some(finish(tracker, fd));
         } else {
             let err = std::io::Error::last_os_error();
             if err.kind() != std::io::ErrorKind::WouldBlock {
-                unsafe { libc::close(fd) };
-                tracker.read_fd = None;
-                return Some(String::from_utf8_lossy(&tracker.pending).into_owned());
+                return Some(finish(tracker, fd));
             }
             return None; // more to come later
         }
