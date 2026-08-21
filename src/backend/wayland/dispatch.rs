@@ -22,12 +22,12 @@ use wayland_protocols_wlr::foreign_toplevel::v1::client::{
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 use xkbcommon::xkb::Keycode;
 
-use super::selection::load_keymap;
-use super::{
-    BackendEvent, EventState, MonitorInfo, OfferTracker, OutputEntry, PointerFocus, ProbeTag,
-    ShieldTag, ToplevelInfo,
-};
-use crate::backend::{translate_key, InputSource, MouseButton};
+use super::keyboard::load_keymap;
+use super::probe::ProbeTag;
+use super::selection::OfferTracker;
+use super::shield::ShieldTag;
+use super::state::{EventState, OutputEntry, PointerFocus, ToplevelInfo};
+use crate::backend::{translate_key, BackendEvent, InputSource, MonitorInfo, MouseButton};
 use crate::geom::{Point, Rect};
 
 /// Offset added to raw evdev keycodes to get an xkb keycode (X11 keycodes
@@ -692,20 +692,10 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for EventState {
         _qh: &QueueHandle<Self>,
     ) {
         if let wl_buffer::Event::Release = event {
-            let mut released = false;
-            if let Some(pool) = &mut state.pool {
-                for slot in &mut pool.slots {
-                    if slot.buffer == *buffer {
-                        slot.released = true;
-                        released = true;
-                        break;
-                    }
-                }
-            }
             /* A redraw that arrived while both slots were busy is the latest
              * authoritative canvas. Submit it as soon as a slot becomes
              * reusable instead of waiting for unrelated user input. */
-            if released {
+            if state.pool.as_mut().is_some_and(|pool| pool.release(buffer)) {
                 if let Some((frame, w, h)) = state.pending_frame.take() {
                     state.draw(&frame, w, h);
                 }

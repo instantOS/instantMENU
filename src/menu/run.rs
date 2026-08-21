@@ -22,28 +22,7 @@ impl Menu {
             return self.run_slide();
         }
         if let Some(toast) = self.cfg.toast {
-            /* the CLI rejects negative --toast, but Config can be built
-             * directly (tests, library use); clamp so the duration stays
-             * valid */
-            let deadline = Instant::now() + Duration::from_secs_f64(f64::from(toast).max(0.1));
-            loop {
-                let now = Instant::now();
-                if now >= deadline {
-                    return ExitStatus::Success;
-                }
-                let remaining = deadline - now;
-                match self.backend.poll_event(Some(remaining), &[]) {
-                    EventPoll::Event(BackendEvent::Destroyed) => return ExitStatus::Failure,
-                    EventPoll::Event(BackendEvent::Expose) => {
-                        self.backend.present(&self.canvas);
-                    }
-                    EventPoll::Event(_) => {
-                        // Toast mode ignores all user input
-                    }
-                    EventPoll::Readable(_) | EventPoll::Timeout => return ExitStatus::Success,
-                    EventPoll::Closed => return ExitStatus::Failure,
-                }
-            }
+            return self.run_toast(toast);
         }
 
         /* whatever is already buffered lands before the first wait; for a
@@ -137,6 +116,35 @@ impl Menu {
             };
             if let Some(status) = self.perform(t) {
                 return status;
+            }
+        }
+    }
+
+    /// Toast mode: a passive display for `secs` seconds, then success.
+    /// No input is interpreted — expose events keep the toast visible,
+    /// destruction or a dead connection fails, anything else (including
+    /// stdin data) ends it early like the C version's select() loop.
+    fn run_toast(&mut self, secs: f32) -> ExitStatus {
+        /* the CLI rejects negative --toast, but Config can be built
+         * directly (tests, library use); clamp so the duration stays
+         * valid */
+        let deadline = Instant::now() + Duration::from_secs_f64(f64::from(secs).max(0.1));
+        loop {
+            let now = Instant::now();
+            if now >= deadline {
+                return ExitStatus::Success;
+            }
+            let remaining = deadline - now;
+            match self.backend.poll_event(Some(remaining), &[]) {
+                EventPoll::Event(BackendEvent::Destroyed) => return ExitStatus::Failure,
+                EventPoll::Event(BackendEvent::Expose) => {
+                    self.backend.present(&self.canvas);
+                }
+                EventPoll::Event(_) => {
+                    // Toast mode ignores all user input
+                }
+                EventPoll::Readable(_) | EventPoll::Timeout => return ExitStatus::Success,
+                EventPoll::Closed => return ExitStatus::Failure,
             }
         }
     }

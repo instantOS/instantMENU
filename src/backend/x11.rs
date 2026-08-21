@@ -264,24 +264,21 @@ impl X11Backend {
                     None
                 }
             }
-            Event::SelectionNotify(s) if s.property != x11rb::NONE => {
-                if let Ok(reply) = self.connection.get_property(
-                    true,
-                    self.window,
-                    s.property,
-                    AtomEnum::ANY,
-                    0,
-                    8192 / 4 + 1,
-                ) {
-                    if let Ok(prop) = reply.reply() {
-                        let text = String::from_utf8_lossy(&prop.value).into_owned();
-                        return Some(BackendEvent::SelectionNotify { text });
-                    }
-                }
-                None
-            }
+            Event::SelectionNotify(s) if s.property != x11rb::NONE => self
+                .selection_text(s.property)
+                .map(|text| BackendEvent::SelectionNotify { text }),
             _ => None,
         }
+    }
+
+    /// Read the pasted text the selection owner stored in `property`.
+    fn selection_text(&self, property: u32) -> Option<String> {
+        let reply = self
+            .connection
+            .get_property(true, self.window, property, AtomEnum::ANY, 0, 8192 / 4 + 1)
+            .ok()?;
+        let prop = reply.reply().ok()?;
+        Some(String::from_utf8_lossy(&prop.value).into_owned())
     }
 }
 

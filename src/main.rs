@@ -44,18 +44,11 @@ fn main() {
     /* CLI font/colors override X resources */
     overrides.apply_to(&mut cfg);
 
-    /* Startup ordering. Streaming is the default: the keyboard is grabbed
-     * before anything slow happens, the window opens immediately, and the
-     * rest of stdin is consumed while the menu runs — items appear as they
-     * arrive, coalesced so a fast producer still produces exactly one
-     * rematch + redraw. The exceptions keep the blocking load:
-     * - a tty stdin: the user types items interactively and ends with
-     *   Ctrl-D; grabbing first would lock their terminal mid-typing.
-     * - toast mode: passive display, no grab, no interaction.
-     * - password/input-only/slide: never read stdin at all. */
-    let interactive_tty = std::io::stdin().is_terminal();
-    let ignores_stdin = cfg.password || cfg.input_only || cfg.slide.is_some();
-    let streaming = cfg.toast.is_none() && !interactive_tty && !ignores_stdin;
+    /* Startup ordering: see [`stdin_mode`]. Streaming is the default, so
+     * the keyboard is grabbed before anything slow happens; the other modes
+     * grab after their blocking load instead. */
+    let mode = stdin_mode(&cfg);
+    let streaming = matches!(mode, StdinMode::Stream);
 
     let grab = cfg.toast.is_none() && !cfg.no_grab;
     if streaming && grab {
@@ -66,12 +59,10 @@ fn main() {
      * fonts needed by the actual corpus have to be loaded. Streamed items
      * resolve their fonts lazily per batch instead (renderer.add_fallbacks).
      * When nothing streams, everything arrives here. */
-    let preloaded = if streaming {
-        None
-    } else if ignores_stdin {
-        Some(Vec::new())
-    } else {
-        Some(menu::read_stdin(&cfg))
+    let preloaded = match mode {
+        StdinMode::Stream => None,
+        StdinMode::Skip => Some(Vec::new()),
+        StdinMode::Load => Some(menu::read_stdin(&cfg)),
     };
     if !streaming && grab {
         grab_keyboard(&mut backend);
@@ -165,6 +156,35 @@ fn grab_keyboard(backend: &mut Box<dyn backend::Backend>) {
         eprintln!("instantmenu: {e}");
         ExitStatus::Failure.exit();
     }
+}
+
+/// How stdin feeds the menu.
+enum StdinMode {
+    /// Items arrive while the menu runs: stdin is switched to non-blocking
+    /// and polled alongside the backend, batches coalescing into one
+    /// rematch + redraw each.
+    Stream,
+    /// The whole corpus is read (blocking) before the menu opens. A tty
+    /// stdin lands here too: the user types items interactively and ends
+    /// with Ctrl-D, and grabbing the keyboard first would lock their
+    /// terminal mid-typing.
+    Load,
+    /// Stdin is never read (password/input-only/slide).
+    Skip,
+}
+
+/// The startup-ordering policy: streaming is the default (grab first, open
+/// immediately, consume stdin while running); toast is a passive display
+/// that still shows items passed on stdin; password/input-only/slide never
+/// read stdin at all.
+fn stdin_mode(cfg: &Config) -> StdinMode {
+    if cfg.password || cfg.input_only || cfg.slide.is_some() {
+        return StdinMode::Skip;
+    }
+    if cfg.toast.is_some() || std::io::stdin().is_terminal() {
+        return StdinMode::Load;
+    }
+    StdinMode::Stream
 }
 
 /// Boolean flags: applied before the value options they gate.
