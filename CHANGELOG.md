@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.10.0](https://github.com/instantOS/instantMENU/compare/v4.9.3...v4.10.0) - 2026-08-21
+
+### Added
+
+- wayland keyboard repeat
+
+### Other
+
+- fix builder user thingy
+- Merge branch 'main' of github.com:instantOS/instantMENU
+- fix toast
+- fix doast value thingy
+- add islide port
+- refactor drawing with Painter thingy
+- rework slide args
+- update positional arg
+- fix rendering bug
+- fix inverted prompt thingy
+- refactor text drawing
+- fix animation timing
+- change fuzzy matcher to frizbee
+- Merge branch 'dev' of github.com:instantOS/instantMENU into dev
+- add frecency cache
+- make use of new cachine system
+- init outside click cancel
+- refactor new guard thingy
+- init streaming thingy
+- refactor CLI args parsing
+- more sensible CLI
+- non blocking streaming, solve arch issues
+- fix mouse following on wayland
+- fix monitor placement
+- Fix performance regressions
+- refactor huge file
+- fix latent bug
+- fix justfile
+
 ### Added
 
 - `--slide` slider mode (the old islide as a mode): `--min`, `--max`, `--value`, `--step`, `--big-step`, `--command`; Return prints the value, every change runs `--command` with the value appended
