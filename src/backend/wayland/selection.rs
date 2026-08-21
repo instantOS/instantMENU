@@ -4,10 +4,6 @@ use std::os::unix::io::RawFd;
 
 use xkbcommon::xkb;
 
-use crate::backend::{
-    CONTROL_MASK, LOCK_MASK, MOD1_MASK, MOD2_MASK, MOD3_MASK, MOD4_MASK, MOD5_MASK, SHIFT_MASK,
-};
-
 use super::{OfferTracker, Xkb};
 
 /// Drain one offer's read pipe; Some(text) when the transfer finished.
@@ -61,31 +57,5 @@ pub(super) fn load_keymap(fd: RawFd, size: usize) -> Option<Xkb> {
         xkb::KEYMAP_FORMAT_TEXT_V1,
         xkb::KEYMAP_COMPILE_NO_FLAGS,
     )?;
-    let state = xkb::State::new(&keymap);
-    Some(Xkb {
-        keymap,
-        state,
-        mods: 0,
-    })
-}
-
-/// xkb mod mask -> X11 modifier mask (matched by mod name).
-pub(super) fn x11_mask(keymap: &xkb::Keymap, mask: u32) -> u32 {
-    let mut out = 0u32;
-    for (name, bit) in [
-        ("Shift", SHIFT_MASK),
-        ("Lock", LOCK_MASK),
-        ("Control", CONTROL_MASK),
-        ("Mod1", MOD1_MASK),
-        ("Mod2", MOD2_MASK),
-        ("Mod3", MOD3_MASK),
-        ("Mod4", MOD4_MASK),
-        ("Mod5", MOD5_MASK),
-    ] {
-        let idx = keymap.mod_get_index(name);
-        if idx != xkb::MOD_INVALID && mask & (1u32 << idx) != 0 {
-            out |= bit;
-        }
-    }
-    out
+    Some(Xkb::new(ctx, keymap))
 }

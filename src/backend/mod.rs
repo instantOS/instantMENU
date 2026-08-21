@@ -1,12 +1,15 @@
 //! Backend abstraction: X11 (x11rb) and Wayland (wayland-client) share the
 //! same menu core; this module defines the interface both implement.
 
+pub mod poll;
 pub mod wayland;
 pub mod x11;
 
 use clap::ValueEnum;
 
 use std::os::fd::RawFd;
+
+use xkbcommon::xkb::{self, KeyDirection, Keycode};
 
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
@@ -30,14 +33,24 @@ pub struct MonitorInfo {
     pub name: String,
 }
 
-/// A mouse button (or scroll-wheel direction), normalized across backends.
+/// A mouse button, normalized across backends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MouseButton {
     Left,
     Middle,
     Right,
-    ScrollUp,
-    ScrollDown,
+}
+
+/// Modifier keys held during an input event. The core only ever consumed
+/// Shift/Ctrl/Alt/Mod4 of the X11 mask; this is that set, named honestly and
+/// free of X11 bit values (each backend maps its own protocol state into it).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    pub shift: bool,
+    pub ctrl: bool,
+    pub alt: bool,
+    /// Mod4 / the logo key.
+    pub logo: bool,
 }
 
 /// Which surface a pointer event arrived on. Backends stamp every pointer
@@ -54,24 +67,25 @@ pub enum InputSource {
     External,
 }
 
-/// Backend-agnostic events, port of the XEvent switch in `run()`.
+/// Backend-agnostic events, port of the XEvent switch in `run()`. The
+/// vocabulary is semantic, not X11's: modifiers are [`Modifiers`], and wheel
+/// movement is its own event instead of emulated buttons.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackendEvent {
     KeyPress {
-        /// X keysym (XKB keysym values).
+        /// XKB keysym.
         sym: u32,
-        /// X11-style modifier mask (ShiftMask etc.).
-        state: u32,
+        mods: Modifiers,
         /// UTF-8 string produced by the key.
         text: String,
     },
     KeyRelease {
         sym: u32,
-        state: u32,
+        mods: Modifiers,
     },
     ButtonPress {
         button: MouseButton,
-        state: u32,
+        mods: Modifiers,
         pos: Point,
         source: InputSource,
     },
@@ -87,6 +101,12 @@ pub enum BackendEvent {
         /// `Menu` when the pointer is over the menu window; the event is
         /// dropped otherwise, so this is always `Menu` when present.
         source: InputSource,
+    },
+    /// Wheel movement. Positive `delta` scrolls down (towards later items),
+    /// negative up. One event per detent/axis batch; no coordinates —
+    /// scrolling is positional in the list, not tied to a point.
+    Scroll {
+        delta: i32,
     },
     /// Redraw needed (Expose on X11).
     Expose,
@@ -155,12 +175,19 @@ pub trait Backend {
     ) -> Result<(), String>;
     /// XMapRaised + embedding reparenting when `-W` was given.
     fn map_window(&mut self) {}
-    /// Embedding: reparent + select input on parent + grab focus.
-    fn embed_setup(&mut self, _pos: Point) {}
-    /// XGrabKeyboard retry loop (dies on failure like the C version).
-    fn grab_keyboard(&mut self) {}
-    /// Focus grab loop; `title` is set as WM_NAME in managed mode.
-    fn grab_focus(&mut self, title: &str);
+    /// Embedding: reparent + select input on parent + grab focus. `Err`
+    /// when focus could not be taken; the menu cannot run embedded then.
+    fn embed_setup(&mut self, _pos: Point) -> Result<(), String> {
+        Ok(())
+    }
+    /// XGrabKeyboard retry loop. `Err` carries the failure message; the
+    /// caller decides to exit (the C version died right there).
+    fn grab_keyboard(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    /// Focus grab loop; `title` is set as WM_NAME in managed mode. `Err`
+    /// when focus could not be taken.
+    fn grab_focus(&mut self, title: &str) -> Result<(), String>;
     /// Set the window title (WM_NAME / _NET_WM_NAME).
     fn set_title(&mut self, title: &str);
 
@@ -201,19 +228,23 @@ pub trait Backend {
     }
 }
 
-/// Modifier masks, X11 values (both backends map into these).
-pub const SHIFT_MASK: u32 = 1 << 0;
-pub const LOCK_MASK: u32 = 1 << 1;
-pub const CONTROL_MASK: u32 = 1 << 2;
-pub const MOD1_MASK: u32 = 1 << 3;
-pub const MOD2_MASK: u32 = 1 << 4;
-pub const MOD3_MASK: u32 = 1 << 5;
-pub const MOD4_MASK: u32 = 1 << 6;
-pub const MOD5_MASK: u32 = 1 << 7;
-
-/// Offset added to raw evdev keycodes (Wayland) to get an xkb keycode.
-/// X11 keycodes already include this offset.
-pub const XKB_OFFSET: u32 = 8;
+/// Keysym + UTF-8 text for a key event through an xkb state, keeping the
+/// state fresh. Shared by both backends; the only per-backend difference is
+/// the keycode origin (X11 keycodes are already xkb keycodes, Wayland's raw
+/// evdev codes need an 8-key offset applied by the backend).
+pub(crate) fn translate_key(state: &mut xkb::State, code: Keycode, pressed: bool) -> (u32, String) {
+    state.update_key(
+        code,
+        if pressed {
+            KeyDirection::Down
+        } else {
+            KeyDirection::Up
+        },
+    );
+    let sym = state.key_get_one_sym(code).raw();
+    let text = state.key_get_utf8(code);
+    (sym, text)
+}
 
 /// Open the backend. `choice` is the `--backend` selection: `Auto` prefers
 /// Wayland when WAYLAND_DISPLAY is set and falls back to X11; `X11` and

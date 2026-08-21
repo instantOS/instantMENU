@@ -7,8 +7,7 @@ use super::matcher::Item;
 use super::transition::Transition;
 use super::Menu;
 use crate::backend::{
-    Backend, BackendEvent, EventPoll, InputSource, MonitorInfo, MouseButton, CONTROL_MASK,
-    MOD1_MASK, MOD4_MASK, SHIFT_MASK,
+    Backend, BackendEvent, EventPoll, InputSource, Modifiers, MonitorInfo, MouseButton,
 };
 use crate::config::{Config, SlideSettings, Width};
 use crate::enums::{ExitStatus, Scheme};
@@ -19,6 +18,45 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use xkbcommon::xkb::keysyms as ks;
+
+/* ── modifier shorthands ───────────────────────────────────────────────── */
+
+const M_NONE: Modifiers = Modifiers {
+    shift: false,
+    ctrl: false,
+    alt: false,
+    logo: false,
+};
+const M_CTRL: Modifiers = Modifiers {
+    shift: false,
+    ctrl: true,
+    alt: false,
+    logo: false,
+};
+const M_SHIFT: Modifiers = Modifiers {
+    shift: true,
+    ctrl: false,
+    alt: false,
+    logo: false,
+};
+const M_CTRL_SHIFT: Modifiers = Modifiers {
+    shift: true,
+    ctrl: true,
+    alt: false,
+    logo: false,
+};
+const M_ALT: Modifiers = Modifiers {
+    shift: false,
+    ctrl: false,
+    alt: true,
+    logo: false,
+};
+const M_LOGO: Modifiers = Modifiers {
+    shift: false,
+    ctrl: false,
+    alt: false,
+    logo: true,
+};
 
 /* ── stub backend ──────────────────────────────────────────────────────── */
 
@@ -58,8 +96,9 @@ impl Backend for StubBackend {
     ) -> Result<(), String> {
         Ok(())
     }
-    fn grab_focus(&mut self, title: &str) {
+    fn grab_focus(&mut self, title: &str) -> Result<(), String> {
         self.state.lock().unwrap().focus_titles.push(title.into());
+        Ok(())
     }
     fn set_title(&mut self, _title: &str) {}
     fn present(&mut self, _canvas: &Canvas) {
@@ -103,10 +142,10 @@ impl StubHandle {
     fn push(&self, ev: BackendEvent) {
         self.feed.lock().unwrap().push_back(ev);
     }
-    fn key(&self, sym: u32, state: u32, text: &str) {
+    fn key(&self, sym: u32, mods: Modifiers, text: &str) {
         self.push(BackendEvent::KeyPress {
             sym,
-            state,
+            mods,
             text: text.to_string(),
         });
     }
@@ -172,12 +211,12 @@ fn menu_with(cfg: Config, items: &[&str]) -> (Menu, StubHandle, SharedOutput) {
 /// dispatched by their buffer).
 fn type_text(menu: &mut Menu, text: &str) {
     for c in text.chars() {
-        let _ = menu.key_press(0, 0, &c.to_string());
+        let _ = menu.key_press(0, M_NONE, &c.to_string());
     }
 }
 
-fn key(menu: &mut Menu, sym: u32, state: u32) -> Transition {
-    menu.key_press(sym, state, "")
+fn key(menu: &mut Menu, sym: u32, mods: Modifiers) -> Transition {
+    menu.key_press(sym, mods, "")
 }
 
 /* ── confirm paths ─────────────────────────────────────────────────────── */
@@ -187,7 +226,7 @@ fn key(menu: &mut Menu, sym: u32, state: u32) -> Transition {
 fn return_prints_selection_and_exits() {
     let (mut menu, _stub, out) = menu_with(Config::default(), &["alpha", "beta"]);
     assert_eq!(
-        key(&mut menu, ks::KEY_Return, 0),
+        key(&mut menu, ks::KEY_Return, M_NONE),
         Transition::PrintAndExit("alpha".into())
     );
     assert_eq!(
@@ -203,7 +242,7 @@ fn return_prints_selection_and_exits() {
 fn ctrl_return_prints_and_keeps_running() {
     let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha", "beta"]);
     assert_eq!(
-        key(&mut menu, ks::KEY_Return, CONTROL_MASK),
+        key(&mut menu, ks::KEY_Return, M_CTRL),
         Transition::Print("alpha".into())
     );
     assert!(menu.matcher.items[0].already_output);
@@ -217,7 +256,7 @@ fn shift_return_prints_raw_input() {
     let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha", "beta"]);
     type_text(&mut menu, "al");
     assert_eq!(
-        key(&mut menu, ks::KEY_Return, SHIFT_MASK),
+        key(&mut menu, ks::KEY_Return, M_SHIFT),
         Transition::PrintAndExit("al".into())
     );
 }
@@ -227,7 +266,7 @@ fn shift_return_prints_raw_input() {
 fn ctrl_number_selects_and_confirms() {
     let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha", "beta", "gamma"]);
     assert_eq!(
-        key(&mut menu, ks::KEY_2, CONTROL_MASK),
+        key(&mut menu, ks::KEY_2, M_CTRL),
         Transition::PrintAndExit("beta".into())
     );
 }
@@ -240,7 +279,7 @@ fn typing_filters_matches() {
     type_text(&mut menu, "bet");
     assert_eq!(menu.matcher.matches, vec![1]);
     assert_eq!(
-        key(&mut menu, ks::KEY_Return, 0),
+        key(&mut menu, ks::KEY_Return, M_NONE),
         Transition::PrintAndExit("beta".into())
     );
 }
@@ -250,7 +289,7 @@ fn typing_filters_matches() {
 fn tab_completes_to_selection() {
     let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha", "beta"]);
     type_text(&mut menu, "al");
-    assert_eq!(key(&mut menu, ks::KEY_Tab, 0), Transition::Redraw);
+    assert_eq!(key(&mut menu, ks::KEY_Tab, M_NONE), Transition::Redraw);
     assert_eq!(menu.editor.text, "alpha");
 }
 
@@ -280,7 +319,7 @@ fn reject_no_match_reverts_edit() {
 fn ctrl_u_clears_input() {
     let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha", "beta"]);
     type_text(&mut menu, "alpha");
-    assert_eq!(key(&mut menu, ks::KEY_u, CONTROL_MASK), Transition::Redraw);
+    assert_eq!(key(&mut menu, ks::KEY_u, M_CTRL), Transition::Redraw);
     assert_eq!(menu.editor.text, "");
     assert_eq!(menu.matcher.matches, vec![0, 1]);
 }
@@ -289,7 +328,7 @@ fn ctrl_u_clears_input() {
 fn ctrl_w_deletes_word() {
     let (mut menu, _stub, _out) = menu_with(Config::default(), &["hello world"]);
     type_text(&mut menu, "hello world");
-    assert_eq!(key(&mut menu, ks::KEY_w, CONTROL_MASK), Transition::Redraw);
+    assert_eq!(key(&mut menu, ks::KEY_w, M_CTRL), Transition::Redraw);
     assert_eq!(menu.editor.text, "hello ");
 }
 
@@ -298,9 +337,9 @@ fn ctrl_w_deletes_word() {
 fn ctrl_k_truncates_at_cursor() {
     let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha", "beta"]);
     type_text(&mut menu, "alp");
-    assert_eq!(key(&mut menu, ks::KEY_Left, 0), Transition::Redraw);
+    assert_eq!(key(&mut menu, ks::KEY_Left, M_NONE), Transition::Redraw);
     assert_eq!(menu.editor.cursor, 2);
-    assert_eq!(key(&mut menu, ks::KEY_k, CONTROL_MASK), Transition::Redraw);
+    assert_eq!(key(&mut menu, ks::KEY_k, M_CTRL), Transition::Redraw);
     assert_eq!(menu.editor.text, "al");
 }
 
@@ -308,7 +347,7 @@ fn ctrl_k_truncates_at_cursor() {
 #[test]
 fn ctrl_s_inserts_regex_any() {
     let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha", "beta"]);
-    assert_eq!(key(&mut menu, ks::KEY_s, CONTROL_MASK), Transition::Redraw);
+    assert_eq!(key(&mut menu, ks::KEY_s, M_CTRL), Transition::Redraw);
     assert_eq!(menu.editor.text, ".*");
 }
 
@@ -317,11 +356,11 @@ fn ctrl_s_inserts_regex_any() {
 fn ctrl_j_confirms_like_return() {
     let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha", "beta"]);
     assert_eq!(
-        key(&mut menu, ks::KEY_j, CONTROL_MASK),
+        key(&mut menu, ks::KEY_j, M_CTRL),
         Transition::PrintAndExit("alpha".into())
     );
     assert_eq!(
-        key(&mut menu, ks::KEY_m, CONTROL_MASK),
+        key(&mut menu, ks::KEY_m, M_CTRL),
         Transition::PrintAndExit("alpha".into())
     );
 }
@@ -339,11 +378,11 @@ fn paste_takes_the_first_line() {
 #[test]
 fn ctrl_v_and_ctrl_y_request_selections() {
     let (mut menu, stub, _out) = menu_with(Config::default(), &["alpha"]);
-    assert_eq!(key(&mut menu, ks::KEY_v, CONTROL_MASK), Transition::Redraw);
-    assert_eq!(key(&mut menu, ks::KEY_y, CONTROL_MASK), Transition::Nop);
+    assert_eq!(key(&mut menu, ks::KEY_v, M_CTRL), Transition::Redraw);
+    assert_eq!(key(&mut menu, ks::KEY_y, M_CTRL), Transition::Nop);
     assert!(!*stub.state().selection_requests.last().unwrap());
     // Shift+v holds the clipboard variant
-    key(&mut menu, ks::KEY_v, CONTROL_MASK | SHIFT_MASK);
+    key(&mut menu, ks::KEY_v, M_CTRL_SHIFT);
     assert!(*stub.state().selection_requests.last().unwrap());
 }
 
@@ -397,7 +436,7 @@ fn frecency_records_selections() {
         ..Config::default()
     };
     let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta"]);
-    let t = key(&mut menu, ks::KEY_Return, 0);
+    let t = key(&mut menu, ks::KEY_Return, M_NONE);
     assert_eq!(menu.perform(t), Some(ExitStatus::Success));
     let contents = std::fs::read_to_string(&path).unwrap();
     assert!(contents.contains(" alpha\n"), "{contents}");
@@ -416,7 +455,7 @@ fn frecency_records_free_typed_input() {
     };
     let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta"]);
     type_text(&mut menu, "newcmd");
-    let t = key(&mut menu, ks::KEY_Return, SHIFT_MASK);
+    let t = key(&mut menu, ks::KEY_Return, M_SHIFT);
     assert_eq!(menu.perform(t), Some(ExitStatus::Success));
     let contents = std::fs::read_to_string(&path).unwrap();
     assert!(contents.contains(" newcmd\n"), "{contents}");
@@ -435,7 +474,7 @@ fn password_mode_never_records() {
     };
     let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta"]);
     type_text(&mut menu, "secret");
-    let t = key(&mut menu, ks::KEY_Return, 0);
+    let t = key(&mut menu, ks::KEY_Return, M_NONE);
     assert_eq!(menu.perform(t), Some(ExitStatus::Success));
     assert!(!path.exists());
 }
@@ -451,7 +490,7 @@ fn instant_mode_picks_while_typing() {
     };
     let (mut menu, _stub, _out) = menu_with(cfg, &["abc", "bcd"]);
     assert_eq!(
-        menu.key_press(0, 0, "a"),
+        menu.key_press(0, M_NONE, "a"),
         Transition::PrintAndExit("abc".into())
     );
 }
@@ -468,13 +507,13 @@ fn commented_mode_picks_by_first_byte() {
     };
     let (mut menu, _stub, _out) = menu_with(cfg.clone(), &["yes", "no"]);
     assert_eq!(
-        menu.key_press(0, 0, "n"),
+        menu.key_press(0, M_NONE, "n"),
         Transition::PrintAndExit("no".into())
     );
 
     let (mut menu, _stub, _out) = menu_with(cfg.clone(), &["yes", "no"]);
     assert_eq!(
-        menu.key_press(0, 0, "x"),
+        menu.key_press(0, M_NONE, "x"),
         Transition::Exit(ExitStatus::Success)
     );
 }
@@ -485,7 +524,7 @@ fn commented_mode_picks_by_first_byte() {
 fn escape_exits_with_failure() {
     let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha"]);
     assert_eq!(
-        key(&mut menu, ks::KEY_Escape, 0),
+        key(&mut menu, ks::KEY_Escape, M_NONE),
         Transition::Exit(ExitStatus::Failure)
     );
 }
@@ -495,15 +534,15 @@ fn escape_exits_with_failure() {
 fn modifier_quit_keys_exit() {
     let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha"]);
     assert_eq!(
-        key(&mut menu, ks::KEY_F4, MOD1_MASK),
+        key(&mut menu, ks::KEY_F4, M_ALT),
         Transition::Exit(ExitStatus::Failure)
     );
     assert_eq!(
-        key(&mut menu, ks::KEY_q, MOD4_MASK),
+        key(&mut menu, ks::KEY_q, M_LOGO),
         Transition::Exit(ExitStatus::Failure)
     );
     assert_eq!(
-        key(&mut menu, ks::KEY_bracketleft, CONTROL_MASK),
+        key(&mut menu, ks::KEY_bracketleft, M_CTRL),
         Transition::Exit(ExitStatus::Failure)
     );
 }
@@ -513,7 +552,7 @@ fn modifier_quit_keys_exit() {
 fn right_click_exits() {
     let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha"]);
     assert_eq!(
-        menu.button_press(MouseButton::Right, 0, Point::new(0, 0)),
+        menu.button_press(MouseButton::Right, M_NONE, Point::new(0, 0)),
         Transition::Exit(ExitStatus::Failure)
     );
 }
@@ -542,14 +581,14 @@ fn alt_tab_release_confirms() {
     };
     let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta", "gamma"]);
 
-    assert_eq!(key(&mut menu, ks::KEY_Tab, MOD1_MASK), Transition::Redraw);
+    assert_eq!(key(&mut menu, ks::KEY_Tab, M_ALT), Transition::Redraw);
     assert_eq!(menu.selection.selected, Some(1));
 
     // the Tab release only ends the tab cycle
-    assert_eq!(menu.key_release(ks::KEY_Tab, MOD1_MASK), Transition::Nop);
+    assert_eq!(menu.key_release(ks::KEY_Tab, M_ALT), Transition::Nop);
     // the Alt release confirms
     assert_eq!(
-        menu.key_release(ks::KEY_Alt_L, MOD1_MASK),
+        menu.key_release(ks::KEY_Alt_L, M_ALT),
         Transition::PrintAndExit("beta".into())
     );
 }
@@ -567,7 +606,7 @@ fn left_command_triggers_spawn() {
     };
     let (mut menu, _stub, _out) = menu_with(cfg, &["alpha"]);
     assert_eq!(
-        key(&mut menu, ks::KEY_Left, SHIFT_MASK),
+        key(&mut menu, ks::KEY_Left, M_SHIFT),
         Transition::SpawnAndExit("true".into())
     );
 }
@@ -588,7 +627,7 @@ fn horizontal_hover_and_click() {
     assert_eq!(menu.set_selection(pos), Transition::Redraw);
     assert_eq!(menu.selection.selected, Some(1));
     assert_eq!(
-        menu.button_press(MouseButton::Left, 0, pos),
+        menu.button_press(MouseButton::Left, M_NONE, pos),
         Transition::PrintAndExit("beta".into())
     );
 }
@@ -604,7 +643,7 @@ fn vertical_hover_and_click() {
     assert_eq!(menu.set_selection(pos), Transition::Redraw);
     assert_eq!(menu.selection.selected, Some(1));
     assert_eq!(
-        menu.button_press(MouseButton::Left, 0, pos),
+        menu.button_press(MouseButton::Left, M_NONE, pos),
         Transition::PrintAndExit("beta".into())
     );
 }
@@ -615,9 +654,52 @@ fn left_click_on_input_clears_it() {
     let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha", "beta"]);
     type_text(&mut menu, "alp");
     // inside the input field: [0, input_width]
-    let t = menu.button_press(MouseButton::Left, 0, Point::new(50, 10));
+    let t = menu.button_press(MouseButton::Left, M_NONE, Point::new(50, 10));
     assert!(matches!(t, Transition::Redraw));
     assert_eq!(menu.editor.text, "");
+}
+
+/* ── header geometry (draw ↔ hit-test alignment) ───────────────────────── */
+
+/// The header geometry is one computation shared by drawing and
+/// hit-testing. Regression: with a left command cell and a prompt, item
+/// hit-rects were offset by the command-cell width relative to the drawn
+/// pixels (hovering the prompt selected the first item), and the input
+/// field was drawn a second command-cell width past the prompt.
+#[test]
+fn header_aligns_content_after_command_cell_and_prompt() {
+    let cfg = Config {
+        left_command: Some("true".into()),
+        prompt: Some("run:".into()),
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta"]);
+    menu.layout.lines = 2;
+    menu.layout.command_width = 40;
+    menu.layout.prompt_width = 60;
+
+    let header = menu.header();
+    // the prompt sits right of the command cell, content after both
+    assert_eq!(header.prompt.unwrap().x, 40);
+    assert_eq!(header.content_x, 100);
+    // the input field begins at the content origin — no second shift
+    assert_eq!(header.input.x, header.content_x);
+
+    // hovering the prompt block (x between 40 and 100) selects nothing…
+    assert_eq!(
+        menu.set_selection(Point::new(65, 35)),
+        Transition::Nop,
+        "the prompt is not an item"
+    );
+    // …and hovering the first grid cell — the exact rect draw_grid paints —
+    // selects it, because both read the same geometry
+    menu.selection.selected = None;
+    let drawn_cell = menu.layout.grid_cell_rect(0, header.content_x);
+    assert_eq!(
+        menu.set_selection(Point::new(drawn_cell.x + 5, drawn_cell.y + 5)),
+        Transition::Redraw
+    );
+    assert_eq!(menu.selection.selected, Some(0));
 }
 
 /// Scrolling pages through the list.
@@ -628,18 +710,12 @@ fn scroll_turns_pages() {
     menu.paging.next = Some(1);
     menu.paging.prev = 0;
 
-    assert_eq!(
-        menu.button_press(MouseButton::ScrollDown, 0, Point::new(0, 0)),
-        Transition::Redraw
-    );
+    assert_eq!(menu.scroll(1), Transition::Redraw);
     assert_eq!(menu.selection.selected, Some(1));
     assert_eq!(menu.selection.current, Some(1));
 
     // scrolling back up moves the page, the selection follows the page top
-    assert_eq!(
-        menu.button_press(MouseButton::ScrollUp, 0, Point::new(0, 0)),
-        Transition::Redraw
-    );
+    assert_eq!(menu.scroll(-1), Transition::Redraw);
     assert_eq!(menu.selection.current, Some(0));
 }
 
@@ -658,7 +734,7 @@ fn run_outside_click_exits_with_failure() {
     let (mut menu, stub, _out) = menu_with(Config::default(), &["alpha"]);
     stub.push(BackendEvent::ButtonPress {
         button: MouseButton::Left,
-        state: 0,
+        mods: M_NONE,
         pos: Point::new(0, 0),
         source: InputSource::External,
     });
@@ -673,7 +749,7 @@ fn run_toast_times_out_with_success() {
         ..Config::default()
     };
     let (mut menu, stub, _out) = menu_with(cfg, &["alpha"]);
-    stub.key(ks::KEY_Escape, 0, "");
+    stub.key(ks::KEY_Escape, M_NONE, "");
     assert_eq!(menu.run(), ExitStatus::Success);
 }
 
@@ -715,7 +791,7 @@ fn run_toast_fails_on_destroyed() {
 #[test]
 fn run_prints_selection_and_exits_successfully() {
     let (mut menu, stub, out) = menu_with(Config::default(), &["alpha", "beta"]);
-    stub.key(ks::KEY_Return, 0, "");
+    stub.key(ks::KEY_Return, M_NONE, "");
     assert_eq!(menu.run(), ExitStatus::Success);
     assert_eq!(out.contents(), "alpha\n");
 }
@@ -725,7 +801,7 @@ fn run_prints_selection_and_exits_successfully() {
 fn run_expose_presents_without_side_effects() {
     let (mut menu, stub, _out) = menu_with(Config::default(), &["alpha"]);
     stub.push(BackendEvent::Expose);
-    stub.key(ks::KEY_Escape, 0, "");
+    stub.key(ks::KEY_Escape, M_NONE, "");
     assert_eq!(menu.run(), ExitStatus::Failure);
     assert!(stub.state().presents >= 1);
 }
@@ -739,13 +815,13 @@ fn run_focus_loss_regrabs_with_prompt_title() {
     };
     let (mut menu, stub, _out) = menu_with(cfg, &["alpha"]);
     stub.push(BackendEvent::FocusInOther);
-    stub.key(ks::KEY_Escape, 0, "");
+    stub.key(ks::KEY_Escape, M_NONE, "");
     assert_eq!(menu.run(), ExitStatus::Failure);
     assert_eq!(stub.state().focus_titles, vec!["menu".to_string()]);
 
     let (mut menu, stub, _out) = menu_with(Config::default(), &["alpha"]);
     stub.push(BackendEvent::FocusInOther);
-    stub.key(ks::KEY_Escape, 0, "");
+    stub.key(ks::KEY_Escape, M_NONE, "");
     assert_eq!(menu.run(), ExitStatus::Failure);
     assert_eq!(stub.state().focus_titles, vec!["dmenu".to_string()]);
 }
@@ -777,7 +853,7 @@ fn run_motion_is_throttled() {
         pos: item0,
         source: InputSource::Menu,
     });
-    stub.key(ks::KEY_Escape, 0, "");
+    stub.key(ks::KEY_Escape, M_NONE, "");
     assert_eq!(menu.run(), ExitStatus::Failure);
     assert_eq!(menu.selection.selected, Some(1));
 
@@ -793,7 +869,7 @@ fn run_motion_is_throttled() {
         pos: item0,
         source: InputSource::Menu,
     });
-    stub.key(ks::KEY_Escape, 0, "");
+    stub.key(ks::KEY_Escape, M_NONE, "");
     assert_eq!(menu.run(), ExitStatus::Failure);
     assert_eq!(menu.selection.selected, Some(0));
 }
@@ -807,7 +883,7 @@ fn run_preselects_before_the_first_event() {
         ..Config::default()
     };
     let (mut menu, stub, out) = menu_with(cfg, &["alpha", "beta", "gamma"]);
-    stub.key(ks::KEY_Return, 0, "");
+    stub.key(ks::KEY_Return, M_NONE, "");
     assert_eq!(menu.run(), ExitStatus::Success);
     assert_eq!(out.contents(), "gamma\n");
     assert!(stub.state().presents >= 1);
@@ -820,7 +896,7 @@ fn run_selection_notify_pastes() {
     stub.push(BackendEvent::SelectionNotify {
         text: "pasted\nsecond".into(),
     });
-    stub.key(ks::KEY_Escape, 0, "");
+    stub.key(ks::KEY_Escape, M_NONE, "");
     assert_eq!(menu.run(), ExitStatus::Failure);
     assert_eq!(menu.editor.text, "pasted");
 }
@@ -839,7 +915,7 @@ fn run_motion_selects_items() {
         pos: Point::new(rect.x + rect.w / 2, rect.y + rect.h / 2),
         source: InputSource::Menu,
     });
-    stub.key(ks::KEY_Escape, 0, "");
+    stub.key(ks::KEY_Escape, M_NONE, "");
     assert_eq!(menu.run(), ExitStatus::Failure);
     assert_eq!(menu.selection.selected, Some(1));
 }
@@ -865,7 +941,7 @@ fn slide_value(menu: &Menu) -> i32 {
 #[test]
 fn slide_return_prints_value_and_exits() {
     let (mut menu, stub, out) = slide_with(SlideSettings::default());
-    stub.key(ks::KEY_Return, 0, "");
+    stub.key(ks::KEY_Return, M_NONE, "");
     assert_eq!(menu.run(), ExitStatus::Success);
     assert_eq!(out.contents(), "50\n"); // default value: middle of 0..=100
 }
@@ -874,12 +950,12 @@ fn slide_return_prints_value_and_exits() {
 #[test]
 fn slide_escape_and_q_cancel() {
     let (mut menu, stub, out) = slide_with(SlideSettings::default());
-    stub.key(ks::KEY_Escape, 0, "");
+    stub.key(ks::KEY_Escape, M_NONE, "");
     assert_eq!(menu.run(), ExitStatus::Failure);
     assert_eq!(out.contents(), "");
 
     let (mut menu, stub, out) = slide_with(SlideSettings::default());
-    stub.key(ks::KEY_q, 0, "");
+    stub.key(ks::KEY_q, M_NONE, "");
     assert_eq!(menu.run(), ExitStatus::Failure);
     assert_eq!(out.contents(), "");
 }
@@ -888,38 +964,41 @@ fn slide_escape_and_q_cancel() {
 #[test]
 fn slide_keys_step_by_step_and_big_step() {
     let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
-    assert_eq!(menu.slide_key(ks::KEY_Right, 0), Transition::Redraw);
-    assert_eq!(menu.slide_key(ks::KEY_l, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_Right, M_NONE), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_l, M_NONE), Transition::Redraw);
     assert_eq!(slide_value(&menu), 52);
-    assert_eq!(menu.slide_key(ks::KEY_j, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_j, M_NONE), Transition::Redraw);
     assert_eq!(slide_value(&menu), 42);
-    assert_eq!(menu.slide_key(ks::KEY_k, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_k, M_NONE), Transition::Redraw);
     assert_eq!(slide_value(&menu), 52);
-    assert_eq!(menu.slide_key(ks::KEY_h, 0), Transition::Redraw);
-    assert_eq!(menu.slide_key(ks::KEY_Left, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_h, M_NONE), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_Left, M_NONE), Transition::Redraw);
     assert_eq!(slide_value(&menu), 50);
 
     // already at the maximum: End then another increase is a no-op
-    assert_eq!(menu.slide_key(ks::KEY_End, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_End, M_NONE), Transition::Redraw);
     assert_eq!(slide_value(&menu), 100);
-    assert_eq!(menu.slide_key(ks::KEY_Up, 0), Transition::Nop);
+    assert_eq!(menu.slide_key(ks::KEY_Up, M_NONE), Transition::Nop);
     assert_eq!(slide_value(&menu), 100);
     // and at the minimum
-    assert_eq!(menu.slide_key(ks::KEY_Home, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_Home, M_NONE), Transition::Redraw);
     assert_eq!(slide_value(&menu), 0);
-    assert_eq!(menu.slide_key(ks::KEY_Down, 0), Transition::Nop);
+    assert_eq!(menu.slide_key(ks::KEY_Down, M_NONE), Transition::Nop);
 }
 
 /// plus/minus change by exactly 1.
 #[test]
 fn slide_plus_minus_change_by_one() {
     let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
-    assert_eq!(menu.slide_key(ks::KEY_plus, 0), Transition::Redraw);
-    assert_eq!(menu.slide_key(ks::KEY_equal, 0), Transition::Redraw);
-    assert_eq!(menu.slide_key(ks::KEY_KP_Add, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_plus, M_NONE), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_equal, M_NONE), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_KP_Add, M_NONE), Transition::Redraw);
     assert_eq!(slide_value(&menu), 53);
-    assert_eq!(menu.slide_key(ks::KEY_minus, 0), Transition::Redraw);
-    assert_eq!(menu.slide_key(ks::KEY_KP_Subtract, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_minus, M_NONE), Transition::Redraw);
+    assert_eq!(
+        menu.slide_key(ks::KEY_KP_Subtract, M_NONE),
+        Transition::Redraw
+    );
     assert_eq!(slide_value(&menu), 51);
 }
 
@@ -927,11 +1006,11 @@ fn slide_plus_minus_change_by_one() {
 #[test]
 fn slide_digits_jump_to_ninths() {
     let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
-    assert_eq!(menu.slide_key(ks::KEY_1, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_1, M_NONE), Transition::Redraw);
     assert_eq!(slide_value(&menu), 0);
-    assert_eq!(menu.slide_key(ks::KEY_5, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_5, M_NONE), Transition::Redraw);
     assert_eq!(slide_value(&menu), 44); // round(100 * 4/9)
-    assert_eq!(menu.slide_key(ks::KEY_0, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_0, M_NONE), Transition::Redraw);
     assert_eq!(slide_value(&menu), 100);
 }
 
@@ -939,14 +1018,11 @@ fn slide_digits_jump_to_ninths() {
 #[test]
 fn slide_ignores_unbound_keys_and_ctrl_c_cancels() {
     let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
-    assert_eq!(menu.slide_key(ks::KEY_x, 0), Transition::Nop);
-    assert_eq!(
-        menu.slide_key(ks::KEY_Return, CONTROL_MASK),
-        Transition::Nop
-    );
+    assert_eq!(menu.slide_key(ks::KEY_x, M_NONE), Transition::Nop);
+    assert_eq!(menu.slide_key(ks::KEY_Return, M_CTRL), Transition::Nop);
     assert_eq!(slide_value(&menu), 50);
     assert_eq!(
-        menu.slide_key(ks::KEY_c, CONTROL_MASK),
+        menu.slide_key(ks::KEY_c, M_CTRL),
         Transition::Exit(ExitStatus::Failure)
     );
 }
@@ -961,16 +1037,16 @@ fn slide_changes_spawn_the_command() {
     };
     let (mut menu, _stub, _out) = slide_with(settings);
     assert_eq!(
-        menu.slide_key(ks::KEY_Right, 0),
+        menu.slide_key(ks::KEY_Right, M_NONE),
         Transition::Spawn("true 51".into())
     );
     assert_eq!(
-        menu.slide_key(ks::KEY_Left, 0),
+        menu.slide_key(ks::KEY_Left, M_NONE),
         Transition::Spawn("true 50".into())
     );
 
     let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
-    assert_eq!(menu.slide_key(ks::KEY_Right, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_Right, M_NONE), Transition::Redraw);
 }
 
 /// Clicking sets the value at the pointer; dragging follows the pointer
@@ -981,12 +1057,12 @@ fn slide_click_and_drag_set_the_value() {
     // menu_width is 600 in the stub geometry; clicking the exact current
     // value is a no-op
     assert_eq!(
-        menu.slide_button(MouseButton::Left, 0, Point::new(300, 5)),
+        menu.slide_button(MouseButton::Left, M_NONE, Point::new(300, 5)),
         Transition::Nop
     );
     assert_eq!(slide_value(&menu), 50);
     assert_eq!(
-        menu.slide_button(MouseButton::Left, 0, Point::new(150, 5)),
+        menu.slide_button(MouseButton::Left, M_NONE, Point::new(150, 5)),
         Transition::Redraw
     );
     assert_eq!(slide_value(&menu), 25);
@@ -1018,26 +1094,20 @@ fn slide_motion_without_drag_is_ignored() {
 #[test]
 fn slide_middle_scroll_and_right_click() {
     let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
-    let _ = menu.slide_key(ks::KEY_Right, 0);
-    let _ = menu.slide_key(ks::KEY_Right, 0);
+    let _ = menu.slide_key(ks::KEY_Right, M_NONE);
+    let _ = menu.slide_key(ks::KEY_Right, M_NONE);
     assert_eq!(
-        menu.slide_button(MouseButton::Middle, 0, Point::new(0, 5)),
+        menu.slide_button(MouseButton::Middle, M_NONE, Point::new(0, 5)),
         Transition::Redraw
     );
     assert_eq!(slide_value(&menu), 50);
 
-    assert_eq!(
-        menu.slide_button(MouseButton::ScrollUp, 0, Point::new(0, 5)),
-        Transition::Redraw
-    );
-    assert_eq!(
-        menu.slide_button(MouseButton::ScrollDown, 0, Point::new(0, 5)),
-        Transition::Redraw
-    );
+    assert_eq!(menu.slide_scroll(-1), Transition::Redraw);
+    assert_eq!(menu.slide_scroll(1), Transition::Redraw);
     assert_eq!(slide_value(&menu), 50);
 
     assert_eq!(
-        menu.slide_button(MouseButton::Right, 0, Point::new(0, 5)),
+        menu.slide_button(MouseButton::Right, M_NONE, Point::new(0, 5)),
         Transition::Exit(ExitStatus::Failure)
     );
 }
@@ -1054,14 +1124,14 @@ fn slide_respects_range_and_steps() {
         ..SlideSettings::default()
     };
     let (mut menu, stub, out) = slide_with(settings);
-    assert_eq!(menu.slide_key(ks::KEY_Right, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_Right, M_NONE), Transition::Redraw);
     assert_eq!(slide_value(&menu), 5);
-    assert_eq!(menu.slide_key(ks::KEY_Up, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_Up, M_NONE), Transition::Redraw);
     assert_eq!(slide_value(&menu), 55);
-    assert_eq!(menu.slide_key(ks::KEY_Down, 0), Transition::Redraw);
+    assert_eq!(menu.slide_key(ks::KEY_Down, M_NONE), Transition::Redraw);
     assert_eq!(slide_value(&menu), 5);
 
-    stub.key(ks::KEY_Return, 0, "");
+    stub.key(ks::KEY_Return, M_NONE, "");
     assert_eq!(menu.run(), ExitStatus::Success);
     assert_eq!(out.contents(), "5\n");
 }
@@ -1077,7 +1147,7 @@ fn slide_run_loop() {
     stub.push(BackendEvent::Expose);
     stub.push(BackendEvent::ButtonPress {
         button: MouseButton::Left,
-        state: 0,
+        mods: M_NONE,
         pos: Point::new(450, 5),
         source: InputSource::Menu,
     });
@@ -1091,7 +1161,7 @@ fn slide_run_loop() {
         pos: Point::new(600, 5),
         source: InputSource::Menu,
     });
-    stub.key(ks::KEY_Return, 0, "");
+    stub.key(ks::KEY_Return, M_NONE, "");
     assert_eq!(menu.run(), ExitStatus::Success);
     assert_eq!(slide_value(&menu), 100);
     assert!(stub.state().presents >= 1);
@@ -1271,7 +1341,7 @@ fn run_settles_eof_then_behaves_like_a_loaded_menu() {
     pipe.close_write(); // everything already in the pipe
     menu.begin_stream(pipe.read_fd);
 
-    stub.key(ks::KEY_Return, 0, "");
+    stub.key(ks::KEY_Return, M_NONE, "");
     assert_eq!(menu.run(), ExitStatus::Success);
     assert_eq!(out.contents(), "alpha\n"); // first item selected after EOF
 }
@@ -1332,7 +1402,7 @@ fn streamed_batches_preserve_the_selection() {
     menu.begin_stream(pipe.read_fd);
 
     assert_eq!(menu.do_match(), Transition::Nop);
-    key(&mut menu, ks::KEY_Down, 0);
+    key(&mut menu, ks::KEY_Down, M_NONE);
     assert_eq!(menu.selection.selected, Some(1));
 
     menu.add_items(vec![Item::new("a4")]);

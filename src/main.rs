@@ -18,7 +18,7 @@ fn main() {
 
     let mut cfg = Config::default();
     apply_flags(&args, &mut cfg);
-    let (temp_font, color_temp) = apply_values(&args, &mut cfg);
+    let overrides = apply_values(&args, &mut cfg);
 
     /* `slide` subcommand: validate the range and apply the slider defaults
      * before anything is opened */
@@ -40,12 +40,7 @@ fn main() {
     apply_resources(backend.as_ref(), &mut cfg);
 
     /* CLI font/colors override X resources */
-    if let Some(f) = temp_font {
-        cfg.fonts[0] = f;
-    }
-    for (scheme, role, value) in color_temp {
-        *cfg.colors[scheme as usize].role_mut(role) = value;
-    }
+    overrides.apply_to(&mut cfg);
 
     /* Startup ordering. Streaming is the default: the keyboard is grabbed
      * before anything slow happens, the window opens immediately, and the
@@ -62,7 +57,7 @@ fn main() {
 
     let grab = cfg.toast.is_none() && !cfg.no_grab;
     if streaming && grab {
-        backend.grab_keyboard();
+        grab_keyboard(&mut backend);
     }
 
     /* Read candidates before constructing the font database so only fallback
@@ -77,7 +72,7 @@ fn main() {
         Some(menu::read_stdin(&cfg))
     };
     if !streaming && grab {
-        backend.grab_keyboard();
+        grab_keyboard(&mut backend);
     }
 
     let mut required_chars = std::collections::HashSet::new();
@@ -160,6 +155,16 @@ impl Drop for NonBlockingStdin {
     }
 }
 
+/// Grab the keyboard or die: the C version exited from inside
+/// grabkeyboard() on failure, and without the grab the menu would leak
+/// keystrokes to whatever had focus.
+fn grab_keyboard(backend: &mut Box<dyn backend::Backend>) {
+    if let Err(e) = backend.grab_keyboard() {
+        eprintln!("instantmenu: {e}");
+        ExitStatus::Failure.exit();
+    }
+}
+
 /// Boolean flags: applied before the value options they gate.
 fn apply_flags(args: &cli::Args, cfg: &mut Config) {
     /* boolean flags, port of the argument loop in main() */
@@ -217,12 +222,27 @@ fn apply_flags(args: &cli::Args, cfg: &mut Config) {
     }
 }
 
+/// CLI font/color overrides, applied after X resources so the command line
+/// wins (the C version's argument-layering order).
+struct CliOverrides {
+    font: Option<String>,
+    colors: Vec<(Scheme, ColorRole, String)>,
+}
+
+impl CliOverrides {
+    fn apply_to(self, cfg: &mut Config) {
+        if let Some(f) = self.font {
+            cfg.fonts[0] = f;
+        }
+        for (scheme, role, value) in self.colors {
+            *cfg.colors[scheme as usize].role_mut(role) = value;
+        }
+    }
+}
+
 /// Value options, plus the temporary font/color overrides applied after X
 /// resources.
-fn apply_values(
-    args: &cli::Args,
-    cfg: &mut Config,
-) -> (Option<String>, Vec<(Scheme, ColorRole, String)>) {
+fn apply_values(args: &cli::Args, cfg: &mut Config) -> CliOverrides {
     if let Some(v) = args.menu.toast {
         /* 0 keeps the timeout disabled, like omitting the option */
         cfg.toast = (v > 0.0).then_some(v);
@@ -298,25 +318,25 @@ fn apply_values(
     }
 
     /* temporary font/colors: applied AFTER X resources so the CLI wins */
-    let mut temp_font: Option<String> = args.window.font.clone();
+    let mut font: Option<String> = args.window.font.clone();
     if args.window.monospace {
-        temp_font = Some("Fira Code Nerd Font:pixelsize=15".to_string());
+        font = Some("Fira Code Nerd Font:pixelsize=15".to_string());
     }
-    let mut color_temp: Vec<(Scheme, ColorRole, String)> = Vec::new();
+    let mut colors = Vec::new();
     if let Some(c) = &args.window.normal_bg {
-        color_temp.push((Scheme::Normal, ColorRole::Background, c.clone()));
+        colors.push((Scheme::Normal, ColorRole::Background, c.clone()));
     }
     if let Some(c) = &args.window.normal_fg {
-        color_temp.push((Scheme::Normal, ColorRole::Foreground, c.clone()));
+        colors.push((Scheme::Normal, ColorRole::Foreground, c.clone()));
     }
     if let Some(c) = &args.window.selected_bg {
-        color_temp.push((Scheme::Selected, ColorRole::Background, c.clone()));
+        colors.push((Scheme::Selected, ColorRole::Background, c.clone()));
     }
     if let Some(c) = &args.window.selected_fg {
-        color_temp.push((Scheme::Selected, ColorRole::Foreground, c.clone()));
+        colors.push((Scheme::Selected, ColorRole::Foreground, c.clone()));
     }
 
-    (temp_font, color_temp)
+    CliOverrides { font, colors }
 }
 
 /// Apply X resource "key -> value" pairs to the config.

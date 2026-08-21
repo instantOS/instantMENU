@@ -8,33 +8,35 @@
 
 use xkbcommon::xkb::keysyms as ks;
 
+use super::measure::TextMeasurer;
+use super::paging::{self, Selection};
 use super::transition::Transition;
 use super::Menu;
-use crate::backend::{CONTROL_MASK, MOD1_MASK, MOD4_MASK, SHIFT_MASK};
+use crate::backend::Modifiers;
 use crate::enums::{Direction, EditOp, ExitStatus, Side};
 
 /// How a modifier-prefixed key continues into the main switch.
 enum KeyPath {
-    /// fall through with the (possibly remapped) sym/state
-    Continue(u32, u32),
+    /// fall through with the (possibly remapped) sym/modifiers
+    Continue(u32, Modifiers),
     /// fully handled; carry the transition to the event loop
     Done(Transition),
 }
 
 impl Menu {
     /// select_number — Ctrl-1..9 select the n-th item and hit Return.
-    fn select_number(&mut self, number: usize, state: u32) -> Transition {
+    fn select_number(&mut self, number: usize, mut mods: Modifiers) -> Transition {
         self.selection.selected = self.selection.current;
         for _ in 0..number {
             self.select_next();
         }
-        let state = state ^ CONTROL_MASK;
-        self.handle_return(state)
+        mods.ctrl = false;
+        self.handle_return(mods)
     }
 
     /// The Return key branch, shared with select_number and the Ctrl-j/m
     /// remaps.
-    fn handle_return(&mut self, state: u32) -> Transition {
+    fn handle_return(&mut self, mods: Modifiers) -> Transition {
         // non-selectable comment
         if self.selected_is_comment() {
             return Transition::Nop;
@@ -43,19 +45,19 @@ impl Menu {
         // puts((sel && !(state & ShiftMask & (!reject_no_match))) ? sel->text : text):
         // with reject_no_match off, shift+return prints the raw input instead
         // of the selection.
-        let shift_suppresses = (state & SHIFT_MASK != 0) && !self.cfg.reject_no_match;
+        let shift_suppresses = mods.shift && !self.cfg.reject_no_match;
         let out = if self.selected_text().is_some() && !shift_suppresses {
             self.selected_text().unwrap_or_default()
         } else {
             self.editor.text.clone()
         };
-        self.confirm(&out, state)
+        self.confirm(&out, mods)
     }
 
     /// key_release — alt-tab release handling. Unlike every other confirm
     /// path this does not redraw afterwards (the C event loop called
     /// keyrelease outside the drawing branch).
-    pub(super) fn key_release(&mut self, sym: u32, state: u32) -> Transition {
+    pub(super) fn key_release(&mut self, sym: u32, mods: Modifiers) -> Transition {
         let _ = sym;
         if !self.alt_tab {
             return Transition::Nop;
@@ -65,8 +67,8 @@ impl Menu {
             return Transition::Nop;
         }
 
-        if state & MOD1_MASK != 0 {
-            if state & SHIFT_MASK != 0 {
+        if mods.alt {
+            if mods.shift {
                 return Transition::Nop;
             }
             if self.selected_is_comment() {
@@ -75,45 +77,44 @@ impl Menu {
             let out = self
                 .selected_text()
                 .unwrap_or_else(|| self.editor.text.clone());
-            return self.confirm(&out, state);
+            return self.confirm(&out, mods);
         }
         Transition::Nop
     }
 
     /// key_press — remap modifier prefixes, then run the unmodified key
     /// switch.
-    pub(super) fn key_press(&mut self, sym: u32, state: u32, buf: &str) -> Transition {
-        let (sym, state) = if state & CONTROL_MASK != 0 {
-            match self.ctrl_key(sym, state) {
-                KeyPath::Continue(sym, state) => (sym, state),
+    pub(super) fn key_press(&mut self, sym: u32, mods: Modifiers, buf: &str) -> Transition {
+        let (sym, mods) = if mods.ctrl {
+            match self.ctrl_key(sym, mods) {
+                KeyPath::Continue(sym, mods) => (sym, mods),
                 KeyPath::Done(t) => return t,
             }
-        } else if state & SHIFT_MASK != 0 {
+        } else if mods.shift {
             // shift-prefixed keys run the alt-tab wrap-around selection and
             // still fall through with the original sym (the C switch)
             self.shift_key();
-            (sym, state)
-        } else if state & MOD1_MASK != 0 {
-            match self.mod1_key(sym, state) {
-                KeyPath::Continue(sym, state) => (sym, state),
+            (sym, mods)
+        } else if mods.alt {
+            match self.mod1_key(sym, mods) {
+                KeyPath::Continue(sym, mods) => (sym, mods),
                 KeyPath::Done(t) => return t,
             }
-        } else if state & MOD4_MASK != 0 {
-            match self.mod4_key(sym, state) {
-                KeyPath::Continue(sym, state) => (sym, state),
+        } else if mods.logo {
+            match self.mod4_key(sym, mods) {
+                KeyPath::Continue(sym, mods) => (sym, mods),
                 KeyPath::Done(t) => return t,
             }
         } else {
-            (sym, state)
+            (sym, mods)
         };
 
-        self.main_key(sym, state, buf)
+        self.main_key(sym, mods, buf)
     }
 
     /// Ctrl-prefixed keys: remap letters to editing keys, or run an action.
-    fn ctrl_key(&mut self, sym: u32, state: u32) -> KeyPath {
+    fn ctrl_key(&mut self, sym: u32, mut mods: Modifiers) -> KeyPath {
         let mut sym = sym;
-        let mut state = state;
         match sym {
             s if s == ks::KEY_a => sym = ks::KEY_Home,
             s if s == ks::KEY_b => sym = ks::KEY_Left,
@@ -126,7 +127,7 @@ impl Menu {
             s if s == ks::KEY_i => sym = ks::KEY_Tab,
             s if s == ks::KEY_j || s == ks::KEY_J || s == ks::KEY_m || s == ks::KEY_M => {
                 sym = ks::KEY_Return;
-                state &= !CONTROL_MASK;
+                mods.ctrl = false;
             }
             s if s == ks::KEY_n => sym = ks::KEY_Down,
             s if s == ks::KEY_p => sym = ks::KEY_Up,
@@ -138,7 +139,7 @@ impl Menu {
             }
             s if s == ks::KEY_v => {
                 /* paste clipboard */
-                self.request_paste(state);
+                self.request_paste(mods);
                 return KeyPath::Done(Transition::Redraw);
             }
             s if s == ks::KEY_k => {
@@ -163,7 +164,7 @@ impl Menu {
             }
             s if s == ks::KEY_y || s == ks::KEY_Y => {
                 /* paste selection */
-                self.request_paste(state);
+                self.request_paste(mods);
                 return KeyPath::Done(Transition::Nop);
             }
             s if s == ks::KEY_Left || s == ks::KEY_KP_Left => {
@@ -180,7 +181,7 @@ impl Menu {
                 // fall through to the main switch with Return
             }
             s if (ks::KEY_1..=ks::KEY_9).contains(&s) => {
-                let t = self.select_number((s - ks::KEY_1) as usize, state);
+                let t = self.select_number((s - ks::KEY_1) as usize, mods);
                 return KeyPath::Done(t.at_least_redraw());
             }
             s if s == ks::KEY_bracketleft => {
@@ -188,7 +189,7 @@ impl Menu {
             }
             _ => return KeyPath::Done(Transition::Nop),
         }
-        KeyPath::Continue(sym, state)
+        KeyPath::Continue(sym, mods)
     }
 
     /// Shift-prefixed keys (alt-tab wrap-around selection). Any shifted key
@@ -209,7 +210,7 @@ impl Menu {
     }
 
     /// Alt-prefixed keys: remap to navigation keys, or run an action.
-    fn mod1_key(&mut self, sym: u32, state: u32) -> KeyPath {
+    fn mod1_key(&mut self, sym: u32, mods: Modifiers) -> KeyPath {
         let mut sym = sym;
         match sym {
             s if s == ks::KEY_F4 => return KeyPath::Done(Transition::Exit(ExitStatus::Failure)),
@@ -241,8 +242,7 @@ impl Menu {
                 if let Some(s) = self.selection.selected {
                     let last = self.matcher.matches.len().saturating_sub(1);
                     if s == last {
-                        self.selection.selected = Some(0);
-                        self.selection.current = Some(0);
+                        self.selection = Selection::from_match(self.matcher.matches.len());
                         self.recalc_paging();
                     } else {
                         self.select_next();
@@ -251,16 +251,16 @@ impl Menu {
             }
             _ => return KeyPath::Done(Transition::Nop),
         }
-        KeyPath::Continue(sym, state)
+        KeyPath::Continue(sym, mods)
     }
 
-    /// Mod4-prefixed keys: only Mod4-q is bound (quit); anything else falls
+    /// Logo-prefixed keys: only logo+q is bound (quit); anything else falls
     /// through to the main switch like the C version.
-    fn mod4_key(&mut self, sym: u32, state: u32) -> KeyPath {
+    fn mod4_key(&mut self, sym: u32, mods: Modifiers) -> KeyPath {
         if sym == ks::KEY_q {
             return KeyPath::Done(Transition::Exit(ExitStatus::Failure));
         }
-        KeyPath::Continue(sym, state)
+        KeyPath::Continue(sym, mods)
     }
 
     /// Editing keys handled before list navigation.
@@ -292,7 +292,17 @@ impl Menu {
             if self.editor.cursor < self.editor.text.len() {
                 self.editor.cursor = self.editor.text.len();
             } else if self.paging.next.is_some() {
-                self.jump_to_end();
+                let mut m = TextMeasurer::new(
+                    &mut self.renderer,
+                    self.cfg.commented,
+                    self.layout.bar_height,
+                );
+                self.selection = paging::jump_to_end(
+                    &self.matcher.items,
+                    &self.matcher.matches,
+                    &self.layout,
+                    &mut m,
+                );
             }
             self.selection.selected = if self.matcher.matches.is_empty() {
                 None
@@ -308,8 +318,7 @@ impl Menu {
             {
                 self.editor.cursor = 0;
             } else {
-                self.selection.selected = Some(0);
-                self.selection.current = Some(0);
+                self.selection = Selection::from_match(self.matcher.matches.len());
                 self.recalc_paging();
             }
             Some(Transition::Redraw)
@@ -318,39 +327,18 @@ impl Menu {
         }
     }
 
-    /// jump to end of list and position items in reverse (End key).
-    fn jump_to_end(&mut self) {
-        let last = self.matcher.matches.len().saturating_sub(1);
-        self.selection.current = Some(last);
-        self.recalc_paging();
-        self.selection.current = Some(self.paging.prev);
-        self.recalc_paging();
-        loop {
-            if self.paging.next.is_none() {
-                break;
-            }
-            match self.selection.current {
-                Some(c) if c < last => {
-                    self.selection.current = Some(c + 1);
-                    self.recalc_paging();
-                }
-                _ => break,
-            }
-        }
-    }
-
     /// The unmodified key switch.
-    fn main_key(&mut self, sym: u32, state: u32, buf: &str) -> Transition {
+    fn main_key(&mut self, sym: u32, mods: Modifiers, buf: &str) -> Transition {
         if let Some(t) = self.edit_key(sym) {
             return t;
         }
-        self.nav_key(sym, state, buf)
+        self.nav_key(sym, mods, buf)
     }
 
     /// List navigation, actions and raw insertion.
-    fn nav_key(&mut self, sym: u32, state: u32, buf: &str) -> Transition {
+    fn nav_key(&mut self, sym: u32, mods: Modifiers, buf: &str) -> Transition {
         if sym == ks::KEY_Left || sym == ks::KEY_KP_Left {
-            self.move_left(state)
+            self.move_left(mods)
         } else if sym == ks::KEY_Up || sym == ks::KEY_KP_Up {
             self.nav_up();
             Transition::Redraw
@@ -358,22 +346,20 @@ impl Menu {
             let Some(next) = self.paging.next else {
                 return Transition::Nop;
             };
-            self.selection.selected = Some(next);
-            self.selection.current = Some(next);
+            self.selection = paging::at(next);
             self.recalc_paging();
             Transition::Redraw
         } else if sym == ks::KEY_Prior || sym == ks::KEY_KP_Prior {
             if self.selection.current.is_none() {
                 return Transition::Nop;
             }
-            self.selection.selected = Some(self.paging.prev);
-            self.selection.current = Some(self.paging.prev);
+            self.selection = paging::at(self.paging.prev);
             self.recalc_paging();
             Transition::Redraw
         } else if sym == ks::KEY_Return || sym == ks::KEY_KP_Enter {
-            self.handle_return(state).at_least_redraw()
+            self.handle_return(mods).at_least_redraw()
         } else if sym == ks::KEY_Right || sym == ks::KEY_KP_Right {
-            self.move_right(state)
+            self.move_right(mods)
         } else if sym == ks::KEY_Down || sym == ks::KEY_KP_Down {
             self.nav_down();
             Transition::Redraw
@@ -389,7 +375,7 @@ impl Menu {
             self.tabbed = true;
             Transition::Redraw
         } else if sym == ks::KEY_space && self.cfg.space_confirm {
-            self.handle_return(state).at_least_redraw()
+            self.handle_return(mods).at_least_redraw()
         } else {
             // insert: composed string from the input method
             if let Some(first) = buf.bytes().next() {
@@ -403,7 +389,7 @@ impl Menu {
 
     /// Left arrow: move a column left, move the cursor, or run the left
     /// command.
-    fn move_left(&mut self, state: u32) -> Transition {
+    fn move_left(&mut self, mods: Modifiers) -> Transition {
         if self.layout.columns > 1 {
             let Some(s) = self.selection.selected else {
                 return Transition::Nop;
@@ -426,7 +412,7 @@ impl Menu {
             }
             Transition::Redraw
         } else {
-            if (state & (SHIFT_MASK | MOD4_MASK) != 0)
+            if (mods.shift || mods.logo)
                 && (self.cfg.left_command.is_some() || self.cfg.right_command.is_some())
             {
                 return self.trigger_command(Side::Left);
@@ -449,7 +435,7 @@ impl Menu {
 
     /// Right arrow: move a column right, move the cursor, or run the right
     /// command.
-    fn move_right(&mut self, state: u32) -> Transition {
+    fn move_right(&mut self, mods: Modifiers) -> Transition {
         if self.layout.columns > 1 {
             let Some(s) = self.selection.selected else {
                 return Transition::Nop;
@@ -472,7 +458,7 @@ impl Menu {
             }
             Transition::Redraw
         } else {
-            if (state & (SHIFT_MASK | MOD4_MASK) != 0)
+            if (mods.shift || mods.logo)
                 && (self.cfg.right_command.is_some() || self.cfg.left_command.is_some())
             {
                 return self.trigger_command(Side::Right);

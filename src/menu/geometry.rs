@@ -60,6 +60,9 @@ impl Menu {
                 _ => 0,
             }
         };
+        /* the command-cell width (C's `arrowwidth`), measured once here so
+         * header geometry never re-measures it */
+        layout.command_width = self.cell_width(super::RIGHT_GLYPH);
         layout.menu_height = (layout.lines + 1) * layout.bar_height;
 
         let monitors: Vec<MonitorInfo> = self.backend.monitors().to_vec();
@@ -345,7 +348,10 @@ impl Menu {
 
         self.backend.map_window();
         if self.cfg.embed.is_some() {
-            self.backend.embed_setup(rect.origin());
+            if let Err(e) = self.backend.embed_setup(rect.origin()) {
+                eprintln!("instantmenu: {e}");
+                return Some(ExitStatus::Failure);
+            }
         }
         self.canvas
             .resize(Size::new(self.layout.menu_width, self.layout.menu_height));
@@ -436,7 +442,9 @@ fn select_monitor(monitors: &[MonitorInfo], choice: MonitorChoice, backend: &dyn
     let mut i = 0usize;
     if let Some(pointer) = backend.pointer_position() {
         for (idx, monitor) in monitors.iter().enumerate() {
-            if Rect::new(pointer.x, pointer.y, 1, 1).intersect_area(monitor.rect) != 0 {
+            /* half-open bounds: a point on a shared monitor edge belongs to
+             * the left/top one */
+            if monitor.rect.contains_exclusive(pointer) {
                 i = idx;
                 break;
             }

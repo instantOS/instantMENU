@@ -29,14 +29,14 @@ use std::io::Write;
 use std::os::fd::RawFd;
 use std::time::SystemTime;
 
-use crate::backend::{Backend, CONTROL_MASK, SHIFT_MASK};
+use crate::backend::{Backend, Modifiers};
 use crate::config::Config;
 use crate::enums::{ExitStatus, ItemCategory};
 use crate::geom::Rect;
 use crate::render::{Canvas, Painter, Renderer};
 
 use frecency::Frecency;
-use layout::Layout;
+use layout::{Header, Layout};
 use matcher::{Item, MatchResult, Matcher};
 use measure::{Measure, TextMeasurer};
 use paging::{Paging, Selection};
@@ -340,13 +340,13 @@ impl Menu {
     /// Confirm the selection: animate, print, exit unless Ctrl is held, and
     /// mark the item as already output. Returns the transition for run() to
     /// perform.
-    pub(in crate::menu) fn confirm(&mut self, out: &str, state: u32) -> Transition {
+    pub(in crate::menu) fn confirm(&mut self, out: &str, mods: Modifiers) -> Transition {
         self.animate_selection();
         if let Some(pos) = self.selection.selected {
             let item = &mut self.matcher.items[self.matcher.matches[pos]];
             item.already_output = true;
         }
-        if state & CONTROL_MASK == 0 {
+        if !mods.ctrl {
             Transition::PrintAndExit(out.to_string())
         } else {
             Transition::Print(out.to_string())
@@ -355,8 +355,8 @@ impl Menu {
 
     /// Ask the backend for the primary selection (clipboard when Shift is
     /// held) — shared by Ctrl-v/Ctrl-y and middle-click paste.
-    pub(in crate::menu) fn request_paste(&mut self, state: u32) {
-        self.backend.request_selection(state & SHIFT_MASK != 0);
+    pub(in crate::menu) fn request_paste(&mut self, mods: Modifiers) {
+        self.backend.request_selection(mods.shift);
     }
 
     /// Create a [`Painter`] drawing context over `self.renderer` and `self.canvas`.
@@ -376,19 +376,17 @@ impl Menu {
         .cell_width(s)
     }
 
-    /// Widest item cell width.
+    /// Widest item cell width, measured through the same seam as paging and
+    /// layout so the commented-mode square-cell rule lives in one place.
     pub(in crate::menu) fn max_cell_width(&mut self) -> i32 {
-        let commented = self.cfg.commented;
-        let horizontal_padding = self.renderer.horizontal_padding;
-        let bar_height = self.layout.bar_height;
+        let mut m = TextMeasurer::new(
+            &mut self.renderer,
+            self.cfg.commented,
+            self.layout.bar_height,
+        );
         let mut len = 0;
         for item in &self.matcher.items {
-            let width = if commented {
-                bar_height
-            } else {
-                self.renderer.text_width(&item.text) + horizontal_padding
-            };
-            len = len.max(width);
+            len = len.max(m.cell_width(&item.text));
         }
         len
     }
@@ -404,9 +402,33 @@ impl Menu {
 
     /* ── shared view-layout helpers (draw + hit-testing) ──────────────── */
 
-    /// Width reserved for the left/right command cells (C's `arrowwidth`).
-    pub(in crate::menu) fn command_cell_width(&mut self) -> i32 {
-        self.cell_width(RIGHT_GLYPH)
+    /// The resolved header-row geometry: the single source of truth shared
+    /// by drawing and mouse hit-testing, so a click target is always exactly
+    /// where its pixels were drawn.
+    pub(in crate::menu) fn header(&mut self) -> Header {
+        let show_numbers = self.show_numbers;
+        let numbers_width = if show_numbers {
+            self.cell_width(&self.numbers.clone())
+        } else {
+            0
+        };
+        let has_prompt = self.prompt().is_some_and(|p| !p.is_empty());
+        let has_matches = !self.matcher.matches.is_empty();
+        let mut m = TextMeasurer::new(
+            &mut self.renderer,
+            self.cfg.commented,
+            self.layout.bar_height,
+        );
+        Header::compute(
+            &self.layout,
+            self.cfg.left_command.is_some(),
+            self.cfg.right_command.is_some(),
+            has_prompt,
+            has_matches,
+            show_numbers,
+            numbers_width,
+            &mut m,
+        )
     }
 
     /// Visible horizontal-list items as `(match_pos, rect)` pairs. The single
@@ -432,6 +454,17 @@ impl Menu {
     }
 
     /* ── output helpers ─────────────────────────────────────────────────── */
+
+    /// Motion throttle: true when `time` is within one 60 Hz frame of the
+    /// previously accepted timestamp (the event should be dropped). The
+    /// wrapping subtraction is correct across the u32 server-time wrap.
+    pub(in crate::menu) fn motion_throttled(last: &mut u32, time: u32) -> bool {
+        if time.wrapping_sub(*last) <= 1000 / 60 {
+            return true;
+        }
+        *last = time;
+        false
+    }
 
     /// Emit a selection line. Recording runs after the line is out the door
     /// so cache I/O never delays the selection. Password input and slider

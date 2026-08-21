@@ -445,9 +445,7 @@ fn parse_seconds(s: &str) -> Result<f32, String> {
     if v.is_finite() && v >= 0.0 {
         Ok(v)
     } else {
-        Err(format!(
-            "seconds must be a non-negative number, got `{s}`"
-        ))
+        Err(format!("seconds must be a non-negative number, got `{s}`"))
     }
 }
 
@@ -617,9 +615,8 @@ mod tests {
 
     #[test]
     fn auto_sizing_values_parse() {
-        let a =
-            Args::try_parse_from(["instantmenu", "--width", "auto", "--line-height", "auto"])
-                .unwrap();
+        let a = Args::try_parse_from(["instantmenu", "--width", "auto", "--line-height", "auto"])
+            .unwrap();
         assert_eq!(a.window.width, Some(Width::Auto));
         assert_eq!(a.window.line_height, Some(LineHeight::FromFont));
 

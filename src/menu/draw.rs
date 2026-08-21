@@ -1,5 +1,7 @@
-//! Menu drawing: `draw_item` and `draw_menu`.
+//! Menu drawing: `draw_item` and `draw_menu`. All header-row geometry comes
+//! from [`Header`] (`Menu::header`) — the same rects mouse hit-testing uses.
 
+use super::layout::Header;
 use super::{Menu, LEFT_GLYPH, RIGHT_GLYPH};
 use crate::enums::{output_offset, ColorRole, ItemCategory, Scheme};
 use crate::geom::Rect;
@@ -157,9 +159,6 @@ impl Menu {
             return;
         }
         let font_height = self.renderer.font_height;
-        let mut x = 0;
-        let y = 0;
-        let arrow_width = self.command_cell_width();
 
         self.update_commented_prompt();
 
@@ -168,18 +167,21 @@ impl Menu {
         p.set_scheme(Scheme::Normal);
         p.clear(scheme_norm.bg);
 
-        self.draw_prompt(&mut x, arrow_width);
-        self.draw_input_field(x, arrow_width, font_height);
-
+        /* the item counter feeds the header (the ">" sits left of it), so
+         * the header geometry is resolved after it is up to date */
         self.recalculate_numbers();
+        let header = self.header();
+
+        self.draw_prompt(&header);
+        self.draw_input_field(&header, font_height);
 
         if self.layout.lines > 0 {
-            self.draw_grid(x, y);
+            self.draw_grid(header.content_x);
         } else if !self.matcher.matches.is_empty() {
-            self.draw_horizontal_list(x);
+            self.draw_horizontal_list(&header);
         }
 
-        self.draw_footer(arrow_width);
+        self.draw_footer(&header);
         self.backend.present(&self.canvas);
     }
 
@@ -192,45 +194,29 @@ impl Menu {
         }
     }
 
-    /// Draw the prompt, advancing `x` past it.
-    fn draw_prompt(&mut self, x: &mut i32, arrow_width: i32) {
-        let prompt = self.prompt().map(|p| p.to_string());
-        if let Some(prompt) = prompt.filter(|p| !p.is_empty()) {
-            if self.cfg.left_command.is_some() {
-                *x += arrow_width;
-            }
-            // short menus: the prompt spans all rows, tall ones one row
-            let prompt_height = if self.layout.lines < 8 {
-                self.layout.bar_height * (self.layout.lines + 1)
-            } else {
-                self.layout.bar_height
-            };
-            let rect = Rect::new(*x, 0, self.layout.prompt_width, prompt_height);
-            let lpad = self.renderer.cell_inset();
-            let mut p = self.painter();
-            p.set_scheme(Scheme::Selected);
-            /* The prompt is a solid block in the selected scheme: selected
-             * background fill with the selected foreground text on top (not
-             * inverted, and no detail strip). */
-            p.draw_text(rect, lpad, &prompt);
-            *x += self.layout.prompt_width;
-        }
+    /// Draw the prompt block.
+    fn draw_prompt(&mut self, header: &Header) {
+        let Some(rect) = header.prompt else {
+            return;
+        };
+        let Some(prompt) = self.prompt().map(str::to_string) else {
+            return;
+        };
+        let lpad = self.renderer.cell_inset();
+        let mut p = self.painter();
+        p.set_scheme(Scheme::Selected);
+        /* The prompt is a solid block in the selected scheme: selected
+         * background fill with the selected foreground text on top (not
+         * inverted, and no detail strip). */
+        p.draw_text(rect, lpad, &prompt);
     }
 
     /// Draw the input field (text, placeholder or password dots)
     /// and the cursor.
-    fn draw_input_field(&mut self, x: i32, arrow_width: i32, font_height: i32) {
-        let w = if self.layout.lines > 0 || self.matcher.matches.is_empty() {
-            self.layout.menu_width - x
-        } else {
-            self.layout.input_width
-        };
-        let field_x = x + if self.cfg.left_command.is_some() {
-            arrow_width
-        } else {
-            0
-        };
-        let field = Rect::new(field_x, 0, w, self.layout.bar_height);
+    fn draw_input_field(&mut self, header: &Header, font_height: i32) {
+        let field = header.input;
+        let w = field.w;
+        let field_x = field.x;
         let lpad = self.renderer.cell_inset();
 
         // Choose the field text before the painter is created: the painter
@@ -279,59 +265,40 @@ impl Menu {
     }
 
     /// Draw the vertical list / grid of items.
-    fn draw_grid(&mut self, x: i32, y: i32) {
+    fn draw_grid(&mut self, x: i32) {
         let start = self.selection.current.unwrap_or(0);
         let end = self.paging.next.unwrap_or(self.matcher.matches.len());
         for (i, pos) in (start..end).enumerate() {
-            let cell = self.layout.grid_cell_rect(i, x, y);
+            let cell = self.layout.grid_cell_rect(i, x);
             self.draw_item(pos, cell);
         }
     }
 
-    /// Draw the horizontal list of items with the paging arrows.
-    fn draw_horizontal_list(&mut self, x: i32) {
-        let bar_height = self.layout.bar_height;
-        let left_arrow_x = x + self.layout.input_width;
-        let arrow_width = self.cell_width("<");
+    /// Draw the horizontal list of items with the paging arrows. An active
+    /// arrow is always drawn at its click target (previously the right one
+    /// only appeared together with the item counter, shifted off its own
+    /// hit area).
+    fn draw_horizontal_list(&mut self, header: &Header) {
         let lpad = self.renderer.cell_inset();
         if self.selection.current.map(|c| c > 0).unwrap_or(false) {
             let mut p = self.painter();
             p.set_scheme(Scheme::Normal);
-            p.draw_text(
-                Rect::new(left_arrow_x, 0, arrow_width, bar_height),
-                lpad,
-                "<",
-            );
+            p.draw_text(header.left_arrow, lpad, "<");
         }
 
-        for (pos, rect) in self.horizontal_item_rects(x) {
+        for (pos, rect) in self.horizontal_item_rects(header.content_x) {
             self.draw_item(pos, rect);
         }
 
         if self.paging.next.is_some() {
-            let arrow_width = self.cell_width(">");
-            if self.show_numbers {
-                let numbers = self.numbers.clone();
-                let numbers_width = self.cell_width(&numbers);
-                let menu_width = self.layout.menu_width;
-                let mut p = self.painter();
-                p.set_scheme(Scheme::Normal);
-                p.draw_text(
-                    Rect::new(
-                        menu_width - arrow_width - numbers_width,
-                        0,
-                        arrow_width,
-                        bar_height,
-                    ),
-                    lpad,
-                    ">",
-                );
-            }
+            let mut p = self.painter();
+            p.set_scheme(Scheme::Normal);
+            p.draw_text(header.right_arrow, lpad, ">");
         }
     }
 
     /// Draw the item counter and the left/right command cells.
-    fn draw_footer(&mut self, arrow_width: i32) {
+    fn draw_footer(&mut self, header: &Header) {
         let bar_height = self.layout.bar_height;
         let lpad = self.renderer.cell_inset();
         let menu_width = self.layout.menu_width;
@@ -339,7 +306,7 @@ impl Menu {
             let numbers = self.numbers.clone();
             let numbers_width = self.cell_width(&numbers);
             let right_padding = if self.cfg.right_command.is_some() {
-                arrow_width
+                header.command_width
             } else {
                 0
             };
@@ -357,19 +324,15 @@ impl Menu {
             );
         }
         if self.layout.lines > 0 {
-            if self.cfg.left_command.is_some() {
+            if let Some(cell) = header.left_command {
                 let mut p = self.painter();
                 p.set_scheme(Scheme::Highlight);
-                p.draw_text(Rect::new(0, 0, arrow_width, bar_height), lpad, LEFT_GLYPH);
+                p.draw_text(cell, lpad, LEFT_GLYPH);
             }
-            if self.cfg.right_command.is_some() {
+            if let Some(cell) = header.right_command {
                 let mut p = self.painter();
                 p.set_scheme(Scheme::Highlight);
-                p.draw_text(
-                    Rect::new(menu_width - arrow_width, 0, arrow_width, bar_height),
-                    lpad,
-                    RIGHT_GLYPH,
-                );
+                p.draw_text(cell, lpad, RIGHT_GLYPH);
             }
         }
     }

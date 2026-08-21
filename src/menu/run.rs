@@ -97,10 +97,9 @@ impl Menu {
 
             let t = match ev {
                 BackendEvent::Motion { time, pos, .. } => {
-                    if time.wrapping_sub(last_time) <= 1000 / 60 {
+                    if Menu::motion_throttled(&mut last_time, time) {
                         continue;
                     }
-                    last_time = time;
                     self.set_selection(pos)
                 }
                 BackendEvent::Destroyed => return ExitStatus::Failure,
@@ -114,9 +113,10 @@ impl Menu {
                     Transition::Exit(ExitStatus::Failure)
                 }
                 BackendEvent::ButtonPress {
-                    button, state, pos, ..
-                } => self.button_press(button, state, pos),
+                    button, mods, pos, ..
+                } => self.button_press(button, mods, pos),
                 BackendEvent::ButtonRelease { .. } => continue,
+                BackendEvent::Scroll { delta } => self.scroll(delta),
                 BackendEvent::Expose => {
                     self.backend.present(&self.canvas);
                     continue;
@@ -124,11 +124,13 @@ impl Menu {
                 BackendEvent::FocusInOther => {
                     /* regrab focus from parent window */
                     let title = self.prompt().unwrap_or("dmenu").to_string();
-                    self.backend.grab_focus(&title);
+                    if self.backend.grab_focus(&title).is_err() {
+                        return ExitStatus::Failure;
+                    }
                     continue;
                 }
-                BackendEvent::KeyPress { sym, state, text } => self.key_press(sym, state, &text),
-                BackendEvent::KeyRelease { sym, state } => self.key_release(sym, state),
+                BackendEvent::KeyPress { sym, mods, text } => self.key_press(sym, mods, &text),
+                BackendEvent::KeyRelease { sym, mods } => self.key_release(sym, mods),
                 BackendEvent::SelectionNotify { text } => self.paste(&text),
                 BackendEvent::VisibilityObscured => {
                     self.backend.raise();

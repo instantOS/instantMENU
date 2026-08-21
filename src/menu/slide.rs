@@ -11,7 +11,7 @@
 use super::animate::spawn_detached;
 use super::transition::Transition;
 use super::Menu;
-use crate::backend::{BackendEvent, InputSource, MouseButton, CONTROL_MASK};
+use crate::backend::{BackendEvent, InputSource, Modifiers, MouseButton};
 use crate::config::SlideSettings;
 use crate::enums::{ExitStatus, Scheme};
 use crate::geom::{Point, Rect};
@@ -108,21 +108,21 @@ impl Menu {
                 return ExitStatus::Failure;
             };
             let t = match ev {
-                BackendEvent::KeyPress { sym, state, .. } => self.slide_key(sym, state),
+                BackendEvent::KeyPress { sym, mods, .. } => self.slide_key(sym, mods),
                 BackendEvent::KeyRelease { .. } => continue,
                 BackendEvent::ButtonPress {
                     source: InputSource::External,
                     ..
                 } => return ExitStatus::Failure,
                 BackendEvent::ButtonPress {
-                    button, state, pos, ..
-                } => self.slide_button(button, state, pos),
+                    button, mods, pos, ..
+                } => self.slide_button(button, mods, pos),
                 BackendEvent::ButtonRelease { button, pos, .. } => self.slide_release(button, pos),
+                BackendEvent::Scroll { delta } => self.slide_scroll(delta),
                 BackendEvent::Motion { time, pos, .. } => {
-                    if time.wrapping_sub(last_time) <= 1000 / 60 {
+                    if Menu::motion_throttled(&mut last_time, time) {
                         continue;
                     }
-                    last_time = time;
                     self.slide_motion(pos)
                 }
                 BackendEvent::Destroyed => return ExitStatus::Failure,
@@ -132,7 +132,9 @@ impl Menu {
                 }
                 BackendEvent::FocusInOther => {
                     let title = self.prompt().unwrap_or("slider").to_string();
-                    self.backend.grab_focus(&title);
+                    if self.backend.grab_focus(&title).is_err() {
+                        return ExitStatus::Failure;
+                    }
                     continue;
                 }
                 BackendEvent::VisibilityObscured => {
@@ -186,8 +188,8 @@ impl Menu {
 
     /// The slide keymap: hjkl/arrows step, digits jump to ninths, Home/End
     /// hit the range ends, Return prints the value, Escape/q cancels.
-    pub(super) fn slide_key(&mut self, sym: u32, state: u32) -> Transition {
-        if state & CONTROL_MASK != 0 {
+    pub(super) fn slide_key(&mut self, sym: u32, mods: Modifiers) -> Transition {
+        if mods.ctrl {
             // only the universal quit gesture is bound under Ctrl
             return if sym == ks::KEY_c {
                 Transition::Exit(ExitStatus::Failure)
@@ -237,7 +239,7 @@ impl Menu {
     pub(super) fn slide_button(
         &mut self,
         button: MouseButton,
-        _state: u32,
+        _mods: Modifiers,
         pos: Point,
     ) -> Transition {
         match button {
@@ -250,9 +252,13 @@ impl Menu {
             // reset to the initial value, like islide's middle click
             MouseButton::Middle => self.slide_edit(|s| s.set(s.initial)),
             MouseButton::Right => Transition::Exit(ExitStatus::Failure),
-            MouseButton::ScrollUp => self.slide_edit(|s| s.bump(s.step)),
-            MouseButton::ScrollDown => self.slide_edit(|s| s.bump(-s.step)),
         }
+    }
+
+    /// Wheel movement steps the value: up increases, down decreases (the
+    /// old wheel-button mapping).
+    pub(super) fn slide_scroll(&mut self, delta: i32) -> Transition {
+        self.slide_edit(|s| s.bump(if delta < 0 { s.step } else { -s.step }))
     }
 
     /// Left button released: end the drag. (X11 implicit grabs and Wayland's

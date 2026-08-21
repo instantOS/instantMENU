@@ -85,6 +85,12 @@ impl Rect {
         p.x >= self.x && p.x <= self.right() && p.y >= self.y && p.y <= self.bottom()
     }
 
+    /// Half-open containment: a point on the right/bottom edge belongs to
+    /// the next rectangle (monitor adjacency).
+    pub fn contains_exclusive(self, p: Point) -> bool {
+        p.x >= self.x && p.x < self.right() && p.y >= self.y && p.y < self.bottom()
+    }
+
     /// Overlap area with `other` (dmenu's INTERSECT macro); 0 when disjoint.
     pub fn intersect_area(self, other: Rect) -> i32 {
         (0.max(self.right().min(other.right()) - self.x.max(other.x)))

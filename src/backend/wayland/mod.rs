@@ -25,7 +25,8 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 use xkbcommon::xkb;
 
-use super::{Backend, BackendEvent, EventPoll, MonitorInfo};
+use super::poll::{first_ready, poll_fds, poll_in, remaining_ms, PollOutcome};
+use super::{Backend, BackendEvent, EventPoll, Modifiers, MonitorInfo};
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
 use selection::pump_offer;
@@ -43,10 +44,69 @@ pub(super) struct OutputEntry {
     pub(super) info: MonitorInfo,
 }
 
+/// The xkb modifier indices the core's [`Modifiers`] map to, resolved once
+/// per keymap. A name that does not resolve (`MOD_INVALID`) simply never
+/// matches — the modifier is treated as not held.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ModIndices {
+    shift: u32,
+    ctrl: u32,
+    alt: u32,
+    logo: u32,
+}
+
+impl ModIndices {
+    pub(super) fn resolve(keymap: &xkb::Keymap) -> Self {
+        fn index(keymap: &xkb::Keymap, name: &str) -> u32 {
+            keymap.mod_get_index(name)
+        }
+        ModIndices {
+            shift: index(keymap, "Shift"),
+            ctrl: index(keymap, "Control"),
+            alt: index(keymap, "Mod1"),
+            logo: index(keymap, "Mod4"),
+        }
+    }
+
+    /// Semantic modifiers for a raw xkb modifier mask.
+    pub(super) fn modifiers(self, mask: u32) -> Modifiers {
+        fn bit(mask: u32, index: u32) -> bool {
+            index != xkb::MOD_INVALID && mask & (1 << index) != 0
+        }
+        Modifiers {
+            shift: bit(mask, self.shift),
+            ctrl: bit(mask, self.ctrl),
+            alt: bit(mask, self.alt),
+            logo: bit(mask, self.logo),
+        }
+    }
+}
+
 struct Xkb {
+    /// Kept alive alongside the state (the C-level keymap backs it).
+    #[allow(dead_code)]
+    context: xkb::Context,
+    #[allow(dead_code)]
     keymap: xkb::Keymap,
     state: xkb::State,
-    mods: u32, // X11-style modifier mask
+    indices: ModIndices,
+    /// Last-seen modifier state. Wayland button events carry no modifier
+    /// state of their own, so pointer events are stamped from this cache.
+    mods: Modifiers,
+}
+
+impl Xkb {
+    fn new(context: xkb::Context, keymap: xkb::Keymap) -> Self {
+        let indices = ModIndices::resolve(&keymap);
+        let state = xkb::State::new(&keymap);
+        Xkb {
+            context,
+            keymap,
+            state,
+            indices,
+            mods: Modifiers::default(),
+        }
+    }
 }
 
 struct ShmSlot {
@@ -152,8 +212,6 @@ pub struct EventState {
     xdg_surface: Option<xdg_surface::XdgSurface>,
     xdg_toplevel: Option<xdg_toplevel::XdgToplevel>,
     configured: bool,
-    width: i32,
-    height: i32,
     /// border drawn around the menu content (`--border-width`); X11 gets this
     /// from the server, but Wayland surfaces have no border, so it is painted
     /// into the buffer here.
@@ -215,8 +273,6 @@ impl EventState {
             xdg_surface: None,
             xdg_toplevel: None,
             configured: false,
-            width: 0,
-            height: 0,
             border_width: 0,
             border_color: Color::rgb(0, 0, 0),
             frame_done: false,
@@ -682,6 +738,12 @@ impl WaylandBackend {
     }
 }
 
+/// The content rect expanded by the border on all sides (the full surface
+/// footprint; X11 gets its border from the server, Wayland paints it).
+fn bordered(rect: Rect, border: i32) -> Rect {
+    Rect::new(rect.x, rect.y, rect.w + 2 * border, rect.h + 2 * border)
+}
+
 impl Backend for WaylandBackend {
     fn monitors(&self) -> &[MonitorInfo] {
         &self.state.monitors
@@ -718,8 +780,6 @@ impl Backend for WaylandBackend {
         border_color: Color,
     ) -> Result<(), String> {
         let border_width = border_width.max(0);
-        self.state.width = rect.w + 2 * border_width;
-        self.state.height = rect.h + 2 * border_width;
         self.state.border_width = border_width;
         self.state.border_color = border_color;
 
@@ -733,24 +793,18 @@ impl Backend for WaylandBackend {
         if managed {
             self.create_managed(&surface, class_hint)
         } else {
-            self.create_layer(
-                &surface,
-                Rect::new(
-                    rect.x,
-                    rect.y,
-                    rect.w + 2 * border_width,
-                    rect.h + 2 * border_width,
-                ),
-                grab,
-                outside_close,
-            )
+            self.create_layer(&surface, bordered(rect, border_width), grab, outside_close)
         }
     }
 
-    fn grab_focus(&mut self, title: &str) {
+    fn grab_focus(&mut self, title: &str) -> Result<(), String> {
+        /* there is no focus to grab on Wayland — the layer surface's
+         * keyboard interactivity already routes the keyboard here; managed
+         * windows announce themselves by title like on X11 */
         if let Some(toplevel) = &self.state.xdg_toplevel {
             toplevel.set_title(title.to_string());
         }
+        Ok(())
     }
 
     fn set_title(&mut self, title: &str) {
@@ -766,9 +820,9 @@ impl Backend for WaylandBackend {
     }
 
     fn resize_window(&mut self, rect: Rect) {
-        let border = self.state.border_width;
-        let w = (rect.w + 2 * border).max(1);
-        let h = (rect.h + 2 * border).max(1);
+        let full = bordered(rect, self.state.border_width);
+        let w = full.w.max(1);
+        let h = full.h.max(1);
         if let Some(layer_surface) = &self.state.layer_surface {
             /* the anchor/margins from create_layer stay valid: a top-anchored
              * surface grows downward and a bottom-anchored one grows upward,
@@ -782,19 +836,21 @@ impl Backend for WaylandBackend {
         if !self.state.shields.is_empty() {
             /* recreate the click-catchers so their input region holes track
              * the new menu rectangle */
-            self.create_shields(Rect::new(rect.x, rect.y, w, h));
+            self.create_shields(Rect::new(full.x, full.y, w, h));
         }
     }
 
     fn wait_frame(&mut self) {
         /* Block until the frame committed by the last present() is on screen.
          * The frame callback is dispatched by the queue, so release events for
-         * previously-used buffers are processed here too. */
-        while !self.state.frame_done {
-            if self.state.dead {
+         * previously-used buffers are processed here too. A failed dispatch
+         * means the connection is dead — no further event (frame callback or
+         * otherwise) can ever arrive, so waiting on would spin forever. */
+        while !self.state.frame_done && !self.state.dead {
+            if self.queue.blocking_dispatch(&mut self.state).is_err() {
+                self.state.dead = true;
                 break;
             }
-            let _ = self.queue.blocking_dispatch(&mut self.state);
         }
     }
 
@@ -811,30 +867,16 @@ impl Backend for WaylandBackend {
                 return EventPoll::Event(ev);
             }
 
-            let timeout_ms = match timeout {
-                Some(dur) => {
-                    let elapsed = start.elapsed();
-                    if elapsed >= dur {
-                        return EventPoll::Timeout;
-                    }
-                    let remaining = dur - elapsed;
-                    remaining.as_millis().min(i32::MAX as u128) as i32
-                }
-                None => -1,
+            let timeout_ms = match remaining_ms(start, timeout) {
+                Ok(ms) => ms,
+                Err(()) => return EventPoll::Timeout,
             };
 
             /* Wait for the wayland socket or a pending selection pipe. A
              * blocking_dispatch() here would only wake on wayland events, so
              * the clipboard/primary transfer pipes would never be pumped. */
             let guard = self.queue.prepare_read();
-            let mut fds: Vec<libc::pollfd> = Vec::with_capacity(3 + extra.len());
-            if let Some(g) = &guard {
-                fds.push(libc::pollfd {
-                    fd: g.connection_fd().as_raw_fd(),
-                    events: libc::POLLIN,
-                    revents: 0,
-                });
-            } else {
+            let Some(guard) = guard else {
                 /* events are already pending in the queue: dispatch them
                  * before blocking on anything else */
                 if self.queue.dispatch_pending(&mut self.state).is_err() {
@@ -842,67 +884,43 @@ impl Backend for WaylandBackend {
                 }
                 let _ = self.connection.flush();
                 continue;
-            }
+            };
+            let mut fds: Vec<libc::pollfd> = Vec::with_capacity(3 + extra.len());
+            fds.push(poll_in(guard.connection_fd().as_raw_fd()));
             if let Some((_, tracker)) = &self.state.clipboard_offer {
                 if let Some(fd) = tracker.read_fd {
-                    fds.push(libc::pollfd {
-                        fd,
-                        events: libc::POLLIN,
-                        revents: 0,
-                    });
+                    fds.push(poll_in(fd));
                 }
             }
             if let Some((_, tracker)) = &self.state.primary_offer {
                 if let Some(fd) = tracker.read_fd {
-                    fds.push(libc::pollfd {
-                        fd,
-                        events: libc::POLLIN,
-                        revents: 0,
-                    });
+                    fds.push(poll_in(fd));
                 }
             }
             /* caller-owned fds (streaming stdin); watched last so the
              * internal indices stay stable */
             let extra_start = fds.len();
-            for &fd in extra {
-                fds.push(libc::pollfd {
-                    fd,
-                    events: libc::POLLIN,
-                    revents: 0,
-                });
-            }
-            let n = loop {
-                let n =
-                    unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
-                if n >= 0 {
-                    break n;
+            fds.extend(extra.iter().copied().map(poll_in));
+
+            match poll_fds(&mut fds, timeout_ms) {
+                PollOutcome::Timeout => {
+                    drop(guard);
+                    return EventPoll::Timeout;
                 }
-                let err = std::io::Error::last_os_error();
-                if err.kind() != std::io::ErrorKind::Interrupted {
-                    return EventPoll::Closed;
-                }
-            };
-            if n == 0 {
-                drop(guard);
-                return EventPoll::Timeout;
+                PollOutcome::Closed => return EventPoll::Closed,
+                PollOutcome::Ready => {}
             }
             /* extras first: a blocked pipe producer is more time-critical
              * than already-queued compositor work */
-            for (i, pfd) in fds.iter().enumerate().skip(extra_start) {
-                if pfd.revents & (libc::POLLIN | libc::POLLERR | libc::POLLHUP) != 0 {
-                    drop(guard);
-                    return EventPoll::Readable(i - extra_start);
-                }
+            if let Some(i) = first_ready(&fds, extra_start) {
+                drop(guard);
+                return EventPoll::Readable(i - extra_start);
             }
             /* read + dispatch only when the wayland socket is ready; when
              * only a selection pipe fired, drop the guard (cancels the
              * prepared read) and let pump_selection() drain it */
-            if fds[0].revents & (libc::POLLIN | libc::POLLERR | libc::POLLHUP) != 0 {
-                if let Some(g) = guard {
-                    if g.read().is_err() {
-                        return EventPoll::Closed;
-                    }
-                }
+            if first_ready(&fds, 0) == Some(0) && guard.read().is_err() {
+                return EventPoll::Closed;
             }
             if self.queue.dispatch_pending(&mut self.state).is_err() {
                 return EventPoll::Closed;

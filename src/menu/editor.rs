@@ -4,7 +4,7 @@
 use crate::enums::{Direction, EditOp};
 
 /// sizeof text in the C version (BUFSIZ) minus the terminator.
-pub(super) const TEXT_MAX: usize = 8192 - 1;
+const TEXT_MAX: usize = 8192 - 1;
 
 /// The menu's input line. Pure state: editing never matches, prints or
 /// exits — the shell wires edits to re-matching.
@@ -65,7 +65,7 @@ impl Editor {
         }
     }
 
-    pub fn is_delimiter(&self, pos: usize, delimiters: &str) -> bool {
+    fn is_delimiter(&self, pos: usize, delimiters: &str) -> bool {
         self.text
             .as_bytes()
             .get(pos)

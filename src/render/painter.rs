@@ -21,8 +21,6 @@ pub enum TextStyle {
     /// Like [`TextStyle::Normal`], plus a bottom detail strip; the text is
     /// centered in the region above the strip.
     Accented,
-    /// Fill the cell with the scheme foreground, draw the text in the background.
-    Inverted,
 }
 
 /// A drawing context that bundles mutable references to [`Renderer`] and [`Canvas`].
@@ -56,20 +54,9 @@ impl<'a> Painter<'a> {
         self.renderer.clear(self.canvas, color);
     }
 
-    /// Clear the entire canvas with the background color of the currently active scheme.
-    pub fn clear_with_scheme_bg(&mut self) {
-        let bg = self.renderer.scheme.bg;
-        self.renderer.clear(self.canvas, bg);
-    }
-
     /// Fill a rectangle with a specific [`ColorRole`] from the active scheme.
     pub fn fill_rect(&mut self, rect: Rect, role: ColorRole) {
         let color = self.renderer.scheme.role(role);
-        self.renderer.fill_rect(self.canvas, rect, color);
-    }
-
-    /// Fill a rectangle with an explicit [`Color`].
-    pub fn fill_solid_rect(&mut self, rect: Rect, color: Color) {
         self.renderer.fill_rect(self.canvas, rect, color);
     }
 
@@ -112,11 +99,6 @@ impl<'a> Painter<'a> {
                 self.renderer
                     .fill_rect(self.canvas, cell, self.renderer.scheme.bg);
                 (self.renderer.scheme.fg, cell)
-            }
-            TextStyle::Inverted => {
-                self.renderer
-                    .fill_rect(self.canvas, cell, self.renderer.scheme.fg);
-                (self.renderer.scheme.bg, cell)
             }
             TextStyle::Accented => {
                 self.fill_accented_rect(cell);
@@ -261,22 +243,6 @@ mod tests {
 
         assert_eq!(fg_pixel, bgra(norm.fg));
         assert_eq!(bg_pixel, bgra(norm.bg));
-    }
-
-    #[test]
-    fn clear_with_scheme_bg_clears_canvas() {
-        let mut renderer = make_test_renderer();
-        let mut canvas = Canvas::new(Size::new(10, 10));
-        let mut painter = Painter::new(&mut renderer, &mut canvas);
-        painter.set_scheme(Scheme::Selected);
-        painter.clear_with_scheme_bg();
-
-        let sel = painter.scheme();
-        let bgra = |c: Color| [c.b(), c.g(), c.r(), c.a()];
-
-        for pixel in painter.canvas.data.chunks_exact(4) {
-            assert_eq!(pixel, bgra(sel.bg));
-        }
     }
 
     #[test]

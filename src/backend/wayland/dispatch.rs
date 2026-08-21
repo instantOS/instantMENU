@@ -15,14 +15,18 @@ use wayland_protocols::wp::primary_selection::zv1::client::{
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
-use xkbcommon::xkb::{KeyDirection, Keycode};
+use xkbcommon::xkb::Keycode;
 
-use super::selection::{load_keymap, x11_mask};
+use super::selection::load_keymap;
 use super::{
     BackendEvent, EventState, MonitorInfo, OfferTracker, OutputEntry, PointerFocus, ShieldTag,
 };
-use crate::backend::{InputSource, MouseButton, XKB_OFFSET};
+use crate::backend::{translate_key, InputSource, MouseButton};
 use crate::geom::{Point, Rect};
+
+/// Offset added to raw evdev keycodes to get an xkb keycode (X11 keycodes
+/// already include it).
+const XKB_OFFSET: u32 = 8;
 
 macro_rules! noop_dispatch {
     ($($ty:ty),* $(,)?) => {
@@ -208,27 +212,16 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for EventState {
                 let Some(x) = state.xkb.as_mut() else { return };
                 let code = Keycode::new(key + XKB_OFFSET);
                 let pressed = matches!(key_state, WEnum::Value(wl_keyboard::KeyState::Pressed));
-                x.state.update_key(
-                    code,
-                    if pressed {
-                        KeyDirection::Down
-                    } else {
-                        KeyDirection::Up
-                    },
-                );
-                let sym = x.state.key_get_one_sym(code).raw();
+                let (sym, text) = translate_key(&mut x.state, code, pressed);
                 let mods = x.mods;
                 if pressed {
-                    let text = x.state.key_get_utf8(code);
-                    state.events.push_back(BackendEvent::KeyPress {
-                        sym,
-                        state: mods,
-                        text,
-                    });
+                    state
+                        .events
+                        .push_back(BackendEvent::KeyPress { sym, mods, text });
                 } else {
                     state
                         .events
-                        .push_back(BackendEvent::KeyRelease { sym, state: mods });
+                        .push_back(BackendEvent::KeyRelease { sym, mods });
                 }
             }
             wl_keyboard::Event::Modifiers {
@@ -241,7 +234,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for EventState {
                 x.state
                     .update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, 0);
                 let mask = mods_depressed | mods_latched | mods_locked;
-                x.mods = x11_mask(&x.keymap, mask);
+                x.mods = x.indices.modifiers(mask);
             }
             _ => {}
         }
@@ -261,7 +254,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
          * later event. The classification is a property of the surface, not
          * of each event — recomputing per-event meant a linear scan of
          * `state.shields` for every Motion, Axis, and Button. */
-        let mods = state.xkb.as_ref().map(|x| x.mods).unwrap_or(0);
+        let mods = state.xkb.as_ref().map(|x| x.mods).unwrap_or_default();
         let focus = match event {
             wl_pointer::Event::Enter {
                 surface,
@@ -324,7 +317,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
                         };
                         state.events.push_back(BackendEvent::ButtonPress {
                             button,
-                            state: mods,
+                            mods,
                             pos: Point::new(state.pointer_x as i32, state.pointer_y as i32),
                             source: InputSource::External,
                         });
@@ -335,7 +328,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
                         };
                         state.events.push_back(BackendEvent::ButtonPress {
                             button,
-                            state: mods,
+                            mods,
                             pos: Point::new(state.pointer_x as i32, state.pointer_y as i32),
                             source: InputSource::Menu,
                         });
@@ -353,23 +346,14 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
                     _ => {}
                 }
             }
-            /* wheel: map to the scroll buttons the menu core understands.
-             * Axis events arrive only on the focused surface, which is the
-             * menu (None is filtered above; Shield ignores wheel). */
             wl_pointer::Event::Axis {
                 axis: WEnum::Value(wl_pointer::Axis::VerticalScroll),
                 value,
                 ..
             } if focus == PointerFocus::Menu => {
-                state.events.push_back(BackendEvent::ButtonPress {
-                    button: if value > 0.0 {
-                        MouseButton::ScrollDown
-                    } else {
-                        MouseButton::ScrollUp
-                    },
-                    state: mods,
-                    pos: Point::new(-1, -1),
-                    source: InputSource::Menu,
+                /* one scroll step per axis batch; positive scrolls down */
+                state.events.push_back(BackendEvent::Scroll {
+                    delta: if value > 0.0 { 1 } else { -1 },
                 });
             }
             _ => {}
@@ -389,16 +373,10 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for EventState {
         match event {
             zwlr_layer_surface_v1::Event::Configure {
                 serial,
-                width,
-                height,
+                width: _,
+                height: _,
             } => {
                 surface.ack_configure(serial);
-                if width > 0 {
-                    state.width = width as i32;
-                }
-                if height > 0 {
-                    state.height = height as i32;
-                }
                 let was_configured = state.configured;
                 state.configured = true;
                 if !was_configured {
@@ -501,13 +479,9 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for EventState {
         _qh: &QueueHandle<Self>,
     ) {
         match event {
-            xdg_toplevel::Event::Configure { width, height, .. } => {
-                if width > 0 {
-                    state.width = width;
-                }
-                if height > 0 {
-                    state.height = height;
-                }
+            xdg_toplevel::Event::Configure { .. } => {
+                /* the WM owns the geometry of managed windows; the menu
+                 * draws at its own content size regardless */
             }
             xdg_toplevel::Event::Close => {
                 state.dead = true;

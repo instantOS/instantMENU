@@ -13,10 +13,13 @@ use x11rb::protocol::xproto::{
 use x11rb::protocol::Event;
 use x11rb::xcb_ffi::XCBConnection;
 use xkbcommon::xkb::x11 as xkbx11;
-use xkbcommon::xkb::{self, KeyDirection, Keycode};
+use xkbcommon::xkb::{self, Keycode};
 
-use super::{Backend, BackendEvent, EventPoll, InputSource, MonitorInfo, MouseButton};
-use crate::enums::ExitStatus;
+use super::poll::{first_ready, poll_fds, poll_in, remaining_ms, PollOutcome};
+use super::{
+    translate_key, Backend, BackendEvent, EventPoll, InputSource, Modifiers, MonitorInfo,
+    MouseButton,
+};
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
 
@@ -101,19 +104,8 @@ impl X11Backend {
     /// keysym + utf8 text for a raw X11 keycode, keeping the xkb state fresh.
     fn lookup_key(&mut self, keycode: u8, pressed: bool) -> (u32, String) {
         /* X11 keycodes are already xkb keycodes (the 8-key offset over raw
-         * evdev is included); only Wayland's raw evdev codes need XKB_OFFSET. */
-        let code = Keycode::new(keycode as u32);
-        self.xkb_state.update_key(
-            code,
-            if pressed {
-                KeyDirection::Down
-            } else {
-                KeyDirection::Up
-            },
-        );
-        let sym = self.xkb_state.key_get_one_sym(code).raw();
-        let text = self.xkb_state.key_get_utf8(code);
-        (sym, text)
+         * evdev is included); only Wayland's raw evdev codes need a shift. */
+        translate_key(&mut self.xkb_state, Keycode::new(keycode as u32), pressed)
     }
 
     fn flush(&self) {
@@ -121,10 +113,10 @@ impl X11Backend {
     }
 
     /// The grab loop from grabfocus(): 100 tries, managed windows rename
-    /// themselves instead of forcing focus.
-    fn grab_focus_inner(&mut self, title: Option<&str>) {
+    /// themselves instead of forcing focus. `Err` when focus never arrived.
+    fn grab_focus_inner(&mut self, title: Option<&str>) -> Result<(), String> {
         if !self.created {
-            return;
+            return Ok(());
         }
         for _ in 0..100 {
             let focused = self
@@ -135,7 +127,7 @@ impl X11Backend {
                 .map(|r| r.focus)
                 .unwrap_or(0);
             if focused == self.window {
-                return;
+                return Ok(());
             }
             if self.managed {
                 if let Some(title) = title {
@@ -151,8 +143,7 @@ impl X11Backend {
             self.flush();
             std::thread::sleep(Duration::from_millis(10));
         }
-        eprintln!("instantmenu: cannot grab focus");
-        ExitStatus::Failure.exit();
+        Err("cannot grab focus".to_string())
     }
 
     /// Grab the pointer like a GTK context menu: with owner-events presses
@@ -190,7 +181,7 @@ impl X11Backend {
                 let (sym, text) = self.lookup_key(k.detail, true);
                 Some(BackendEvent::KeyPress {
                     sym,
-                    state: k.state.bits() as u32,
+                    mods: x11_mods(k.state),
                     text,
                 })
             }
@@ -198,7 +189,7 @@ impl X11Backend {
                 let (sym, _) = self.lookup_key(k.detail, false);
                 Some(BackendEvent::KeyRelease {
                     sym,
-                    state: k.state.bits() as u32,
+                    mods: x11_mods(k.state),
                 })
             }
             Event::ButtonPress(b) => {
@@ -207,9 +198,9 @@ impl X11Backend {
                  * owner_events=true; stamp them as External so the run
                  * loop dismisses the modal menu like a GTK context menu.
                  * The grab is created only when outside_close was set.
-                 * Scroll wheels outside are swallowed: scrolling outside
-                 * should not dismiss or scroll the menu, only a real
-                 * click dismisses. */
+                 * Wheels outside are swallowed: scrolling outside should
+                 * neither dismiss nor scroll the menu, only a real click
+                 * dismisses. */
                 if self.pointer_grabbed && b.event != self.window && matches!(b.detail, 4..=7) {
                     return None;
                 }
@@ -219,10 +210,15 @@ impl X11Backend {
                 } else {
                     InputSource::External
                 };
+                /* vertical wheel buttons become scroll deltas; horizontal
+                 * ones (6/7) have no menu action and drop here */
+                if let Some(delta) = wheel_delta(b.detail) {
+                    return Some(BackendEvent::Scroll { delta });
+                }
                 let button = mouse_button(b.detail)?;
                 Some(BackendEvent::ButtonPress {
                     button,
-                    state: b.state.bits() as u32,
+                    mods: x11_mods(b.state),
                     pos: Point::new(b.event_x as i32, b.event_y as i32),
                     source,
                 })
@@ -470,8 +466,10 @@ impl Backend for X11Backend {
         }
     }
 
-    fn embed_setup(&mut self, pos: Point) {
-        let Some(parent) = self.embed else { return };
+    fn embed_setup(&mut self, pos: Point) -> Result<(), String> {
+        let Some(parent) = self.embed else {
+            return Ok(());
+        };
         let window = self.window;
         let _ = self
             .connection
@@ -496,13 +494,13 @@ impl Backend for X11Backend {
             }
         }
         self.flush();
-        self.grab_focus_inner(None);
+        self.grab_focus_inner(None)
     }
 
-    fn grab_keyboard(&mut self) {
+    fn grab_keyboard(&mut self) -> Result<(), String> {
         /* C grabkeyboard(): no-op when embedding or in managed mode */
         if self.embed.is_some() || self.managed {
-            return;
+            return Ok(());
         }
         /* XGrabKeyboard(owner_events=true, root) retried 1000x like the C code */
         for _ in 0..1000 {
@@ -521,16 +519,15 @@ impl Backend for X11Backend {
                 .unwrap_or(false);
             if ok {
                 self.flush();
-                return;
+                return Ok(());
             }
             std::thread::sleep(Duration::from_millis(1));
         }
-        eprintln!("instantmenu: cannot grab keyboard");
-        ExitStatus::Failure.exit();
+        Err("cannot grab keyboard".to_string())
     }
 
-    fn grab_focus(&mut self, title: &str) {
-        self.grab_focus_inner(Some(title));
+    fn grab_focus(&mut self, title: &str) -> Result<(), String> {
+        self.grab_focus_inner(Some(title))
     }
 
     fn set_title(&mut self, title: &str) {
@@ -633,55 +630,26 @@ impl Backend for X11Backend {
                 Err(_) => return EventPoll::Closed,
             }
 
-            let timeout_ms = match timeout {
-                Some(dur) => {
-                    let elapsed = start.elapsed();
-                    if elapsed >= dur {
-                        return EventPoll::Timeout;
-                    }
-                    let remaining = dur - elapsed;
-                    remaining.as_millis().min(i32::MAX as u128) as i32
-                }
-                None => -1,
+            let timeout_ms = match remaining_ms(start, timeout) {
+                Ok(ms) => ms,
+                Err(()) => return EventPoll::Timeout,
             };
 
             let mut fds: Vec<libc::pollfd> = Vec::with_capacity(1 + extra.len());
-            fds.push(libc::pollfd {
-                fd: self.connection.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            });
+            fds.push(poll_in(self.connection.as_raw_fd()));
             let extra_start = fds.len();
-            for &fd in extra {
-                fds.push(libc::pollfd {
-                    fd,
-                    events: libc::POLLIN,
-                    revents: 0,
-                });
-            }
+            fds.extend(extra.iter().copied().map(poll_in));
 
-            let n = loop {
-                let n =
-                    unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
-                if n >= 0 {
-                    break n;
-                }
-                let err = std::io::Error::last_os_error();
-                if err.kind() != std::io::ErrorKind::Interrupted {
-                    return EventPoll::Closed;
-                }
-            };
-
-            if n == 0 {
-                return EventPoll::Timeout;
+            match poll_fds(&mut fds, timeout_ms) {
+                PollOutcome::Timeout => return EventPoll::Timeout,
+                PollOutcome::Closed => return EventPoll::Closed,
+                PollOutcome::Ready => {}
             }
 
             /* extras first: a blocked pipe producer is more time-critical
              * than an X event that is already queued in the server */
-            for (i, pfd) in fds.iter().enumerate().skip(extra_start) {
-                if pfd.revents & (libc::POLLIN | libc::POLLERR | libc::POLLHUP) != 0 {
-                    return EventPoll::Readable(i - extra_start);
-                }
+            if let Some(i) = first_ready(&fds, extra_start) {
+                return EventPoll::Readable(i - extra_start);
             }
         }
     }
@@ -778,15 +746,35 @@ fn query_monitors(connection: &XCBConnection) -> Vec<MonitorInfo> {
     monitors
 }
 
-/// X11 button number -> normalized button.
+/// X11 button number -> normalized button (1/2/3 = left/middle/right).
 fn mouse_button(detail: u8) -> Option<MouseButton> {
     match detail {
         1 => Some(MouseButton::Left),
         2 => Some(MouseButton::Middle),
         3 => Some(MouseButton::Right),
-        4 => Some(MouseButton::ScrollUp),
-        5 => Some(MouseButton::ScrollDown),
         _ => None,
+    }
+}
+
+/// X11 vertical wheel buttons -> scroll delta: 4 scrolls up, 5 down.
+/// Horizontal wheel buttons (6/7) have no menu action.
+fn wheel_delta(detail: u8) -> Option<i32> {
+    match detail {
+        4 => Some(-1),
+        5 => Some(1),
+        _ => None,
+    }
+}
+
+/// X11 key/button mask bits -> semantic modifiers
+/// (ShiftMask=1<<0, ControlMask=1<<2, Mod1/Alt=1<<3, Mod4/Logo=1<<6).
+fn x11_mods(state: x11rb::protocol::xproto::KeyButMask) -> Modifiers {
+    let bits = state.bits();
+    Modifiers {
+        shift: bits & 1 != 0,
+        ctrl: bits & (1 << 2) != 0,
+        alt: bits & (1 << 3) != 0,
+        logo: bits & (1 << 6) != 0,
     }
 }
 

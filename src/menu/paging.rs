@@ -124,6 +124,53 @@ pub(super) fn retreat(sel: &Selection, paging: &Paging) -> (Selection, bool) {
     (sel, false)
 }
 
+/// A selection parked on `pos`: both the highlight and the page window start
+/// there (wheel down, PageDown and PageUp all land like this).
+pub(super) fn at(pos: usize) -> Selection {
+    Selection {
+        selected: Some(pos),
+        current: Some(pos),
+    }
+}
+
+/// Wheel up: the page window moves back to `paging.prev` and the selection
+/// follows the old page top (the C wheel handler's up half).
+pub(super) fn scroll_up(sel: &Selection, paging: &Paging) -> Selection {
+    Selection {
+        selected: sel.current,
+        current: Some(paging.prev),
+    }
+}
+
+/// End key: position the page window so the last item is visible, walking
+/// pages forward from the previous page boundary until the list end is in
+/// view (the C calcoffsets dance). Pure: re-measures through the seam.
+pub(super) fn jump_to_end(
+    items: &[Item],
+    matches: &[usize],
+    layout: &Layout,
+    measure: &mut dyn Measure,
+) -> Selection {
+    let Some(last) = matches.len().checked_sub(1) else {
+        return Selection::default();
+    };
+    let mut sel = Selection {
+        selected: Some(last),
+        current: Some(last),
+    };
+    let mut paging = calc_paging(&sel, items, matches, layout, measure);
+    sel.current = Some(paging.prev);
+    loop {
+        paging = calc_paging(&sel, items, matches, layout, measure);
+        match paging.next {
+            /* next is always past current; `<= last` means "current < last" */
+            Some(next) if next <= last => sel.current = Some(next),
+            _ => break,
+        }
+    }
+    sel
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,5 +372,68 @@ mod tests {
                 true
             )
         );
+    }
+
+    /// Wheel down / PageDown park both the selection and the page window on
+    /// the given position.
+    #[test]
+    fn at_parks_selection_and_page() {
+        assert_eq!(
+            at(4),
+            Selection {
+                selected: Some(4),
+                current: Some(4)
+            }
+        );
+    }
+
+    /// Wheel up moves the page window to `prev` and the selection follows
+    /// the old page top (not `prev` itself).
+    #[test]
+    fn scroll_up_follows_the_old_page_top() {
+        let paging = Paging {
+            next: Some(6),
+            prev: 0,
+        };
+        let sel = Selection {
+            selected: Some(5),
+            current: Some(3),
+        };
+        assert_eq!(
+            scroll_up(&sel, &paging),
+            Selection {
+                selected: Some(3),
+                current: Some(0)
+            }
+        );
+    }
+
+    /// End positions the page window so the last item is visible, walking
+    /// forward one page boundary at a time.
+    #[test]
+    fn jump_to_end_walks_to_the_last_page() {
+        // 7 items, 3 rows per page: pages start at 0, 3, 6. The last page
+        // window starts at 6, so the walk ends with current = 6.
+        let lay = layout(3, 1, 30, 0);
+        let its = items(&["a"; 7]);
+        let matches: Vec<usize> = (0..7).collect();
+        let mut m = FakeMeasure;
+        let sel = jump_to_end(&its, &matches, &lay, &mut m);
+        assert_eq!(
+            sel,
+            Selection {
+                selected: Some(6),
+                current: Some(6)
+            }
+        );
+
+        // a single partial page: the window stays at the top
+        let matches: Vec<usize> = (0..2).collect();
+        let sel = jump_to_end(&its, &matches, &lay, &mut m);
+        assert_eq!(sel.current, Some(0));
+
+        // no matches at all: default state
+        let sel = jump_to_end(&its, &[], &lay, &mut m);
+        assert_eq!(sel, Selection::default());
     }
 }
