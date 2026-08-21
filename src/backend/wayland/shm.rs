@@ -217,7 +217,8 @@ pub(super) fn blit_frame(
     let stride = (content_w + 2 * border) * 4;
     let content_stride = content_w * 4;
     let pixel = [color.b(), color.g(), color.r(), color.a()];
-    for chunk in dst.chunks_exact_mut(4) {
+    let (pixels, _) = dst.as_chunks_mut::<4>();
+    for chunk in pixels {
         chunk.copy_from_slice(&pixel);
     }
     for row in 0..content_h {

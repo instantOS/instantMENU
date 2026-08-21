@@ -2,13 +2,14 @@
 //! backend binds.
 
 use std::os::fd::AsRawFd;
+use std::time::Instant;
 
 use wayland_client::protocol::{
     wl_buffer, wl_callback, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer,
     wl_keyboard, wl_output, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm, wl_shm_pool,
     wl_surface,
 };
-use wayland_client::{Connection, Dispatch, QueueHandle, WEnum};
+use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum};
 use wayland_protocols::wp::primary_selection::zv1::client::{
     zwp_primary_selection_device_manager_v1, zwp_primary_selection_device_v1,
     zwp_primary_selection_offer_v1,
@@ -27,7 +28,9 @@ use super::probe::ProbeTag;
 use super::selection::OfferTracker;
 use super::shield::ShieldTag;
 use super::state::{EventState, OutputEntry, PointerFocus, ToplevelInfo};
-use crate::backend::{translate_key, BackendEvent, InputSource, MonitorInfo, MouseButton};
+use crate::backend::{
+    lookup_key, translate_key, BackendEvent, InputSource, MonitorInfo, MouseButton,
+};
 use crate::geom::{Point, Rect};
 
 /// Offset added to raw evdev keycodes to get an xkb keycode (X11 keycodes
@@ -81,15 +84,14 @@ impl Dispatch<wl_registry::WlRegistry, ()> for EventState {
                 interface,
                 version,
             } => {
-                let max_version = version.min(7);
                 match interface.as_str() {
                     "wl_compositor" => {
-                        state.compositor = Some(registry.bind(name, max_version.min(6), qh, ()))
+                        state.compositor = Some(registry.bind(name, version.min(6), qh, ()))
                     }
-                    "wl_shm" => state.shm = Some(registry.bind(name, 1.min(max_version), qh, ())),
+                    "wl_shm" => state.shm = Some(registry.bind(name, version.min(1), qh, ())),
                     "wl_output" => {
                         let proxy: wl_output::WlOutput =
-                            registry.bind(name, max_version.min(4), qh, ());
+                            registry.bind(name, version.min(4), qh, ());
                         state.outputs.push(OutputEntry {
                             proxy,
                             info: MonitorInfo {
@@ -99,23 +101,23 @@ impl Dispatch<wl_registry::WlRegistry, ()> for EventState {
                         });
                     }
                     "wl_seat" => {
-                        let seat: wl_seat::WlSeat = registry.bind(name, max_version.min(5), qh, ());
+                        /* Child wl_keyboard/wl_pointer objects inherit this
+                         * version. v10 adds compositor-driven key repeats. */
+                        let seat: wl_seat::WlSeat = registry.bind(name, version.min(10), qh, ());
                         state.seat = Some(seat);
                     }
                     "wl_data_device_manager" => {
                         state.data_device_manager =
-                            Some(registry.bind(name, max_version.min(3), qh, ()))
+                            Some(registry.bind(name, version.min(3), qh, ()))
                     }
                     "zwp_primary_selection_device_manager_v1" => {
-                        state.primary_manager =
-                            Some(registry.bind(name, 1.min(max_version), qh, ()))
+                        state.primary_manager = Some(registry.bind(name, version.min(1), qh, ()))
                     }
                     "zwlr_layer_shell_v1" => {
-                        state.layer_shell = Some(registry.bind(name, max_version.min(4), qh, ()))
+                        state.layer_shell = Some(registry.bind(name, version.min(4), qh, ()))
                     }
                     "zxdg_output_manager_v1" => {
-                        state.xdg_output_manager =
-                            Some(registry.bind(name, max_version.min(3), qh, ()))
+                        state.xdg_output_manager = Some(registry.bind(name, version.min(3), qh, ()))
                     }
                     "wp_viewporter" => state.viewporter = Some(registry.bind(name, 1, qh, ())),
                     "zwlr_foreign_toplevel_manager_v1" => {
@@ -123,11 +125,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for EventState {
                          * present in v1; v2 only adds fullscreen controls. */
                         if state.track_focused_monitor {
                             state.foreign_manager =
-                                Some(registry.bind(name, max_version.min(3), qh, ()))
+                                Some(registry.bind(name, version.min(3), qh, ()))
                         }
                     }
                     "xdg_wm_base" => {
-                        state.wm_base = Some(registry.bind(name, max_version.min(6), qh, ()))
+                        state.wm_base = Some(registry.bind(name, version.min(6), qh, ()))
                     }
                     _ => {}
                 }
@@ -187,9 +189,24 @@ impl Dispatch<wl_seat::WlSeat, ()> for EventState {
             };
             if caps.contains(wl_seat::Capability::Keyboard) && state.keyboard.is_none() {
                 state.keyboard = Some(seat.get_keyboard(qh, ()));
+            } else if !caps.contains(wl_seat::Capability::Keyboard) {
+                if let Some(keyboard) = state.keyboard.take() {
+                    if keyboard.version() >= 3 {
+                        keyboard.release();
+                    }
+                }
+                state.xkb = None;
+                state.key_repeat.cancel();
             }
             if caps.contains(wl_seat::Capability::Pointer) && state.pointer.is_none() {
                 state.pointer = Some(seat.get_pointer(qh, ()));
+            } else if !caps.contains(wl_seat::Capability::Pointer) {
+                if let Some(pointer) = state.pointer.take() {
+                    if pointer.version() >= 3 {
+                        pointer.release();
+                    }
+                }
+                state.pointer_focus = PointerFocus::None;
             }
             /* bind the selection devices once we have a seat */
             if state.data_device.is_none() {
@@ -222,6 +239,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for EventState {
                 size,
             } => {
                 if let Some(xkb) = load_keymap(fd.as_raw_fd(), size as usize) {
+                    state.key_repeat.cancel();
                     state.xkb = Some(xkb);
                 }
                 /* fd is an OwnedFd and closes on drop */
@@ -231,20 +249,57 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for EventState {
                 state: key_state,
                 ..
             } => {
-                let Some(x) = state.xkb.as_mut() else { return };
-                let code = Keycode::new(key + XKB_OFFSET);
-                let pressed = matches!(key_state, WEnum::Value(wl_keyboard::KeyState::Pressed));
-                let (sym, text) = translate_key(&mut x.state, code, pressed);
-                let mods = x.mods;
-                if pressed {
-                    state
-                        .events
-                        .push_back(BackendEvent::KeyPress { sym, mods, text });
-                } else {
-                    state
-                        .events
-                        .push_back(BackendEvent::KeyRelease { sym, mods });
+                let code = key + XKB_OFFSET;
+                match key_state {
+                    WEnum::Value(wl_keyboard::KeyState::Pressed) => {
+                        let Some(x) = state.xkb.as_mut() else { return };
+                        let (sym, text) = translate_key(&mut x.state, Keycode::new(code), true);
+                        let mods = x.mods;
+                        let repeats = x.key_repeats(code);
+                        if repeats {
+                            state.key_repeat.arm(code, Instant::now());
+                        }
+                        state
+                            .events
+                            .push_back(BackendEvent::KeyPress { sym, mods, text });
+                    }
+                    WEnum::Value(wl_keyboard::KeyState::Released) => {
+                        state.key_repeat.release(code);
+                        let Some(x) = state.xkb.as_mut() else { return };
+                        let (sym, _) = translate_key(&mut x.state, Keycode::new(code), false);
+                        state
+                            .events
+                            .push_back(BackendEvent::KeyRelease { sym, mods: x.mods });
+                    }
+                    WEnum::Value(wl_keyboard::KeyState::Repeated) => {
+                        /* v10 compositor-side repeat. Never feed another key
+                         * down into xkb: the physical key is already down. */
+                        state.key_repeat.release(code);
+                        let Some(x) = state.xkb.as_ref() else { return };
+                        let (sym, text) = lookup_key(&x.state, Keycode::new(code));
+                        state.events.push_back(BackendEvent::KeyPress {
+                            sym,
+                            mods: x.mods,
+                            text,
+                        });
+                    }
+                    WEnum::Value(_) | WEnum::Unknown(_) => (),
                 }
+            }
+            wl_keyboard::Event::Enter { keys, .. } => {
+                state.key_repeat.cancel();
+                if let Some(xkb) = state.xkb.as_mut() {
+                    xkb.enter(&keys);
+                }
+            }
+            wl_keyboard::Event::Leave { .. } => {
+                state.key_repeat.cancel();
+                if let Some(xkb) = state.xkb.as_mut() {
+                    xkb.leave();
+                }
+            }
+            wl_keyboard::Event::RepeatInfo { rate, delay } => {
+                state.key_repeat.update_info(rate, delay, Instant::now());
             }
             wl_keyboard::Event::Modifiers {
                 mods_depressed,

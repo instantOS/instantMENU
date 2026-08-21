@@ -244,9 +244,15 @@ pub(crate) fn translate_key(state: &mut xkb::State, code: Keycode, pressed: bool
             KeyDirection::Up
         },
     );
-    let sym = state.key_get_one_sym(code).raw();
-    let text = state.key_get_utf8(code);
-    (sym, text)
+    lookup_key(state, code)
+}
+
+/// Resolve a key through the current xkb state without changing its physical
+/// up/down state. Wayland repeats are logical key presses between the real
+/// press and release, so feeding another `KeyDirection::Down` into xkb would
+/// corrupt the state machine.
+pub(crate) fn lookup_key(state: &xkb::State, code: Keycode) -> (u32, String) {
+    (state.key_get_one_sym(code).raw(), state.key_get_utf8(code))
 }
 
 /// Open the backend. `choice` is the `--backend` selection: `Auto` prefers

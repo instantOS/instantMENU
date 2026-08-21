@@ -21,7 +21,7 @@ use wayland_protocols_wlr::foreign_toplevel::v1::client::{
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
-use super::keyboard::Xkb;
+use super::keyboard::{KeyboardRepeat, Xkb};
 use super::probe::Probe;
 use super::selection::OfferTracker;
 use super::shield::Shield;
@@ -101,6 +101,7 @@ pub struct EventState {
 
     /* keyboard */
     pub(super) xkb: Option<Xkb>,
+    pub(super) key_repeat: KeyboardRepeat,
 
     /* window */
     pub(super) surface: Option<wl_surface::WlSurface>,
@@ -176,6 +177,7 @@ impl EventState {
             probe_pool: None,
             probe_answer: None,
             xkb: None,
+            key_repeat: KeyboardRepeat::new(),
             surface: None,
             layer_surface: None,
             xdg_surface: None,

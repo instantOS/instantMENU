@@ -16,13 +16,15 @@ mod state;
 
 use std::os::fd::AsRawFd;
 use std::os::unix::io::RawFd;
+use std::time::{Duration, Instant};
 
 use wayland_client::protocol::wl_surface;
 use wayland_client::{Connection, EventQueue};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+use xkbcommon::xkb::Keycode;
 
 use super::poll::{first_ready, poll_fds, poll_in, remaining_ms, PollOutcome};
-use super::{Backend, BackendEvent, EventPoll, MonitorInfo};
+use super::{lookup_key, Backend, BackendEvent, EventPoll, MonitorInfo};
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
 use probe::PROBE_TIMEOUT_MS;
@@ -102,6 +104,17 @@ impl WaylandBackend {
             let _ = guard.read();
         }
         let _ = self.queue.dispatch_pending(&mut self.state);
+    }
+
+    fn take_repeat(&mut self, now: Instant) -> Option<BackendEvent> {
+        let code = self.state.key_repeat.take_due(now)?;
+        let xkb = self.state.xkb.as_ref()?;
+        let (sym, text) = lookup_key(&xkb.state, Keycode::new(code));
+        Some(BackendEvent::KeyPress {
+            sym,
+            mods: xkb.mods,
+            text,
+        })
     }
 
     /// xdg-shell managed window.
@@ -376,7 +389,7 @@ impl Backend for WaylandBackend {
     }
 
     fn poll_event(&mut self, timeout: Option<std::time::Duration>, extra: &[RawFd]) -> EventPoll {
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         loop {
             if let Some(ev) = self.state.events.pop_front() {
                 return EventPoll::Event(ev);
@@ -387,11 +400,19 @@ impl Backend for WaylandBackend {
             if let Some(ev) = self.pump_selection() {
                 return EventPoll::Event(ev);
             }
+            if let Some(ev) = self.take_repeat(Instant::now()) {
+                return EventPoll::Event(ev);
+            }
 
-            let timeout_ms = match remaining_ms(start, timeout) {
+            let caller_timeout_ms = match remaining_ms(start, timeout) {
                 Ok(ms) => ms,
                 Err(()) => return EventPoll::Timeout,
             };
+            let (timeout_ms, repeat_drives_poll) = poll_timeout(
+                caller_timeout_ms,
+                Instant::now(),
+                self.state.key_repeat.deadline(),
+            );
 
             /* Wait for the wayland socket or a pending selection pipe. A
              * blocking_dispatch() here would only wake on wayland events, so
@@ -426,6 +447,12 @@ impl Backend for WaylandBackend {
             match poll_fds(&mut fds, timeout_ms) {
                 PollOutcome::Timeout => {
                     drop(guard);
+                    /* An internal repeat deadline is not a caller-visible
+                     * timeout. Loop even if millisecond rounding woke us a
+                     * fraction early; the next poll will cover the remainder. */
+                    if repeat_drives_poll {
+                        continue;
+                    }
                     return EventPoll::Timeout;
                 }
                 PollOutcome::Closed => return EventPoll::Closed,
@@ -475,10 +502,38 @@ impl Backend for WaylandBackend {
     }
 }
 
+/// Clamp an fd-poll timeout to the next key-repeat deadline. `poll(2)` has
+/// millisecond resolution, so round an internal duration up: waking early and
+/// polling repeatedly would otherwise burn CPU for sub-millisecond remnants.
+fn poll_timeout(caller_ms: i32, now: Instant, deadline: Option<Instant>) -> (i32, bool) {
+    let Some(deadline) = deadline else {
+        return (caller_ms, false);
+    };
+    let remaining = deadline.saturating_duration_since(now);
+    let repeat_ms = duration_to_poll_ms(remaining);
+    let repeat_drives_poll = caller_ms < 0 || repeat_ms <= caller_ms;
+    if repeat_drives_poll {
+        (repeat_ms, true)
+    } else {
+        (caller_ms, false)
+    }
+}
+
+fn duration_to_poll_ms(duration: Duration) -> i32 {
+    if duration.is_zero() {
+        return 0;
+    }
+    duration
+        .as_nanos()
+        .div_ceil(1_000_000)
+        .min(i32::MAX as u128) as i32
+}
+
 #[cfg(test)]
 mod tests {
-    use super::layer_margins;
+    use super::{duration_to_poll_ms, layer_margins, poll_timeout};
     use crate::geom::Rect;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn layer_margins_follow_every_absolute_reflow() {
@@ -501,5 +556,24 @@ mod tests {
             layer_margins(Rect::new(-2000, -1200, 600, 300), monitor),
             (0, 0)
         );
+    }
+
+    #[test]
+    fn repeat_deadline_clamps_infinite_and_later_caller_timeouts() {
+        let now = Instant::now();
+        let deadline = now + Duration::from_millis(25);
+        assert_eq!(poll_timeout(-1, now, Some(deadline)), (25, true));
+        assert_eq!(poll_timeout(100, now, Some(deadline)), (25, true));
+        assert_eq!(poll_timeout(25, now, Some(deadline)), (25, true));
+        assert_eq!(poll_timeout(10, now, Some(deadline)), (10, false));
+        assert_eq!(poll_timeout(10, now, None), (10, false));
+    }
+
+    #[test]
+    fn repeat_poll_rounds_sub_millisecond_deadlines_up() {
+        assert_eq!(duration_to_poll_ms(Duration::ZERO), 0);
+        assert_eq!(duration_to_poll_ms(Duration::from_nanos(1)), 1);
+        assert_eq!(duration_to_poll_ms(Duration::from_micros(999)), 1);
+        assert_eq!(duration_to_poll_ms(Duration::from_micros(1001)), 2);
     }
 }
