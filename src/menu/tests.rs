@@ -10,7 +10,7 @@ use crate::backend::{
     Backend, BackendEvent, EventPoll, InputSource, MonitorInfo, MouseButton, CONTROL_MASK,
     MOD1_MASK, MOD4_MASK, SHIFT_MASK,
 };
-use crate::config::{Config, SlideSettings};
+use crate::config::{Config, SlideSettings, Width};
 use crate::enums::{ExitStatus, Scheme};
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color, Renderer};
@@ -665,11 +665,11 @@ fn run_outside_click_exits_with_failure() {
     assert_eq!(menu.run(), ExitStatus::Failure);
 }
 
-/// -T: toast mode ignores all events and times out successfully.
+/// --toast: toast mode ignores all events and times out successfully.
 #[test]
 fn run_toast_times_out_with_success() {
     let cfg = Config {
-        toast: 1, // one tenth of a second
+        toast: Some(0.1), // a tenth of a second
         ..Config::default()
     };
     let (mut menu, stub, _out) = menu_with(cfg, &["alpha"]);
@@ -682,7 +682,7 @@ fn run_toast_times_out_with_success() {
 #[test]
 fn run_toast_negative_is_clamped() {
     let cfg = Config {
-        toast: -5,
+        toast: Some(-0.5),
         ..Config::default()
     };
     let (mut menu, _stub, _out) = menu_with(cfg, &["alpha"]);
@@ -692,7 +692,7 @@ fn run_toast_negative_is_clamped() {
 #[test]
 fn run_toast_re_presents_on_expose() {
     let cfg = Config {
-        toast: 1,
+        toast: Some(0.1),
         ..Config::default()
     };
     let (mut menu, stub, _out) = menu_with(cfg, &["alpha"]);
@@ -704,7 +704,7 @@ fn run_toast_re_presents_on_expose() {
 #[test]
 fn run_toast_fails_on_destroyed() {
     let cfg = Config {
-        toast: 10,
+        toast: Some(1.0),
         ..Config::default()
     };
     let (mut menu, stub, _out) = menu_with(cfg, &["alpha"]);
@@ -1144,8 +1144,9 @@ fn slide_paints_the_fill_with_the_selected_background() {
 /// painted with the item's scheme down to the row's bottom edge and, for
 /// the selected item, the detail strip sits at the bottom of the row like
 /// every other cell. Regression: the icon cell was drawn at only
-/// `line_height` (8px with `--line-height -1`), which shifted the glyph up
-/// into the previous row and put the accent strip at the top of the row.
+/// `line_height` (8px under the old `--line-height -1` clamping), which
+/// shifted the glyph up into the previous row and put the accent strip at
+/// the top of the row.
 #[test]
 fn icon_cell_spans_the_full_bar_height() {
     let (mut menu, _stub, _out) = menu_with(Config::default(), &[":b \u{f011}Shutdown"]);
@@ -1373,7 +1374,7 @@ fn reflow_adopts_grid_changes_that_keep_the_rect() {
     let cfg = Config {
         lines: 2,
         columns: 3,
-        width: 600,
+        width: Width::Fixed(600),
         ..Config::default()
     };
     let (mut menu, stub, _out) = menu_with(cfg, &[]);

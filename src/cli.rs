@@ -12,12 +12,13 @@
 //!
 //! Unlike the C `atoi`, numeric options parse strictly: a malformed number
 //! is an error, not silently 0. Options that take a negative value
-//! (`--width -1`, `--line-height -1`, ...) accept hyphen-prefixed values.
+//! (`--x-offset -5`, `--y-offset -3`, ...) accept hyphen-prefixed values;
+//! sizing options take `auto` instead of a negative sentinel.
 
 use clap::{Parser, Subcommand};
 
 use crate::backend::BackendChoice;
-use crate::config::{MatchMode, Position};
+use crate::config::{LineHeight, MatchMode, MonitorChoice, Position, Width};
 use std::path::PathBuf;
 
 /// Long-form description shown by `--help` and the generated man page.
@@ -93,17 +94,16 @@ pub struct MenuArgs {
     #[arg(long, short = 'r')]
     pub reject_no_match: bool,
 
-    /// Toast mode that times out after a while (tenths of seconds).
+    /// Toast mode that times out after SECONDS seconds.
     ///
     /// The menu draws itself, waits the given time, then exits without a
-    /// selection.
+    /// selection. 0 keeps the timeout disabled.
     #[arg(
         long,
-        value_name = "TENTHS",
-        allow_hyphen_values = true,
-        value_parser = clap::value_parser!(i32).range(0..)
+        value_name = "SECONDS",
+        value_parser = parse_seconds
     )]
-    pub toast: Option<i32>,
+    pub toast: Option<f32>,
 
     /// Activate instantASSIST mode (single-letter launcher).
     #[arg(long)]
@@ -161,14 +161,14 @@ pub struct MenuArgs {
     #[arg(long, value_name = "CMD")]
     pub left_command: Option<String>,
 
-    /// Number of columns in grid mode (0 means 1).
+    /// Number of columns in grid mode.
     ///
     /// Implies one line per row unless --lines is given.
     #[arg(
         long,
         short = 'g',
         value_name = "N",
-        value_parser = clap::value_parser!(i32).range(0..)
+        value_parser = clap::value_parser!(i32).range(1..)
     )]
     pub columns: Option<i32>,
 
@@ -197,7 +197,11 @@ pub struct MenuArgs {
     /// Preselected item index.
     ///
     /// Starts from 0.
-    #[arg(long, value_name = "N", allow_hyphen_values = true)]
+    #[arg(
+        long,
+        value_name = "N",
+        value_parser = clap::value_parser!(i32).range(0..)
+    )]
     pub preselect: Option<i32>,
 
     /// Initial input text.
@@ -292,29 +296,29 @@ pub struct WindowArgs {
 
     /// Make instantmenu this wide.
     ///
-    /// A negative value adjusts the width to the longest line read from
-    /// stdin.
+    /// `auto` sizes the menu to its content (the widest item plus the
+    /// prompt).
     #[arg(
         long,
         short = 'w',
-        value_name = "N",
-        allow_hyphen_values = true,
+        value_name = "N|auto",
+        value_parser = parse_width,
         global = true
     )]
-    pub width: Option<i32>,
+    pub width: Option<Width>,
 
     /// Select monitor by index.
     ///
-    /// Monitor numbers start from 0. Use -1 for automatic selection.
+    /// Monitor numbers start from 0. `auto` follows keyboard focus, then
+    /// the pointer (the default).
     #[arg(
         long,
         short = 'm',
-        value_name = "N",
-        allow_hyphen_values = true,
-        value_parser = clap::value_parser!(i32).range(-1..),
+        value_name = "N|auto",
+        value_parser = parse_monitor,
         global = true
     )]
-    pub monitor: Option<i32>,
+    pub monitor: Option<MonitorChoice>,
 
     /// Prompt added to the left of the input field (menu mode) or the
     /// slider label (slide mode).
@@ -327,9 +331,14 @@ pub struct WindowArgs {
 
     /// Minimum height of one menu line.
     ///
-    /// At least 8 pixels.
-    #[arg(long, value_name = "N", allow_hyphen_values = true, global = true)]
-    pub line_height: Option<i32>,
+    /// At least 8 pixels; `auto` derives it from the font.
+    #[arg(
+        long,
+        value_name = "N|auto",
+        value_parser = parse_line_height,
+        global = true
+    )]
+    pub line_height: Option<LineHeight>,
 
     /// Normal background color.
     ///
@@ -380,6 +389,65 @@ fn parse_window_id(s: &str) -> Result<u32, String> {
     } else {
         t.parse::<u32>()
             .map_err(|_| format!("invalid window id: `{s}`"))
+    }
+}
+
+/// Parse `--width`: a positive pixel count, or `auto` to fit the content.
+fn parse_width(s: &str) -> Result<Width, String> {
+    if s.eq_ignore_ascii_case("auto") {
+        return Ok(Width::Auto);
+    }
+    let n = s
+        .parse::<i32>()
+        .map_err(|_| format!("invalid width: `{s}` (expected a positive number or `auto`)"))?;
+    if n > 0 {
+        Ok(Width::Fixed(n))
+    } else {
+        Err(format!(
+            "width must be a positive number or `auto`, got `{s}`"
+        ))
+    }
+}
+
+/// Parse `--line-height`: a positive pixel count, or `auto` to derive it
+/// from the font.
+fn parse_line_height(s: &str) -> Result<LineHeight, String> {
+    if s.eq_ignore_ascii_case("auto") {
+        return Ok(LineHeight::FromFont);
+    }
+    let n = s.parse::<i32>().map_err(|_| {
+        format!("invalid line height: `{s}` (expected a positive number or `auto`)")
+    })?;
+    if n > 0 {
+        Ok(LineHeight::Pixels(n))
+    } else {
+        Err(format!(
+            "line height must be a positive number or `auto`, got `{s}`"
+        ))
+    }
+}
+
+/// Parse `--monitor`: a 0-based index, or `auto`.
+fn parse_monitor(s: &str) -> Result<MonitorChoice, String> {
+    if s.eq_ignore_ascii_case("auto") {
+        return Ok(MonitorChoice::Auto);
+    }
+    s.parse::<u32>()
+        .map(MonitorChoice::Index)
+        .map_err(|_| format!("invalid monitor: `{s}` (expected a number or `auto`)"))
+}
+
+/// Parse `--toast`: a number of seconds, fractions allowed.
+fn parse_seconds(s: &str) -> Result<f32, String> {
+    let v = s
+        .parse::<f32>()
+        .map_err(|_| format!("invalid number of seconds: `{s}`"))?;
+    if v.is_finite() && v >= 0.0 {
+        Ok(v)
+    } else {
+        Err(format!(
+            "seconds must be a non-negative number, got `{s}`"
+        ))
     }
 }
 
@@ -501,8 +569,6 @@ mod tests {
             "center",
             "--width",
             "900",
-            "--line-height",
-            "-1",
             "--border-width",
             "4",
         ];
@@ -523,9 +589,62 @@ mod tests {
 
     #[test]
     fn negative_numbers_accepted() {
-        let a = Args::try_parse_from(["instantmenu", "-w", "-1", "--preselect", "-2"]).unwrap();
-        assert_eq!(a.window.width, Some(-1));
-        assert_eq!(a.menu.preselect, Some(-2));
+        /* offsets are genuinely signed values */
+        let a = Args::try_parse_from(["instantmenu", "-x", "-5", "-y", "-3"]).unwrap();
+        assert_eq!(a.window.x_offset, Some(-5));
+        assert_eq!(a.window.y_offset, Some(-3));
+    }
+
+    #[test]
+    fn negative_sentinels_rejected() {
+        /* sizing options take `auto` instead of the old negative sentinels,
+         * and counts start at their natural minimum */
+        for bad in [
+            &["instantmenu", "--width", "-1"][..],
+            &["instantmenu", "--width", "0"][..],
+            &["instantmenu", "--line-height", "-1"][..],
+            &["instantmenu", "--line-height", "0"][..],
+            &["instantmenu", "--monitor", "-1"][..],
+            &["instantmenu", "--preselect", "-2"][..],
+            &["instantmenu", "--columns", "0"][..],
+        ] {
+            assert!(
+                Args::try_parse_from(bad).is_err(),
+                "{bad:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn auto_sizing_values_parse() {
+        let a =
+            Args::try_parse_from(["instantmenu", "--width", "auto", "--line-height", "auto"])
+                .unwrap();
+        assert_eq!(a.window.width, Some(Width::Auto));
+        assert_eq!(a.window.line_height, Some(LineHeight::FromFont));
+
+        let a = Args::try_parse_from(["instantmenu", "-w", "900", "--line-height", "20"]).unwrap();
+        assert_eq!(a.window.width, Some(Width::Fixed(900)));
+        assert_eq!(a.window.line_height, Some(LineHeight::Pixels(20)));
+    }
+
+    #[test]
+    fn monitor_choice_parses() {
+        let a = Args::try_parse_from(["instantmenu", "-m", "auto"]).unwrap();
+        assert_eq!(a.window.monitor, Some(MonitorChoice::Auto));
+        let a = Args::try_parse_from(["instantmenu", "-m", "1"]).unwrap();
+        assert_eq!(a.window.monitor, Some(MonitorChoice::Index(1)));
+        assert!(Args::try_parse_from(["instantmenu", "-m", "banana"]).is_err());
+    }
+
+    #[test]
+    fn toast_seconds_parse() {
+        let a = Args::try_parse_from(["instantmenu", "--toast", "1.5"]).unwrap();
+        assert_eq!(a.menu.toast, Some(1.5));
+        /* 0 is accepted and means disabled (resolved in main) */
+        let a = Args::try_parse_from(["instantmenu", "--toast", "0"]).unwrap();
+        assert_eq!(a.menu.toast, Some(0.0));
+        assert!(Args::try_parse_from(["instantmenu", "--toast", "banana"]).is_err());
     }
 
     #[test]
@@ -629,12 +748,6 @@ mod tests {
     }
 
     #[test]
-    fn monitor_automatic_is_accepted() {
-        let a = Args::try_parse_from(["instantmenu", "-m", "-1"]).unwrap();
-        assert_eq!(a.window.monitor, Some(-1));
-    }
-
-    #[test]
     fn embed_ids_parse_strictly() {
         assert_eq!(parse_window_id("0x2a"), Ok(42));
         assert_eq!(parse_window_id("42"), Ok(42));
@@ -715,7 +828,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(a.window.prompt.as_deref(), Some("Volume"));
-        assert_eq!(a.window.width, Some(400));
+        assert_eq!(a.window.width, Some(Width::Fixed(400)));
         let Some(Cmd::Slide(s)) = a.subcommand.as_ref() else {
             panic!("expected the slide subcommand");
         };
@@ -765,7 +878,7 @@ mod tests {
         /* window options are global: valid after the mode word */
         let a = Args::try_parse_from(["instantmenu", "slide", "--width", "600", "--prompt", "B"])
             .unwrap();
-        assert_eq!(a.window.width, Some(600));
+        assert_eq!(a.window.width, Some(Width::Fixed(600)));
         assert_eq!(a.window.prompt.as_deref(), Some("B"));
         assert!(matches!(a.subcommand, Some(Cmd::Slide(_))));
 

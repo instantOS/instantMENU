@@ -6,7 +6,7 @@
 use super::layout::Layout;
 use super::Menu;
 use crate::backend::{Backend, MonitorInfo};
-use crate::config::Position;
+use crate::config::{MonitorChoice, Position, Width};
 use crate::enums::{EditOp, ExitStatus, Scheme};
 use crate::geom::{Point, Rect, Size};
 
@@ -48,7 +48,7 @@ impl Menu {
         let width = self.resolve_auto_width(layout.columns);
 
         /* make a menu line AT LEAST 'line_height' tall */
-        layout.bar_height = (self.renderer.font_height + 12).max(self.cfg.line_height);
+        layout.bar_height = (self.renderer.font_height + 12).max(self.cfg.line_height.pixels());
         let prompt = self.cfg.prompt.clone();
         layout.prompt_width = if self.cfg.commented {
             layout.bar_height * 15
@@ -76,20 +76,22 @@ impl Menu {
         Ok(layout)
     }
 
-    /// negative `-w`: use the wider of |width| and the computed item width.
-    /// Runs before the bar height exists, so commented-mode measurement sees
-    /// a zero bar height exactly like the C version (which resolved this in
-    /// main() before setup()).
+    /// `--width auto`: measure the items and use the computed width; a
+    /// fixed `--width` passes through, an unset one yields 0 ("pick a
+    /// default downstream"). Runs before the bar height exists, so
+    /// commented-mode measurement sees a zero bar height exactly like the
+    /// C version (which resolved this in main() before setup()).
     fn resolve_auto_width(&mut self, columns: i32) -> i32 {
-        if self.cfg.width > -1 {
-            return self.cfg.width;
+        match self.cfg.width {
+            Width::Fixed(w) => return w,
+            Width::Default => return 0,
+            Width::Auto => {}
         }
         const AUTO_WIDTH_WARNING_ITEMS: usize = 256;
         if !self.auto_width_warned && self.matcher.items.len() >= AUTO_WIDTH_WARNING_ITEMS {
             self.auto_width_warned = true;
             eprintln!(
-                "instantmenu: warning: --width {} requires measuring all {} items; use a positive width for large lists",
-                self.cfg.width,
+                "instantmenu: warning: --width auto requires measuring all {} items; use a fixed width for large lists",
                 self.matcher.items.len()
             );
         }
@@ -98,13 +100,7 @@ impl Menu {
             Some(p) => self.cell_width(p),
             None => 0,
         };
-        let max_width = (self.max_cell_width() as f64 * 1.3 * columns.max(1) as f64
-            + prompt_width as f64) as i32;
-        if -self.cfg.width > max_width {
-            -self.cfg.width
-        } else {
-            max_width
-        }
+        (self.max_cell_width() as f64 * 1.3 * columns.max(1) as f64 + prompt_width as f64) as i32
     }
 
     /// Content-based width: widest item text plus the prompt, floored at
@@ -230,11 +226,12 @@ impl Menu {
 
     /// Clamp the computed geometry to the monitor/root and apply full_height.
     fn adjust_geometry(&mut self, monitor: Rect, root: Size, layout: &mut Layout) {
+        let line_height = self.cfg.line_height.pixels();
         if layout.menu_height > root.h - 10 {
             layout.menu_height = root.h - self.cfg.border_width * 2 - 10;
             layout.lines = root.h
-                / (if self.cfg.line_height != 0 {
-                    self.cfg.line_height
+                / (if line_height != 0 {
+                    line_height
                 } else {
                     layout.bar_height
                 })
@@ -254,7 +251,7 @@ impl Menu {
         if self.cfg.full_height {
             layout.y = monitor.y + 32;
             layout.menu_height = root.h - self.cfg.border_width * 2 - (root.h - monitor.h + 32);
-            layout.lines = root.h / self.cfg.line_height - 2;
+            layout.lines = root.h / line_height - 2;
         } else if layout.y + layout.menu_height > root.h {
             layout.y = root.h - layout.menu_height;
         }
@@ -317,7 +314,7 @@ impl Menu {
         let outside_close = !managed
             && self.cfg.embed.is_none()
             && !self.cfg.no_grab
-            && self.cfg.toast == 0
+            && self.cfg.toast.is_none()
             && self.cfg.outside_close;
         if self
             .backend
@@ -325,7 +322,7 @@ impl Menu {
                 rect,
                 self.cfg.border_width,
                 managed,
-                !self.cfg.no_grab && self.cfg.toast == 0,
+                !self.cfg.no_grab && self.cfg.toast.is_none(),
                 outside_close,
                 class,
                 bg,
@@ -415,26 +412,33 @@ fn anchor_origin(position: Position, area: Rect, width: i32, height: i32) -> Poi
     Point::new(x, y)
 }
 
-/// Pick the monitor index from `-m`, the focused monitor, or the pointer.
-fn select_monitor(monitors: &[MonitorInfo], cfg_monitor: i32, backend: &dyn Backend) -> usize {
-    let n = monitors.len() as i32;
-    let mut i = 0usize;
-    let mut area_found = false;
-    if cfg_monitor >= 0 && cfg_monitor < n {
-        i = cfg_monitor as usize;
-    } else if let Some(focused) = backend.focused_monitor() {
-        if focused < monitors.len() {
-            i = focused;
-            area_found = true;
+/// Pick the monitor from `--monitor`, the focused monitor, or the pointer.
+fn select_monitor(monitors: &[MonitorInfo], choice: MonitorChoice, backend: &dyn Backend) -> usize {
+    let n = monitors.len();
+    if let MonitorChoice::Index(idx) = choice {
+        if (idx as usize) < n {
+            return idx as usize;
+        }
+        /* an out-of-range index falls back to the focused monitor */
+        if let Some(focused) = backend.focused_monitor() {
+            if focused < n {
+                return focused;
+            }
+        }
+        return 0;
+    }
+    /* Auto: follow keyboard focus, then the pointer */
+    if let Some(focused) = backend.focused_monitor() {
+        if focused < n {
+            return focused;
         }
     }
-    if cfg_monitor < 0 && !area_found {
-        if let Some(pointer) = backend.pointer_position() {
-            for (idx, monitor) in monitors.iter().enumerate() {
-                if Rect::new(pointer.x, pointer.y, 1, 1).intersect_area(monitor.rect) != 0 {
-                    i = idx;
-                    break;
-                }
+    let mut i = 0usize;
+    if let Some(pointer) = backend.pointer_position() {
+        for (idx, monitor) in monitors.iter().enumerate() {
+            if Rect::new(pointer.x, pointer.y, 1, 1).intersect_area(monitor.rect) != 0 {
+                i = idx;
+                break;
             }
         }
     }

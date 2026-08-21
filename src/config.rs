@@ -34,6 +34,49 @@ pub enum Position {
     BottomRight,
 }
 
+/// Window width (`--width`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Width {
+    /// Not set: each placement mode picks its own default width.
+    Default,
+    /// A fixed width in pixels.
+    Fixed(i32),
+    /// Fit the content: measure the items and size the menu to match.
+    Auto,
+}
+
+/// Minimum height of one menu line (`--line-height`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineHeight {
+    /// No minimum beyond the font height plus padding.
+    Default,
+    /// Derived from the font (2.5x the font height).
+    FromFont,
+    /// At least this many pixels.
+    Pixels(i32),
+}
+
+impl LineHeight {
+    /// The pixel value (0 = no minimum). [`LineHeight::FromFont`] counts as
+    /// unresolved here; main() resolves it into [`LineHeight::Pixels`]
+    /// before the menu is constructed.
+    pub fn pixels(self) -> i32 {
+        match self {
+            LineHeight::Default | LineHeight::FromFont => 0,
+            LineHeight::Pixels(n) => n,
+        }
+    }
+}
+
+/// Monitor selection (`--monitor`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MonitorChoice {
+    /// Follow keyboard focus, then the pointer.
+    Auto,
+    /// A specific monitor index (0-based).
+    Index(u32),
+}
+
 /// Item matching algorithm (`--match-mode`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum MatchMode {
@@ -143,7 +186,7 @@ pub struct Config {
     pub frame_count: i32,
     pub full_height: bool,
     /* --line-height option; minimum height of a menu line */
-    pub line_height: i32,
+    pub line_height: LineHeight,
 
     /* --font option overrides fonts[0]; default font set */
     pub fonts: Vec<String>,
@@ -177,8 +220,8 @@ pub struct Config {
 
     /* ---- runtime options (set from argv, globals in instantmenu.c) ---- */
 
-    /* --toast option; toast mode that times out after a while (tenths of seconds) */
-    pub toast: i32,
+    /* --toast option; toast mode that times out after a while (seconds) */
+    pub toast: Option<f32>,
     /* --input-only option; input only */
     pub input_only: bool,
     /* --password option; display input as dots */
@@ -195,14 +238,14 @@ pub struct Config {
     pub reject_no_match: bool,
     /* --commented option; instantASSIST mode */
     pub commented: bool,
-    /* -m option; monitor index, -1 = auto */
-    pub monitor: i32,
+    /* -m option; monitor index or auto (focus, then pointer) */
+    pub monitor: MonitorChoice,
     /* -x option: horizontal nudge from the anchor */
     pub x_offset: i32,
     /* -y option: vertical nudge from the anchor */
     pub y_offset: i32,
     /* -w option: make instantmenu this wide */
-    pub width: i32,
+    pub width: Width,
     /* --embed option; embedding window id */
     pub embed: Option<u32>,
     /* `slide` subcommand; Some(_) = slide mode with these settings */
@@ -229,7 +272,7 @@ impl Default for Config {
             animated: false,
             frame_count: 7,
             full_height: false,
-            line_height: 0,
+            line_height: LineHeight::Default,
             fonts: vec![
                 "Inter-Regular:size=12".to_string(),
                 "Fira Code Nerd Font:size=14".to_string(),
@@ -256,7 +299,7 @@ impl Default for Config {
             word_delimiters: " ".to_string(),
             preselected: 0,
             border_width: 0,
-            toast: 0,
+            toast: None,
             input_only: false,
             password: false,
             no_grab: false,
@@ -265,10 +308,10 @@ impl Default for Config {
             managed: false,
             reject_no_match: false,
             commented: false,
-            monitor: -1,
+            monitor: MonitorChoice::Auto,
             x_offset: 0,
             y_offset: 0,
-            width: 0,
+            width: Width::Default,
             embed: None,
             slide: None,
         }

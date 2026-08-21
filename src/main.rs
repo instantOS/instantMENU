@@ -5,7 +5,7 @@
 use clap::Parser;
 use instantmenu::backend;
 use instantmenu::cli;
-use instantmenu::config::{Config, SlideSettings};
+use instantmenu::config::{Config, LineHeight, SlideSettings};
 use instantmenu::enums::{ColorRole, ExitStatus, Scheme};
 use instantmenu::menu::{self, Menu};
 use instantmenu::render::Renderer;
@@ -58,9 +58,9 @@ fn main() {
      * - password/input-only/slide: never read stdin at all. */
     let interactive_tty = std::io::stdin().is_terminal();
     let ignores_stdin = cfg.password || cfg.input_only || cfg.slide.is_some();
-    let streaming = cfg.toast == 0 && !interactive_tty && !ignores_stdin;
+    let streaming = cfg.toast.is_none() && !interactive_tty && !ignores_stdin;
 
-    let grab = cfg.toast == 0 && !cfg.no_grab;
+    let grab = cfg.toast.is_none() && !cfg.no_grab;
     if streaming && grab {
         backend.grab_keyboard();
     }
@@ -98,8 +98,8 @@ fn main() {
     /* drw_fontset_create + lrpad = drw->fonts->h */
     let renderer = Renderer::new(&cfg.fonts, &cfg.colors, &required_chars);
 
-    if cfg.full_height || cfg.line_height == -1 {
-        cfg.line_height = (renderer.font_height as f32 * 2.5) as i32;
+    if cfg.full_height || cfg.line_height == LineHeight::FromFont {
+        cfg.line_height = LineHeight::Pixels((renderer.font_height as f32 * 2.5) as i32);
     }
 
     /* (C has a prompt/dmw adjustment here, guarded by mw which is still 0 —
@@ -224,15 +224,13 @@ fn apply_values(
     cfg: &mut Config,
 ) -> (Option<String>, Vec<(Scheme, ColorRole, String)>) {
     if let Some(v) = args.menu.toast {
-        cfg.toast = v;
+        /* 0 keeps the timeout disabled, like omitting the option */
+        cfg.toast = (v > 0.0).then_some(v);
     }
     if let Some(c) = args.menu.columns {
         cfg.columns = c;
-        if cfg.columns == 0 {
-            cfg.columns = 1;
-        }
         if args.menu.lines.is_none() {
-            cfg.lines = 1; /* C: -g sets lines=1 when unset (order-dependent) */
+            cfg.lines = 1; /* -g sets lines=1 when unset (order-dependent) */
         }
     }
     if let Some(l) = args.menu.lines {
@@ -277,12 +275,11 @@ fn apply_values(
         cfg.preselected = ps;
     }
     if let Some(h) = args.window.line_height {
-        /* C: only applied when !fullheight, then clamped to >= 8 */
-        if !cfg.full_height {
-            cfg.line_height = h.max(8);
-        } else {
-            cfg.line_height = h;
-        }
+        /* clamped to >= 8; full_height resolves the height anyway */
+        cfg.line_height = match h {
+            LineHeight::Pixels(n) if !cfg.full_height => LineHeight::Pixels(n.max(8)),
+            other => other,
+        };
     }
     if let Some(w) = args.window.embed {
         cfg.embed = Some(w);

@@ -87,15 +87,15 @@ Vertical offset from the anchor position.
 
 Positive moves down, negative moves up.
 .TP
-\fB\-w\fR, \fB\-\-width\fR \fI<N>\fR
+\fB\-w\fR, \fB\-\-width\fR \fI<N|auto>\fR
 Make instantmenu this wide.
 
-A negative value adjusts the width to the longest line read from stdin.
+`auto` sizes the menu to its content (the widest item plus the prompt).
 .TP
-\fB\-m\fR, \fB\-\-monitor\fR \fI<N>\fR
+\fB\-m\fR, \fB\-\-monitor\fR \fI<N|auto>\fR
 Select monitor by index.
 
-Monitor numbers start from 0. Use \-1 for automatic selection.
+Monitor numbers start from 0. `auto` follows keyboard focus, then the pointer (the default).
 .TP
 \fB\-p\fR, \fB\-\-prompt\fR \fI<TEXT>\fR
 Prompt added to the left of the input field (menu mode) or the slider label (slide mode)
@@ -103,10 +103,10 @@ Prompt added to the left of the input field (menu mode) or the slider label (sli
 \fB\-\-font\fR \fI<FONT>\fR
 Font or font set (overrides the X resource and default)
 .TP
-\fB\-\-line\-height\fR \fI<N>\fR
+\fB\-\-line\-height\fR \fI<N|auto>\fR
 Minimum height of one menu line.
 
-At least 8 pixels.
+At least 8 pixels; `auto` derives it from the font.
 .TP
 \fB\-\-normal\-bg\fR \fI<COLOR>\fR
 Normal background color.
@@ -140,10 +140,10 @@ Adds a border around the menu.
 \fB\-r\fR, \fB\-\-reject\-no\-match\fR
 Reject input if it results in no matches
 .TP
-\fB\-\-toast\fR \fI<TENTHS>\fR
-Toast mode that times out after a while (tenths of seconds).
+\fB\-\-toast\fR \fI<SECONDS>\fR
+Toast mode that times out after SECONDS seconds.
 
-The menu draws itself, waits the given time, then exits without a selection.
+The menu draws itself, waits the given time, then exits without a selection. 0 keeps the timeout disabled.
 .TP
 \fB\-\-commented\fR
 Activate instantASSIST mode (single\-letter launcher)
@@ -199,7 +199,7 @@ Execute this command on shift + right arrow
 Run this command on shift + left and add a click target left of the input field
 .TP
 \fB\-g\fR, \fB\-\-columns\fR \fI<N>\fR
-Number of columns in grid mode (0 means 1).
+Number of columns in grid mode.
 
 Implies one line per row unless \-\-lines is given.
 .TP

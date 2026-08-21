@@ -23,7 +23,7 @@ impl Menu {
         let frame_count = self.cfg.frame_count;
         let menu_width = self.layout.menu_width;
         let menu_height = self.layout.menu_height;
-        let line_height = self.cfg.line_height;
+        let line_height = self.cfg.line_height.pixels();
         let selected_y = self.selected_y;
 
         for time in 1..=frame_count {

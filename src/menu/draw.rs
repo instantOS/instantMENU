@@ -9,7 +9,7 @@ impl Menu {
     /// recalculate_numbers
     fn recalculate_numbers(&mut self) {
         let match_count = self.matcher.matches.len();
-        if self.cfg.toast != 0 {
+        if self.cfg.toast.is_some() {
             self.show_numbers = false;
             return;
         }
@@ -264,7 +264,7 @@ impl Menu {
         cursor_position += self.renderer.cell_inset() - 1;
         if cursor_position < w {
             // disable cursor on password prompt
-            if !self.cfg.password && self.cfg.toast == 0 {
+            if !self.cfg.password && self.cfg.toast.is_none() {
                 let cursor_rect = Rect::new(
                     field_x + cursor_position,
                     2 + (self.layout.bar_height - font_height) / 2,
