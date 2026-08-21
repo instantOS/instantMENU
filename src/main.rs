@@ -16,13 +16,6 @@ fn main() {
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     let args = cli::Args::parse();
 
-    /* menu-only options are meaningless in slide mode; reject them before
-     * anything is opened (clap cannot express this per-subcommand) */
-    if let Some(flag) = args.menu_only_option_in_subcommand() {
-        eprintln!("instantmenu: {flag} cannot be used with `slide`");
-        ExitStatus::Failure.exit();
-    }
-
     let mut cfg = Config::default();
     apply_flags(&args, &mut cfg);
     let (temp_font, color_temp) = apply_values(&args, &mut cfg);

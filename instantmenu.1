@@ -8,8 +8,15 @@ instantmenu \- A dynamic menu for X11 and Wayland (instantMENU, Rust port)
 .SH DESCRIPTION
 instantmenu reads a newline\-separated list of items from stdin and displays them in a menu. Selecting an item and pressing Return prints it to stdout and exits; typing narrows the list to matching items.
 .PP
-With the `slide` subcommand it shows a value slider instead: Return prints the value and exits, every change runs \-\-command with the value appended.
+The menu opens immediately and items stream in: the keyboard is grabbed before stdin is read, and the list grows as the input produces it (a fast producer collapses into a single refresh). With the `slide` subcommand it shows a value slider instead: Return prints the value and exits, every change runs \-\-command with the value appended.
 .SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH "WINDOW OPTIONS"
 .TP
 \fB\-\-backend\fR \fI<BACKEND>\fR [default: auto]
 Backend to use: auto, x11 or wayland
@@ -128,6 +135,7 @@ Embedding window id (X11 only)
 Border width.
 
 Adds a border around the menu.
+.SH "MENU MODE OPTIONS"
 .TP
 \fB\-r\fR, \fB\-\-reject\-no\-match\fR
 Reject input if it results in no matches
@@ -218,12 +226,6 @@ Frecency cache: rank items by past selections and record new ones.
 The value is a cache ID resolved under the XDG cache directory ($XDG_CACHE_HOME/instantmenu/<ID>, or ~/.cache/instantmenu/<ID>); an absolute path is used as the cache file directly. Distinct IDs hold independent histories (e.g. one per launcher).
 
 On startup items are reordered best\-frecency first (stable — ties keep stdin order). Every printed selection — a chosen item or free\-typed text — is counted with a time decay and persisted. Not recorded: password input and slider values.
-.TP
-\fB\-h\fR, \fB\-\-help\fR
-Print help (see a summary with \*(Aq\-h\*(Aq)
-.TP
-\fB\-V\fR, \fB\-\-version\fR
-Print version
 .SH SUBCOMMANDS
 .SS instantmenu slide
 Slide mode: show a value slider instead of a menu.

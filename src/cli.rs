@@ -2,11 +2,13 @@
 //! single-letter shorts for the common flags.
 //!
 //! The surface is split along two running modes. Menu mode is the default
-//! (`instantmenu`); slide mode is a subcommand (`instantmenu slide`). Window,
-//! geometry, font and color options are shared and live on the top level,
-//! where they may only appear *before* a subcommand. Menu-only options also
-//! live on the top level but are rejected at startup when a subcommand is
-//! given, and the slide-specific options live on the subcommand itself.
+//! (`instantmenu`); slide mode is a subcommand (`instantmenu slide`). Options
+//! always follow the mode word: `instantmenu slide --width 600`, never
+//! `instantmenu --width 600 slide` (`args_conflicts_with_subcommands` makes
+//! clap reject any option that precedes a subcommand). Window, geometry,
+//! font and color options are shared and marked global, so they work in both
+//! modes; menu-only options live on the top level and slide-specific options
+//! on the subcommand.
 //!
 //! Unlike the C `atoi`, numeric options parse strictly: a malformed number
 //! is an error, not silently 0. Options that take a negative value
@@ -67,6 +69,7 @@ const KEY_BINDINGS: &str = concat!(
     version = crate::config::VERSION,
     after_long_help = KEY_BINDINGS,
     disable_help_subcommand = true,
+    args_conflicts_with_subcommands = true,
 )]
 pub struct Args {
     /// Window, geometry, font and color options shared by all modes.
@@ -82,18 +85,9 @@ pub struct Args {
     pub subcommand: Option<Cmd>,
 }
 
-impl Args {
-    /// The first menu-only option passed alongside a subcommand, if any.
-    ///
-    /// Menu-only options cannot be used when a subcommand like `slide` is active.
-    pub fn menu_only_option_in_subcommand(&self) -> Option<&'static str> {
-        self.subcommand.as_ref()?;
-        self.menu.active_flag()
-    }
-}
-
 /// Menu-specific options: only applicable when running the default menu mode.
 #[derive(clap::Args, Debug, Default, Clone)]
+#[command(next_help_heading = "Menu mode options")]
 pub struct MenuArgs {
     /// Reject input if it results in no matches.
     #[arg(long, short = 'r')]
@@ -225,81 +219,9 @@ pub struct MenuArgs {
     pub frecency_cache: Option<PathBuf>,
 }
 
-impl MenuArgs {
-    /// Return the flag name of the first present menu-only option, if any.
-    pub fn active_flag(&self) -> Option<&'static str> {
-        if self.reject_no_match {
-            return Some("--reject-no-match");
-        }
-        if self.toast.is_some() {
-            return Some("--toast");
-        }
-        if self.commented {
-            return Some("--commented");
-        }
-        if self.input_only {
-            return Some("--input-only");
-        }
-        if self.smart_case {
-            return Some("--smart-case");
-        }
-        if self.match_mode.is_some() {
-            return Some("--match-mode");
-        }
-        if self.pre_match {
-            return Some("--pre-match");
-        }
-        if self.space_confirm {
-            return Some("--space-confirm");
-        }
-        if self.full_height {
-            return Some("--full-height");
-        }
-        if self.insensitive {
-            return Some("--insensitive");
-        }
-        if self.instant {
-            return Some("--instant");
-        }
-        if self.password {
-            return Some("--password");
-        }
-        if self.alt_tab {
-            return Some("--alt-tab");
-        }
-        if self.right_command.is_some() {
-            return Some("--right-command");
-        }
-        if self.left_command.is_some() {
-            return Some("--left-command");
-        }
-        if self.columns.is_some() {
-            return Some("--columns");
-        }
-        if self.lines.is_some() {
-            return Some("--lines");
-        }
-        if self.placeholder.is_some() {
-            return Some("--placeholder");
-        }
-        if self.animation.is_some() {
-            return Some("--animation");
-        }
-        if self.preselect.is_some() {
-            return Some("--preselect");
-        }
-        if self.initial_text.is_some() {
-            return Some("--initial-text");
-        }
-        if self.frecency_cache.is_some() {
-            return Some("--frecency-cache");
-        }
-        None
-    }
-}
-
 /// Window, geometry, font and color options shared by menu and slide modes.
 #[derive(clap::Args, Debug, Clone)]
+#[command(next_help_heading = "Window options")]
 pub struct WindowArgs {
     /// Backend to use: auto, x11 or wayland.
     #[arg(
@@ -735,9 +657,9 @@ mod tests {
         /* positional command */
         let a = Args::try_parse_from([
             "instantmenu",
+            "slide",
             "-p",
             "Brightness",
-            "slide",
             "--min",
             "-50",
             "--max",
@@ -839,102 +761,67 @@ mod tests {
     }
 
     #[test]
-    fn shared_flags_apply_before_and_after_slide() {
-        /* shared flags before the subcommand */
-        let a = Args::try_parse_from(["instantmenu", "--width", "600", "--prompt", "B", "slide"])
-            .unwrap();
-        assert_eq!(a.window.width, Some(600));
-        assert_eq!(a.window.prompt.as_deref(), Some("B"));
-        assert!(matches!(a.subcommand, Some(Cmd::Slide(_))));
-        assert_eq!(a.menu_only_option_in_subcommand(), None);
-
-        /* shared flags after the subcommand */
+    fn shared_flags_apply_after_slide() {
+        /* window options are global: valid after the mode word */
         let a = Args::try_parse_from(["instantmenu", "slide", "--width", "600", "--prompt", "B"])
             .unwrap();
         assert_eq!(a.window.width, Some(600));
         assert_eq!(a.window.prompt.as_deref(), Some("B"));
         assert!(matches!(a.subcommand, Some(Cmd::Slide(_))));
-        assert_eq!(a.menu_only_option_in_subcommand(), None);
+
+        /* mode word first: any option before the subcommand is rejected */
+        assert!(
+            Args::try_parse_from(["instantmenu", "--width", "600", "--prompt", "B", "slide"])
+                .is_err()
+        );
     }
 
     #[test]
     fn menu_only_flags_are_rejected_in_slide_mode() {
-        for (argv, flag) in [
-            (
-                &["instantmenu", "--reject-no-match", "slide"][..],
-                "--reject-no-match",
-            ),
-            (&["instantmenu", "--toast", "5", "slide"][..], "--toast"),
-            (&["instantmenu", "--commented", "slide"][..], "--commented"),
-            (
-                &["instantmenu", "--input-only", "slide"][..],
-                "--input-only",
-            ),
-            (
-                &["instantmenu", "--smart-case", "slide"][..],
-                "--smart-case",
-            ),
-            (
-                &["instantmenu", "--match-mode", "fuzzy", "slide"][..],
-                "--match-mode",
-            ),
-            (&["instantmenu", "--pre-match", "slide"][..], "--pre-match"),
-            (
-                &["instantmenu", "--space-confirm", "slide"][..],
-                "--space-confirm",
-            ),
-            (
-                &["instantmenu", "--full-height", "slide"][..],
-                "--full-height",
-            ),
-            (
-                &["instantmenu", "--insensitive", "slide"][..],
-                "--insensitive",
-            ),
-            (&["instantmenu", "--instant", "slide"][..], "--instant"),
-            (&["instantmenu", "--password", "slide"][..], "--password"),
-            (&["instantmenu", "--alt-tab", "slide"][..], "--alt-tab"),
-            (
-                &["instantmenu", "--right-command", "true", "slide"][..],
-                "--right-command",
-            ),
-            (
-                &["instantmenu", "--left-command", "true", "slide"][..],
-                "--left-command",
-            ),
-            (&["instantmenu", "--columns", "2", "slide"][..], "--columns"),
-            (&["instantmenu", "--lines", "3", "slide"][..], "--lines"),
-            (
-                &["instantmenu", "--placeholder", "x", "slide"][..],
-                "--placeholder",
-            ),
-            (
-                &["instantmenu", "--animation", "5", "slide"][..],
-                "--animation",
-            ),
-            (
-                &["instantmenu", "--preselect", "1", "slide"][..],
-                "--preselect",
-            ),
-            (
-                &["instantmenu", "--initial-text", "x", "slide"][..],
-                "--initial-text",
-            ),
-            (
-                &["instantmenu", "--frecency-cache", "apps", "slide"][..],
-                "--frecency-cache",
-            ),
+        /* args_conflicts_with_subcommands: any option before the mode word
+         * is a parse error, menu-only ones included */
+        for argv in [
+            &["instantmenu", "--reject-no-match", "slide"][..],
+            &["instantmenu", "--toast", "5", "slide"][..],
+            &["instantmenu", "--frecency-cache", "apps", "slide"][..],
         ] {
-            let a = Args::try_parse_from(argv).unwrap();
-            assert_eq!(a.menu_only_option_in_subcommand(), Some(flag), "{argv:?}");
+            assert!(Args::try_parse_from(argv).is_err(), "{argv:?}");
         }
 
-        /* menu-only flags after slide are rejected by clap parser */
+        /* menu-only flags after slide are unknown arguments */
         assert!(Args::try_parse_from(["instantmenu", "slide", "--lines", "3"]).is_err());
         assert!(Args::try_parse_from(["instantmenu", "slide", "--password"]).is_err());
 
         /* menu-only flags are fine without a subcommand */
         let a = Args::try_parse_from(["instantmenu", "--insensitive"]).unwrap();
-        assert_eq!(a.menu_only_option_in_subcommand(), None);
+        assert!(a.menu.insensitive);
+    }
+
+    #[test]
+    fn menu_only_options_are_not_global() {
+        /* the rejection above rests on menu-only options not being global:
+         * if one were ever marked global it would silently become valid
+         * alongside `slide` again */
+        use clap::CommandFactory;
+        let mut cmd = Args::command();
+        cmd.build();
+        let members = cmd
+            .get_groups()
+            .find(|g| g.get_id().as_str() == "MenuArgs")
+            .expect("MenuArgs arg group")
+            .get_args()
+            .collect::<Vec<_>>();
+        assert!(!members.is_empty(), "MenuArgs group must have members");
+        for id in members {
+            let arg = cmd
+                .get_arguments()
+                .find(|a| a.get_id() == id)
+                .expect("group member");
+            assert!(
+                !arg.is_global_set(),
+                "--{} must not be global",
+                arg.get_long().unwrap_or_default()
+            );
+        }
     }
 }
