@@ -18,6 +18,9 @@ rootinstall: man
     cargo build
     sudo install ./target/debug/instantmenu /usr/local/bin/
     sudo install ./target/debug/itest /usr/local/bin/
+    sudo install ./instantmenu_path /usr/local/bin/
+    sudo install ./instantmenu_run /usr/local/bin/
+    sudo install ./instantmenu_smartrun /usr/local/bin/
     sudo install -D -m 644 ./instantmenu.1 /usr/local/share/man/man1/instantmenu.1
 
 
