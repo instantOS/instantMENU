@@ -88,8 +88,8 @@ impl Menu {
                 follow_pointer,
             );
             let monitor = monitors[i].rect;
-            self.monitor_geometry(monitor, root, width, follow_pointer, &mut layout);
-            self.adjust_geometry(monitor, root, &mut layout);
+            self.monitor_geometry(monitor, width, follow_pointer, &mut layout);
+            self.adjust_geometry(monitor, &mut layout);
         }
         Ok(layout)
     }
@@ -134,7 +134,6 @@ impl Menu {
     fn monitor_geometry(
         &mut self,
         monitor: Rect,
-        root: Size,
         width: i32,
         follow_pointer: Option<Point>,
         layout: &mut Layout,
@@ -143,28 +142,18 @@ impl Menu {
             if width != 0 {
                 layout.menu_width = width;
             } else {
-                // width = max(widest item cell + prompt, min_width), capped at
-                // the root width (the C code still had `wa` holding the root
-                // attributes at this point).
-                layout.menu_width = self.content_width(layout.prompt_width, root.w);
+                // Keep a cursor-following menu within the selected output,
+                // including when that output has a non-zero global origin.
+                layout.menu_width = self.content_width(layout.prompt_width, monitor.w);
             }
             if let Some(pointer) = follow_pointer {
-                let mut x = pointer.x;
-                let mut y = pointer.y;
-                if x > monitor.x + (root.w - monitor.x) / 2 {
-                    x = x - layout.menu_width + 20;
-                } else {
-                    x -= 20;
-                }
-                if y > monitor.y + (root.h - monitor.y) / 2 {
-                    y = y - layout.menu_height + 20;
-                } else {
-                    y -= 20;
-                }
-
-                let clamped = Point::new(x, y).clamp_non_negative();
-                layout.x = clamped.x;
-                layout.y = clamped.y;
+                let origin = follow_cursor_origin(
+                    pointer,
+                    monitor,
+                    Size::new(layout.menu_width, layout.menu_height),
+                );
+                layout.x = origin.x;
+                layout.y = origin.y;
             }
             return;
         }
@@ -249,12 +238,12 @@ impl Menu {
         Ok(())
     }
 
-    /// Clamp the computed geometry to the monitor/root and apply full_height.
-    fn adjust_geometry(&mut self, monitor: Rect, root: Size, layout: &mut Layout) {
+    /// Clamp the computed geometry to the selected monitor and apply full_height.
+    fn adjust_geometry(&mut self, monitor: Rect, layout: &mut Layout) {
         let line_height = self.cfg.line_height.pixels();
-        if layout.menu_height > root.h - 10 {
-            layout.menu_height = root.h - self.cfg.border_width * 2 - 10;
-            layout.lines = root.h
+        if layout.menu_height > monitor.h - 10 {
+            layout.menu_height = monitor.h - self.cfg.border_width * 2 - 10;
+            layout.lines = monitor.h
                 / (if line_height != 0 {
                     line_height
                 } else {
@@ -263,22 +252,22 @@ impl Menu {
                 - 1;
         }
 
-        if layout.menu_width > root.w - 10 {
-            layout.menu_width = root.w - self.cfg.border_width * 2;
+        if layout.menu_width > monitor.w - 10 {
+            layout.menu_width = monitor.w - self.cfg.border_width * 2;
         }
 
-        if layout.x < monitor.x {
-            layout.x = monitor.x;
-        }
-        if layout.x + layout.menu_width > monitor.x + monitor.w {
-            layout.x = monitor.x + monitor.w - layout.menu_width - self.cfg.border_width * 2;
-        }
+        let origin = clamp_origin_to_monitor(
+            Point::new(layout.x, layout.y),
+            Size::new(layout.menu_width, layout.menu_height),
+            monitor,
+            self.cfg.border_width,
+        );
+        layout.x = origin.x;
+        layout.y = origin.y;
         if self.cfg.full_height {
             layout.y = monitor.y + 32;
-            layout.menu_height = root.h - self.cfg.border_width * 2 - (root.h - monitor.h + 32);
-            layout.lines = root.h / line_height - 2;
-        } else if layout.y + layout.menu_height > root.h {
-            layout.y = root.h - layout.menu_height;
+            layout.menu_height = monitor.h - self.cfg.border_width * 2 - 32;
+            layout.lines = monitor.h / line_height - 2;
         }
     }
 
@@ -440,6 +429,38 @@ fn anchor_origin(position: Position, area: Rect, width: i32, height: i32) -> Poi
     Point::new(x, y)
 }
 
+/// Place a menu beside the pointer, choosing the side independently on each
+/// axis from the selected monitor's midpoint. Final edge clamping is handled
+/// by [`Menu::adjust_geometry`].
+fn follow_cursor_origin(pointer: Point, monitor: Rect, menu: Size) -> Point {
+    let x = if pointer.x > monitor.x + monitor.w / 2 {
+        pointer.x - menu.w + 20
+    } else {
+        pointer.x - 20
+    };
+    let y = if pointer.y > monitor.y + monitor.h / 2 {
+        pointer.y - menu.h + 20
+    } else {
+        pointer.y - 20
+    };
+    Point::new(x, y)
+}
+
+/// Clamp a top-left window origin to an output in global coordinate space.
+/// The horizontal inset preserves the existing X11 border allowance; the
+/// vertical window bounds historically include their border.
+fn clamp_origin_to_monitor(origin: Point, menu: Size, monitor: Rect, border: i32) -> Point {
+    let mut x = origin.x.max(monitor.x);
+    let mut y = origin.y.max(monitor.y);
+    if x + menu.w > monitor.right() {
+        x = monitor.right() - menu.w - border * 2;
+    }
+    if y + menu.h > monitor.bottom() {
+        y = monitor.bottom() - menu.h;
+    }
+    Point::new(x, y)
+}
+
 /// Pick the monitor from `--monitor`, the focused monitor, or the pointer.
 fn select_monitor(
     monitors: &[MonitorInfo],
@@ -485,7 +506,7 @@ fn monitor_containing(monitors: &[MonitorInfo], pointer: Point) -> Option<usize>
 
 #[cfg(test)]
 mod tests {
-    use super::{anchor_origin, select_monitor};
+    use super::{anchor_origin, clamp_origin_to_monitor, follow_cursor_origin, select_monitor};
     use crate::backend::{Backend, EventPoll, MonitorInfo};
     use crate::config::{MonitorChoice, Position};
     use crate::geom::{Point, Rect, Size};
@@ -667,6 +688,36 @@ mod tests {
         assert_eq!(
             anchor_origin(Position::BottomRight, area, width, height),
             Point::new(900, 550)
+        );
+    }
+
+    #[test]
+    fn follow_cursor_preserves_negative_monitor_coordinates() {
+        let monitor = Rect::new(-1920, -1080, 1920, 1080);
+        let menu = Size::new(300, 100);
+
+        assert_eq!(
+            follow_cursor_origin(Point::new(-1800, -1000), monitor, menu),
+            Point::new(-1820, -1020)
+        );
+        assert_eq!(
+            follow_cursor_origin(Point::new(-100, -100), monitor, menu),
+            Point::new(-380, -180)
+        );
+    }
+
+    #[test]
+    fn cursor_origin_clamps_to_negative_monitor_edges() {
+        let monitor = Rect::new(-1920, -1080, 1920, 1080);
+        let menu = Size::new(300, 100);
+
+        assert_eq!(
+            clamp_origin_to_monitor(Point::new(-1940, -1100), menu, monitor, 1),
+            Point::new(-1920, -1080)
+        );
+        assert_eq!(
+            clamp_origin_to_monitor(Point::new(-100, -50), menu, monitor, 1),
+            Point::new(-302, -100)
         );
     }
 }
