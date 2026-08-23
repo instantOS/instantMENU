@@ -518,70 +518,9 @@ fn monitor_containing(monitors: &[MonitorInfo], pointer: Point) -> Option<usize>
 #[cfg(test)]
 mod tests {
     use super::{anchor_origin, clamp_origin_to_monitor, follow_cursor_origin, select_monitor};
-    use crate::backend::{Backend, EventPoll, MonitorInfo};
+    use crate::backend::{stub::TestBackend, MonitorInfo};
     use crate::config::{MonitorChoice, Position};
     use crate::geom::{Point, Rect, Size};
-    use crate::render::{Canvas, Color};
-    use std::cell::Cell;
-
-    struct GeometryBackend {
-        focused: Option<usize>,
-        pointer: Option<Point>,
-        focus_calls: Cell<usize>,
-        pointer_calls: usize,
-    }
-
-    impl Backend for GeometryBackend {
-        fn monitors(&self) -> &[MonitorInfo] {
-            &[]
-        }
-
-        fn root_size(&self) -> Size {
-            Size::new(200, 100)
-        }
-
-        fn pointer_position(&mut self) -> Option<Point> {
-            self.pointer_calls += 1;
-            self.pointer
-        }
-
-        fn focused_monitor(&self) -> Option<usize> {
-            self.focus_calls.set(self.focus_calls.get() + 1);
-            self.focused
-        }
-
-        fn create_window(
-            &mut self,
-            _rect: Rect,
-            _border_width: i32,
-            _managed: bool,
-            _grab: bool,
-            _outside_close: bool,
-            _class_hint: &str,
-            _bg: Color,
-            _border_color: Color,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-
-        fn grab_focus(&mut self, _title: &str) -> Result<(), String> {
-            Ok(())
-        }
-
-        fn set_title(&mut self, _title: &str) {}
-
-        fn present(&mut self, _canvas: &Canvas) {}
-
-        fn poll_event(
-            &mut self,
-            _timeout: Option<std::time::Duration>,
-            _extra: &[std::os::fd::RawFd],
-        ) -> EventPoll {
-            EventPoll::Closed
-        }
-
-        fn request_selection(&mut self, _clipboard: bool) {}
-    }
 
     fn monitors() -> Vec<MonitorInfo> {
         vec![
@@ -596,13 +535,11 @@ mod tests {
         ]
     }
 
-    fn backend(focused: Option<usize>, pointer: Option<Point>) -> GeometryBackend {
-        GeometryBackend {
-            focused,
-            pointer,
-            focus_calls: Cell::new(0),
-            pointer_calls: 0,
-        }
+    fn backend(focused: Option<usize>, pointer: Option<Point>) -> TestBackend {
+        let mut backend = TestBackend::new();
+        backend.focused = focused;
+        backend.pointer = pointer;
+        backend
     }
 
     #[test]
@@ -618,8 +555,8 @@ mod tests {
             ),
             0
         );
-        assert_eq!(backend.focus_calls.get(), 0);
-        assert_eq!(backend.pointer_calls, 0);
+        assert_eq!(backend.focus_calls(), 0);
+        assert_eq!(backend.pointer_calls(), 0);
     }
 
     #[test]
@@ -635,8 +572,8 @@ mod tests {
             ),
             1
         );
-        assert_eq!(backend.focus_calls.get(), 0);
-        assert_eq!(backend.pointer_calls, 0);
+        assert_eq!(backend.focus_calls(), 0);
+        assert_eq!(backend.pointer_calls(), 0);
     }
 
     #[test]
@@ -646,14 +583,14 @@ mod tests {
             select_monitor(&monitors(), MonitorChoice::Auto, &mut focused, false, None,),
             1
         );
-        assert_eq!(focused.pointer_calls, 0);
+        assert_eq!(focused.pointer_calls(), 0);
 
         let mut fallback = backend(None, Some(Point::new(150, 50)));
         assert_eq!(
             select_monitor(&monitors(), MonitorChoice::Auto, &mut fallback, false, None,),
             0
         );
-        assert_eq!(fallback.pointer_calls, 0);
+        assert_eq!(fallback.pointer_calls(), 0);
     }
 
     /// Each anchor places the window's top-left corner at the matching

@@ -5,6 +5,10 @@ pub mod poll;
 pub mod wayland;
 pub mod x11;
 
+/// Shared in-memory stub backend for tests (see [`stub`]).
+#[cfg(test)]
+pub(crate) mod stub;
+
 use clap::ValueEnum;
 
 use std::os::fd::RawFd;
@@ -41,9 +45,62 @@ pub enum MouseButton {
     Right,
 }
 
+impl MouseButton {
+    /// X11 pointer-button detail code -> button (core protocol buttons 1-3).
+    pub(crate) fn from_x11(detail: u8) -> Option<Self> {
+        match detail {
+            1 => Some(MouseButton::Left),
+            2 => Some(MouseButton::Middle),
+            3 => Some(MouseButton::Right),
+            _ => None,
+        }
+    }
+
+    /// Linux evdev button code -> button (`BTN_LEFT`/`BTN_RIGHT`/
+    /// `BTN_MIDDLE`, forwarded as-is by the Wayland pointer).
+    pub(crate) fn from_evdev(code: u32) -> Option<Self> {
+        match code {
+            0x110 => Some(MouseButton::Left),
+            0x111 => Some(MouseButton::Right),
+            0x112 => Some(MouseButton::Middle),
+            _ => None,
+        }
+    }
+}
+
+/// Wheel normalization shared by both backends so the direction rule is
+/// written exactly once: one event per detent/axis batch, positive delta
+/// scrolls down ([`BackendEvent::Scroll`]).
+pub(crate) mod scroll {
+    /// Magnitude of one wheel step.
+    pub(crate) const STEP: i32 = 1;
+
+    /// X11 vertical wheel buttons: 4 scrolls up, 5 down. Horizontal wheel
+    /// buttons (6/7) have no menu action.
+    pub(crate) fn from_x11_button(detail: u8) -> Option<i32> {
+        match detail {
+            4 => Some(-STEP),
+            5 => Some(STEP),
+            _ => None,
+        }
+    }
+
+    /// Wayland vertical axis value: the sign gives the direction.
+    pub(crate) fn from_axis_value(value: f64) -> i32 {
+        if value > 0.0 {
+            STEP
+        } else {
+            -STEP
+        }
+    }
+}
+
 /// Modifier keys held during an input event. The core only ever consumed
 /// Shift/Ctrl/Alt/Mod4 of the X11 mask; this is that set, named honestly and
 /// free of X11 bit values (each backend maps its own protocol state into it).
+/// X11 maps `KeyButMask` flag names (`x11::x11_mods`); Wayland resolves the
+/// xkb modifier names "Shift"/"Control"/"Mod1"/"Mod4"
+/// (`wayland::keyboard::ModIndices`) — adding a modifier means touching both.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Modifiers {
     pub shift: bool,
