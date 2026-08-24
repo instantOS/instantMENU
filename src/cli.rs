@@ -18,7 +18,7 @@
 use clap::{Parser, Subcommand};
 
 use crate::backend::BackendChoice;
-use crate::config::{LineHeight, MatchMode, MonitorChoice, Position, Width};
+use crate::config::{LineHeight, MatchMode, MonitorChoice, Position, Theme, Width};
 use std::path::PathBuf;
 
 /// Long-form description shown by `--help` and the generated man page.
@@ -341,6 +341,13 @@ pub struct WindowArgs {
     )]
     pub line_height: Option<LineHeight>,
 
+    /// Built-in color theme.
+    ///
+    /// `default` is an alias for `catppuccin`. Individual color options
+    /// override the selected theme.
+    #[arg(long, value_enum, value_name = "THEME", global = true)]
+    pub theme: Option<Theme>,
+
     /// Normal background color.
     ///
     /// Supports #RGB, #RRGGBB and X color names.
@@ -543,6 +550,20 @@ mod tests {
         assert_eq!(a.window.backend, BackendChoice::Auto);
         assert!(Args::try_parse_from(["instantmenu", "--backend", "xorg"]).is_err());
         assert!(Args::try_parse_from(["instantmenu", "--backend"]).is_err());
+    }
+
+    #[test]
+    fn built_in_themes_parse() {
+        for (value, expected) in [
+            ("default", Theme::Catppuccin),
+            ("catppuccin", Theme::Catppuccin),
+            ("classic", Theme::Classic),
+            ("gruvbox", Theme::Gruvbox),
+        ] {
+            let a = Args::try_parse_from(["instantmenu", "--theme", value]).unwrap();
+            assert_eq!(a.window.theme, Some(expected), "{value}");
+        }
+        assert!(Args::try_parse_from(["instantmenu", "--theme", "unknown"]).is_err());
     }
 
     #[test]

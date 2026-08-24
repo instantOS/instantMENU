@@ -89,6 +89,68 @@ pub enum MatchMode {
     Exact,
 }
 
+/// Built-in color palettes (`--theme`).
+///
+/// Catppuccin uses the Mocha flavor and is the application default. The
+/// `default` command-line value is accepted as an alias for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Theme {
+    /// Catppuccin Mocha (the default).
+    #[value(alias = "default")]
+    Catppuccin,
+    /// The original instantMENU colors.
+    Classic,
+    /// Gruvbox Dark.
+    Gruvbox,
+}
+
+impl Theme {
+    /// The complete palette for all semantic drawing schemes.
+    pub fn colors(self) -> [SchemeStrings; 9] {
+        let scheme = |fg: &str, bg: &str, detail: &str| SchemeStrings {
+            fg: fg.to_string(),
+            bg: bg.to_string(),
+            detail: detail.to_string(),
+        };
+
+        match self {
+            Theme::Catppuccin => [
+                scheme("#CDD6F4", "#1E1E2E", "#45475A"), // Norm
+                scheme("#6C7086", "#1E1E2E", "#45475A"), // Fade
+                scheme("#CDD6F4", "#313244", "#89B4FA"), // Highlight
+                scheme("#CDD6F4", "#313244", "#45475A"), // Hover
+                scheme("#1E1E2E", "#89B4FA", "#B4BEFE"), // Sel
+                scheme("#1E1E2E", "#74C7EC", "#89B4FA"), // Out
+                scheme("#1E1E2E", "#A6E3A1", "#94E2D5"), // Green
+                scheme("#1E1E2E", "#F9E2AF", "#FAB387"), // Yellow
+                scheme("#1E1E2E", "#F38BA8", "#EBA0AC"), // Red
+            ],
+            Theme::Classic => [
+                scheme("#DFDFDF", "#121212", "#3E485B"), // Norm
+                scheme("#575E70", "#121212", "#3E485B"), // Fade
+                scheme("#DFDFDF", "#384252", "#272727"), // Highlight
+                scheme("#DFDFDF", "#272727", "#2E2E2E"), // Hover
+                scheme("#000000", "#8AB4F8", "#536DFE"), // Sel
+                scheme("#000000", "#3579CA", "#3579CA"), // Out
+                scheme("#000000", "#81C995", "#1E8E3E"), // Green
+                scheme("#000000", "#FDD663", "#F9AB00"), // Yellow
+                scheme("#000000", "#F28B82", "#D93025"), // Red
+            ],
+            Theme::Gruvbox => [
+                scheme("#EBDBB2", "#282828", "#504945"), // Norm
+                scheme("#928374", "#282828", "#504945"), // Fade
+                scheme("#EBDBB2", "#504945", "#83A598"), // Highlight
+                scheme("#EBDBB2", "#3C3836", "#504945"), // Hover
+                scheme("#282828", "#83A598", "#8EC07C"), // Sel
+                scheme("#282828", "#8EC07C", "#83A598"), // Out
+                scheme("#282828", "#B8BB26", "#98971A"), // Green
+                scheme("#282828", "#FABD2F", "#D79921"), // Yellow
+                scheme("#282828", "#FB4934", "#CC241D"), // Red
+            ],
+        }
+    }
+}
+
 /// Slide settings as given on the command line (`instantmenu slide`), before
 /// defaults are applied. `Config::slide` being `Some` is what puts the menu
 /// in slide mode; `resolve` fills in the defaults and rejects
@@ -254,11 +316,6 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        let scheme = |fg: &str, bg: &str, detail: &str| SchemeStrings {
-            fg: fg.to_string(),
-            bg: bg.to_string(),
-            detail: detail.to_string(),
-        };
         Config {
             position: Position::Top,
             follow_cursor: false,
@@ -283,17 +340,7 @@ impl Default for Config {
             left_command: None,
             right_command: None,
             frecency_cache: None,
-            colors: [
-                scheme("#DFDFDF", "#121212", "#3E485B"), // Norm
-                scheme("#575E70", "#121212", "#3E485B"), // Fade
-                scheme("#DFDFDF", "#384252", "#272727"), // Highlight
-                scheme("#DFDFDF", "#272727", "#2E2E2E"), // Hover
-                scheme("#000000", "#8AB4F8", "#536DFE"), // Sel
-                scheme("#000000", "#3579CA", "#3579CA"), // Out
-                scheme("#000000", "#81c995", "#1e8e3e"), // Green
-                scheme("#000000", "#fdd663", "#f9ab00"), // Yellow
-                scheme("#000000", "#f28b82", "#d93025"), // Red
-            ],
+            colors: Theme::Catppuccin.colors(),
             lines: 0,
             columns: 1,
             word_delimiters: " ".to_string(),
@@ -314,6 +361,42 @@ impl Default for Config {
             width: Width::Default,
             embed: None,
             slide: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::render::parse_color;
+
+    #[test]
+    fn catppuccin_is_the_default_palette() {
+        let cfg = Config::default();
+        let catppuccin = Theme::Catppuccin.colors();
+        assert_eq!(cfg.colors[0].fg, catppuccin[0].fg);
+        assert_eq!(cfg.colors[0].bg, catppuccin[0].bg);
+        assert_eq!(cfg.colors[4].bg, catppuccin[4].bg);
+    }
+
+    #[test]
+    fn classic_preserves_the_original_palette() {
+        let classic = Theme::Classic.colors();
+        assert_eq!(classic[0].fg, "#DFDFDF");
+        assert_eq!(classic[0].bg, "#121212");
+        assert_eq!(classic[4].fg, "#000000");
+        assert_eq!(classic[4].bg, "#8AB4F8");
+        assert_eq!(classic[8].detail, "#D93025");
+    }
+
+    #[test]
+    fn every_theme_color_is_valid() {
+        for theme in [Theme::Catppuccin, Theme::Classic, Theme::Gruvbox] {
+            for scheme in theme.colors() {
+                for color in [scheme.fg, scheme.bg, scheme.detail] {
+                    assert!(parse_color(&color).is_some(), "{theme:?}: {color}");
+                }
+            }
         }
     }
 }

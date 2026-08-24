@@ -5,7 +5,7 @@
 use clap::Parser;
 use instantmenu::backend;
 use instantmenu::cli;
-use instantmenu::config::{Config, LineHeight, MonitorChoice, SlideSettings};
+use instantmenu::config::{Config, LineHeight, MonitorChoice, SlideSettings, Theme};
 use instantmenu::enums::{ColorRole, ExitStatus, Scheme};
 use instantmenu::menu::{self, Menu};
 use instantmenu::render::Renderer;
@@ -260,6 +260,7 @@ fn apply_flags(args: &cli::Args, cfg: &mut Config) {
 /// wins (the C version's argument-layering order).
 struct CliOverrides {
     font: Option<String>,
+    theme: Option<Theme>,
     colors: Vec<(Scheme, ColorRole, String)>,
 }
 
@@ -267,6 +268,9 @@ impl CliOverrides {
     fn apply_to(self, cfg: &mut Config) {
         if let Some(f) = self.font {
             cfg.fonts[0] = f;
+        }
+        if let Some(theme) = self.theme {
+            cfg.colors = theme.colors();
         }
         for (scheme, role, value) in self.colors {
             *cfg.colors[scheme as usize].role_mut(role) = value;
@@ -370,7 +374,11 @@ fn apply_values(args: &cli::Args, cfg: &mut Config) -> CliOverrides {
         colors.push((Scheme::Selected, ColorRole::Foreground, c.clone()));
     }
 
-    CliOverrides { font, colors }
+    CliOverrides {
+        font,
+        theme: args.window.theme,
+        colors,
+    }
 }
 
 /// Apply X resource "key -> value" pairs to the config.
@@ -387,5 +395,28 @@ fn apply_resources(backend: &dyn backend::Backend, cfg: &mut Config) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_colors_override_the_selected_theme() {
+        let args = cli::Args::try_parse_from([
+            "instantmenu",
+            "--theme",
+            "gruvbox",
+            "--normal-bg",
+            "#010203",
+        ])
+        .unwrap();
+        let mut cfg = Config::default();
+        apply_values(&args, &mut cfg).apply_to(&mut cfg);
+
+        assert_eq!(cfg.colors[Scheme::Normal as usize].bg, "#010203");
+        assert_eq!(cfg.colors[Scheme::Normal as usize].fg, "#EBDBB2");
+        assert_eq!(cfg.colors[Scheme::Selected as usize].bg, "#83A598");
     }
 }
