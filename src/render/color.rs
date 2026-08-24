@@ -1,20 +1,24 @@
-//! Color parsing: hex colors, X11/CSS color names and color schemes.
+//! Parsed colors and the named palette used by the renderer.
 //!
 //! Parsing is delegated to `csscolorparser`, which covers the same surface
 //! the C version got for free from Xft: `#RGB`/`#RRGGBB`/`#RRGGBBAA` hex and
 //! the full X11/CSS named color palette (the hand-rolled table only shipped
 //! ~18 names, silently falling back to black for everything else).
 
-use crate::enums::ColorRole;
+use crate::enums::{ColorRole, Scheme};
 
-/// Parsed color (#RGB, #RRGGBB, #RRGGBBAA or an X11 color name — anything
-/// else falls back to the first scheme color).
+/// Parsed color (#RGB, #RRGGBB, #RRGGBBAA or an X11/CSS color name).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Color([u8; 4]); // r, g, b, a
 
 impl Color {
-    pub fn rgb(r: u8, g: u8, b: u8) -> Self {
+    pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         Color([r, g, b, 255])
+    }
+
+    /// Construct an opaque color from a `0xRRGGBB` literal.
+    pub const fn hex(rgb: u32) -> Self {
+        Color::rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
     }
 
     pub fn r(self) -> u8 {
@@ -45,21 +49,11 @@ pub fn parse_color(name: &str) -> Option<Color> {
     Some(Color([r, g, b, a]))
 }
 
-/// A color scheme as configured (fg/bg/detail color strings), before parsing.
-#[derive(Debug, Clone)]
-pub struct SchemeStrings {
-    pub fg: String,
-    pub bg: String,
-    pub detail: String,
-}
+impl std::str::FromStr for Color {
+    type Err = String;
 
-impl SchemeStrings {
-    pub fn role_mut(&mut self, role: ColorRole) -> &mut String {
-        match role {
-            ColorRole::Foreground => &mut self.fg,
-            ColorRole::Background => &mut self.bg,
-            ColorRole::Detail => &mut self.detail,
-        }
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        parse_color(value).ok_or_else(|| format!("invalid color: `{value}`"))
     }
 }
 
@@ -72,6 +66,14 @@ pub struct SchemeColors {
 }
 
 impl SchemeColors {
+    pub const fn new(fg: Color, bg: Color, detail: Color) -> Self {
+        SchemeColors { fg, bg, detail }
+    }
+
+    pub const fn hex(fg: u32, bg: u32, detail: u32) -> Self {
+        SchemeColors::new(Color::hex(fg), Color::hex(bg), Color::hex(detail))
+    }
+
     pub fn role(self, role: ColorRole) -> Color {
         match role {
             ColorRole::Foreground => self.fg,
@@ -81,26 +83,34 @@ impl SchemeColors {
     }
 }
 
-impl Default for SchemeColors {
-    fn default() -> Self {
-        SchemeColors {
-            fg: Color::rgb(0, 0, 0),
-            bg: Color::rgb(0, 0, 0),
-            detail: Color::rgb(0, 0, 0),
-        }
-    }
+/// Complete set of semantic menu colors. Named fields make theme definitions
+/// independent of enum declaration order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Palette {
+    pub normal: SchemeColors,
+    pub fade: SchemeColors,
+    pub highlight: SchemeColors,
+    pub hover: SchemeColors,
+    pub selected: SchemeColors,
+    pub output: SchemeColors,
+    pub green: SchemeColors,
+    pub yellow: SchemeColors,
+    pub red: SchemeColors,
 }
 
-pub fn scheme_from_strings(strings: &SchemeStrings) -> SchemeColors {
-    let parse = |name: &str| {
-        parse_color(name).unwrap_or_else(|| {
-            eprintln!("error, cannot allocate color '{name}'");
-            Color::rgb(0, 0, 0)
-        })
-    };
-    SchemeColors {
-        fg: parse(&strings.fg),
-        bg: parse(&strings.bg),
-        detail: parse(&strings.detail),
+impl Palette {
+    /// Return the colors for a runtime-selected semantic scheme.
+    pub const fn scheme(&self, scheme: Scheme) -> SchemeColors {
+        match scheme {
+            Scheme::Normal => self.normal,
+            Scheme::Fade => self.fade,
+            Scheme::Highlight => self.highlight,
+            Scheme::Hover => self.hover,
+            Scheme::Selected => self.selected,
+            Scheme::Output => self.output,
+            Scheme::Green => self.green,
+            Scheme::Yellow => self.yellow,
+            Scheme::Red => self.red,
+        }
     }
 }

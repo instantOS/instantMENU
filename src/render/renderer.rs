@@ -12,7 +12,7 @@ use crate::enums::Scheme;
 use crate::geom::Rect;
 
 use super::canvas::Canvas;
-use super::color::{scheme_from_strings, Color, SchemeColors, SchemeStrings};
+use super::color::{Color, Palette, SchemeColors};
 use super::font::{parse_font_name, primary_font_height, resolve_family, FontSpec};
 use super::fontconfig;
 use super::painter::Painter;
@@ -29,8 +29,8 @@ pub struct Renderer {
     pub font_height: i32,
     /// Sum of the left and right text padding inside a cell.
     pub horizontal_padding: i32,
-    /// Color schemes.
-    pub schemes: Vec<SchemeColors>,
+    /// Complete semantic color palette.
+    pub palette: Palette,
     /// Currently active color scheme.
     pub scheme: SchemeColors,
 
@@ -49,11 +49,7 @@ struct TextLayout {
 impl Renderer {
     /// Create the renderer: resolve the font families, load the schemes and
     /// seed the fallback set for the required characters.
-    pub fn new(
-        fonts: &[String],
-        scheme_strings: &[SchemeStrings; 9],
-        required_chars: &HashSet<char>,
-    ) -> Self {
+    pub fn new(fonts: &[String], palette: Palette, required_chars: &HashSet<char>) -> Self {
         let specs: Vec<FontSpec> = fonts.iter().map(|f| parse_font_name(f)).collect();
         let mut font_system = match fontconfig::database_for(&specs, required_chars) {
             Some(db) => FontSystem::new_with_locale_and_db(detect_locale(), db),
@@ -72,25 +68,23 @@ impl Renderer {
 
         let mut checked_chars = required_chars.clone();
         checked_chars.extend(' '..='~');
-        let mut renderer = Renderer {
-            schemes: scheme_strings.iter().map(scheme_from_strings).collect(),
+        Renderer {
+            palette,
             swash_cache: SwashCache::new(),
             font_system,
             fonts: specs,
             families,
             font_height,
             horizontal_padding: font_height,
-            scheme: SchemeColors::default(),
+            scheme: palette.normal,
             layout_cache: HashMap::new(),
             checked_chars,
-        };
-        renderer.scheme = renderer.schemes.first().copied().unwrap_or_default();
-        renderer
+        }
     }
 
     /// Look up a configured scheme by its enum variant.
     pub fn color_scheme(&self, scheme: Scheme) -> SchemeColors {
-        self.schemes[scheme as usize]
+        self.palette.scheme(scheme)
     }
 
     /// Make `scheme` the current drawing scheme.
@@ -301,58 +295,18 @@ impl Renderer {
 /// the pixel- and measurement-level tests of this module and `painter`.
 #[cfg(test)]
 pub(super) fn make_test_renderer() -> Renderer {
-    let scheme_strings = [
-        SchemeStrings {
-            fg: "#ffffff".to_string(),
-            bg: "#111111".to_string(),
-            detail: "#333333".to_string(),
-        },
-        SchemeStrings {
-            fg: "#aaaaaa".to_string(),
-            bg: "#222222".to_string(),
-            detail: "#444444".to_string(),
-        },
-        SchemeStrings {
-            fg: "#bbbbbb".to_string(),
-            bg: "#333333".to_string(),
-            detail: "#555555".to_string(),
-        },
-        SchemeStrings {
-            fg: "#cccccc".to_string(),
-            bg: "#444444".to_string(),
-            detail: "#666666".to_string(),
-        },
-        SchemeStrings {
-            fg: "#000000".to_string(),
-            bg: "#0055ff".to_string(),
-            detail: "#00aaff".to_string(),
-        },
-        SchemeStrings {
-            fg: "#dddddd".to_string(),
-            bg: "#555555".to_string(),
-            detail: "#777777".to_string(),
-        },
-        SchemeStrings {
-            fg: "#00ff00".to_string(),
-            bg: "#003300".to_string(),
-            detail: "#006600".to_string(),
-        },
-        SchemeStrings {
-            fg: "#ffff00".to_string(),
-            bg: "#333300".to_string(),
-            detail: "#666600".to_string(),
-        },
-        SchemeStrings {
-            fg: "#ff0000".to_string(),
-            bg: "#330000".to_string(),
-            detail: "#660000".to_string(),
-        },
-    ];
-    Renderer::new(
-        &["monospace:size=12".to_string()],
-        &scheme_strings,
-        &HashSet::new(),
-    )
+    let palette = Palette {
+        normal: SchemeColors::hex(0xFFFFFF, 0x111111, 0x333333),
+        fade: SchemeColors::hex(0xAAAAAA, 0x222222, 0x444444),
+        highlight: SchemeColors::hex(0xBBBBBB, 0x333333, 0x555555),
+        hover: SchemeColors::hex(0xCCCCCC, 0x444444, 0x666666),
+        selected: SchemeColors::hex(0x000000, 0x0055FF, 0x00AAFF),
+        output: SchemeColors::hex(0xDDDDDD, 0x555555, 0x777777),
+        green: SchemeColors::hex(0x00FF00, 0x003300, 0x006600),
+        yellow: SchemeColors::hex(0xFFFF00, 0x333300, 0x666600),
+        red: SchemeColors::hex(0xFF0000, 0x330000, 0x660000),
+    };
+    Renderer::new(&["monospace:size=12".to_string()], palette, &HashSet::new())
 }
 
 fn detect_locale() -> String {

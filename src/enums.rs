@@ -14,37 +14,6 @@ pub enum Scheme {
     Red,
 }
 
-pub const SCHEME_COUNT: usize = 9;
-
-impl Scheme {
-    pub const ALL: [Scheme; SCHEME_COUNT] = [
-        Scheme::Normal,
-        Scheme::Fade,
-        Scheme::Highlight,
-        Scheme::Hover,
-        Scheme::Selected,
-        Scheme::Output,
-        Scheme::Green,
-        Scheme::Yellow,
-        Scheme::Red,
-    ];
-
-    /// X resource scheme names, port of `xresscheme`.
-    pub fn x_resource_name(self) -> &'static str {
-        match self {
-            Scheme::Normal => "norm",
-            Scheme::Fade => "fade",
-            Scheme::Highlight => "highlight",
-            Scheme::Hover => "hover",
-            Scheme::Selected => "sel",
-            Scheme::Output => "out",
-            Scheme::Green => "green",
-            Scheme::Red => "red",
-            Scheme::Yellow => "yellow",
-        }
-    }
-}
-
 /* item categories */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemCategory {
@@ -135,23 +104,6 @@ pub enum ColorRole {
     Foreground,
     Background,
     Detail,
-}
-
-impl ColorRole {
-    pub const ALL: [ColorRole; 3] = [
-        ColorRole::Foreground,
-        ColorRole::Background,
-        ColorRole::Detail,
-    ];
-
-    /// X resource color type name, port of `xrescolortype`.
-    pub fn x_res_name(self) -> &'static str {
-        match self {
-            ColorRole::Foreground => "fg",
-            ColorRole::Background => "bg",
-            ColorRole::Detail => "detail",
-        }
-    }
 }
 
 /// Process exit status: 0 = success, 1 = failure.

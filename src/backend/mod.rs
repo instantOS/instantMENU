@@ -282,10 +282,6 @@ pub trait Backend {
     }
     /// Ask for the selection/clipboard contents (XConvertSelection).
     fn request_selection(&mut self, clipboard: bool);
-    /// X resource "key -> value" pairs (X11 only, empty on Wayland).
-    fn resource_pairs(&self) -> Vec<(String, String)> {
-        Vec::new()
-    }
 }
 
 /// Keysym + UTF-8 text for a key event through an xkb state, keeping the

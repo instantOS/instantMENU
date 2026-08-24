@@ -287,50 +287,6 @@ impl Backend for X11Backend {
         &self.monitors
     }
 
-    /// Read the RESOURCE_MANAGER property of the root window and return
-    /// "key -> value" pairs (a small Xrm stand-in).
-    fn resource_pairs(&self) -> Vec<(String, String)> {
-        let Ok(reply) = self.connection.get_property(
-            false,
-            self.root,
-            AtomEnum::RESOURCE_MANAGER,
-            AtomEnum::STRING,
-            0,
-            1 << 16,
-        ) else {
-            return Vec::new();
-        };
-        let Ok(reply) = reply.reply() else {
-            return Vec::new();
-        };
-        let Ok(text) = String::from_utf8(reply.value) else {
-            return Vec::new();
-        };
-
-        /* join backslash-continued lines, then split into key: value */
-        let mut out = Vec::new();
-        let mut pending = String::new();
-        for line in text.split('\n') {
-            let line = line.trim_end_matches('\r');
-            if let Some(cont) = line.strip_suffix('\\') {
-                pending.push_str(cont);
-                continue;
-            }
-            let mut full = std::mem::take(&mut pending);
-            full.push_str(line);
-            if let Some((key, value)) = full.split_once(':') {
-                let key = key.trim();
-                /* strip a leading program prefix ("instantmenu." or "*") */
-                let key = key
-                    .strip_prefix("instantmenu.")
-                    .or_else(|| key.strip_prefix('*'))
-                    .unwrap_or(key);
-                out.push((key.trim().to_string(), value.trim().to_string()));
-            }
-        }
-        out
-    }
-
     fn root_size(&self) -> Size {
         Size::new(self.root_width, self.root_height)
     }

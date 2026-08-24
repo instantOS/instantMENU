@@ -19,6 +19,7 @@ use clap::{Parser, Subcommand};
 
 use crate::backend::BackendChoice;
 use crate::config::{LineHeight, MatchMode, MonitorChoice, Position, Theme, Width};
+use crate::render::Color;
 use std::path::PathBuf;
 
 /// Long-form description shown by `--help` and the generated man page.
@@ -326,7 +327,7 @@ pub struct WindowArgs {
     #[arg(long, short = 'p', value_name = "TEXT", global = true)]
     pub prompt: Option<String>,
 
-    /// Font or font set (overrides the X resource and default).
+    /// Font or font set (overrides the default).
     #[arg(long, value_name = "FONT", conflicts_with = "monospace", global = true)]
     pub font: Option<String>,
 
@@ -350,27 +351,27 @@ pub struct WindowArgs {
 
     /// Normal background color.
     ///
-    /// Supports #RGB, #RRGGBB and X color names.
+    /// Supports #RGB, #RRGGBB, #RRGGBBAA and CSS color names.
     #[arg(long, value_name = "COLOR", global = true)]
-    pub normal_bg: Option<String>,
+    pub normal_bg: Option<Color>,
 
     /// Normal foreground color.
     ///
-    /// Supports #RGB, #RRGGBB and X color names.
+    /// Supports #RGB, #RRGGBB, #RRGGBBAA and CSS color names.
     #[arg(long, value_name = "COLOR", global = true)]
-    pub normal_fg: Option<String>,
+    pub normal_fg: Option<Color>,
 
     /// Selected background color.
     ///
-    /// Supports #RGB, #RRGGBB and X color names.
+    /// Supports #RGB, #RRGGBB, #RRGGBBAA and CSS color names.
     #[arg(long, value_name = "COLOR", global = true)]
-    pub selected_bg: Option<String>,
+    pub selected_bg: Option<Color>,
 
     /// Selected foreground color.
     ///
-    /// Supports #RGB, #RRGGBB and X color names.
+    /// Supports #RGB, #RRGGBB, #RRGGBBAA and CSS color names.
     #[arg(long, value_name = "COLOR", global = true)]
-    pub selected_fg: Option<String>,
+    pub selected_fg: Option<Color>,
 
     /// Embedding window id (X11 only).
     #[arg(long, value_name = "ID", value_parser = parse_window_id, global = true)]
@@ -564,6 +565,22 @@ mod tests {
             assert_eq!(a.window.theme, Some(expected), "{value}");
         }
         assert!(Args::try_parse_from(["instantmenu", "--theme", "unknown"]).is_err());
+    }
+
+    #[test]
+    fn colors_are_parsed_strictly() {
+        let args = Args::try_parse_from([
+            "instantmenu",
+            "--normal-bg",
+            "#123456",
+            "--selected-fg",
+            "rebeccapurple",
+        ])
+        .unwrap();
+        assert_eq!(args.window.normal_bg, Some(Color::hex(0x123456)));
+        assert!(args.window.selected_fg.is_some());
+
+        assert!(Args::try_parse_from(["instantmenu", "--normal-bg", "not-a-color"]).is_err());
     }
 
     #[test]

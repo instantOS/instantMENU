@@ -1,15 +1,12 @@
-//! Port of `config.def.h` — default settings; can be overridden by command
-//! line and X resources.
+//! Application defaults and built-in themes, overridable from the command
+//! line.
 
 use std::path::PathBuf;
 
-use crate::render::SchemeStrings;
+use crate::render::{Palette, SchemeColors};
 use clap::ValueEnum;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// `xresname`
-pub const XRES_NAME: &str = "instantmenu";
 
 /// Where the menu appears on screen (`--position`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -93,9 +90,10 @@ pub enum MatchMode {
 ///
 /// Catppuccin uses the Mocha flavor and is the application default. The
 /// `default` command-line value is accepted as an alias for it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 pub enum Theme {
     /// Catppuccin Mocha (the default).
+    #[default]
     #[value(alias = "default")]
     Catppuccin,
     /// The original instantMENU colors.
@@ -106,47 +104,41 @@ pub enum Theme {
 
 impl Theme {
     /// The complete palette for all semantic drawing schemes.
-    pub fn colors(self) -> [SchemeStrings; 9] {
-        let scheme = |fg: &str, bg: &str, detail: &str| SchemeStrings {
-            fg: fg.to_string(),
-            bg: bg.to_string(),
-            detail: detail.to_string(),
-        };
-
+    pub const fn palette(self) -> Palette {
         match self {
-            Theme::Catppuccin => [
-                scheme("#CDD6F4", "#1E1E2E", "#45475A"), // Norm
-                scheme("#6C7086", "#1E1E2E", "#45475A"), // Fade
-                scheme("#CDD6F4", "#313244", "#89B4FA"), // Highlight
-                scheme("#CDD6F4", "#313244", "#45475A"), // Hover
-                scheme("#1E1E2E", "#89B4FA", "#B4BEFE"), // Sel
-                scheme("#1E1E2E", "#74C7EC", "#89B4FA"), // Out
-                scheme("#1E1E2E", "#A6E3A1", "#94E2D5"), // Green
-                scheme("#1E1E2E", "#F9E2AF", "#FAB387"), // Yellow
-                scheme("#1E1E2E", "#F38BA8", "#EBA0AC"), // Red
-            ],
-            Theme::Classic => [
-                scheme("#DFDFDF", "#121212", "#3E485B"), // Norm
-                scheme("#575E70", "#121212", "#3E485B"), // Fade
-                scheme("#DFDFDF", "#384252", "#272727"), // Highlight
-                scheme("#DFDFDF", "#272727", "#2E2E2E"), // Hover
-                scheme("#000000", "#8AB4F8", "#536DFE"), // Sel
-                scheme("#000000", "#3579CA", "#3579CA"), // Out
-                scheme("#000000", "#81C995", "#1E8E3E"), // Green
-                scheme("#000000", "#FDD663", "#F9AB00"), // Yellow
-                scheme("#000000", "#F28B82", "#D93025"), // Red
-            ],
-            Theme::Gruvbox => [
-                scheme("#EBDBB2", "#282828", "#504945"), // Norm
-                scheme("#928374", "#282828", "#504945"), // Fade
-                scheme("#EBDBB2", "#504945", "#83A598"), // Highlight
-                scheme("#EBDBB2", "#3C3836", "#504945"), // Hover
-                scheme("#282828", "#83A598", "#8EC07C"), // Sel
-                scheme("#282828", "#8EC07C", "#83A598"), // Out
-                scheme("#282828", "#B8BB26", "#98971A"), // Green
-                scheme("#282828", "#FABD2F", "#D79921"), // Yellow
-                scheme("#282828", "#FB4934", "#CC241D"), // Red
-            ],
+            Theme::Catppuccin => Palette {
+                normal: SchemeColors::hex(0xCDD6F4, 0x1E1E2E, 0x45475A),
+                fade: SchemeColors::hex(0x6C7086, 0x1E1E2E, 0x45475A),
+                highlight: SchemeColors::hex(0xCDD6F4, 0x313244, 0x89B4FA),
+                hover: SchemeColors::hex(0xCDD6F4, 0x313244, 0x45475A),
+                selected: SchemeColors::hex(0x1E1E2E, 0x89B4FA, 0xB4BEFE),
+                output: SchemeColors::hex(0x1E1E2E, 0x74C7EC, 0x89B4FA),
+                green: SchemeColors::hex(0x1E1E2E, 0xA6E3A1, 0x94E2D5),
+                yellow: SchemeColors::hex(0x1E1E2E, 0xF9E2AF, 0xFAB387),
+                red: SchemeColors::hex(0x1E1E2E, 0xF38BA8, 0xEBA0AC),
+            },
+            Theme::Classic => Palette {
+                normal: SchemeColors::hex(0xDFDFDF, 0x121212, 0x3E485B),
+                fade: SchemeColors::hex(0x575E70, 0x121212, 0x3E485B),
+                highlight: SchemeColors::hex(0xDFDFDF, 0x384252, 0x272727),
+                hover: SchemeColors::hex(0xDFDFDF, 0x272727, 0x2E2E2E),
+                selected: SchemeColors::hex(0x000000, 0x8AB4F8, 0x536DFE),
+                output: SchemeColors::hex(0x000000, 0x3579CA, 0x3579CA),
+                green: SchemeColors::hex(0x000000, 0x81C995, 0x1E8E3E),
+                yellow: SchemeColors::hex(0x000000, 0xFDD663, 0xF9AB00),
+                red: SchemeColors::hex(0x000000, 0xF28B82, 0xD93025),
+            },
+            Theme::Gruvbox => Palette {
+                normal: SchemeColors::hex(0xEBDBB2, 0x282828, 0x504945),
+                fade: SchemeColors::hex(0x928374, 0x282828, 0x504945),
+                highlight: SchemeColors::hex(0xEBDBB2, 0x504945, 0x83A598),
+                hover: SchemeColors::hex(0xEBDBB2, 0x3C3836, 0x504945),
+                selected: SchemeColors::hex(0x282828, 0x83A598, 0x8EC07C),
+                output: SchemeColors::hex(0x282828, 0x8EC07C, 0x83A598),
+                green: SchemeColors::hex(0x282828, 0xB8BB26, 0x98971A),
+                yellow: SchemeColors::hex(0x282828, 0xFABD2F, 0xD79921),
+                red: SchemeColors::hex(0x282828, 0xFB4934, 0xCC241D),
+            },
         }
     }
 }
@@ -263,8 +255,8 @@ pub struct Config {
     pub right_command: Option<String>,
     /* --frecency-cache option; file backing the selection frecency store */
     pub frecency_cache: Option<PathBuf>,
-    /* fg / bg / detail per scheme */
-    pub colors: [SchemeStrings; 9],
+    /* fg / bg / detail per semantic scheme */
+    pub palette: Palette,
 
     /* -l option; if nonzero, vertical list with given number of lines */
     pub lines: i32,
@@ -340,7 +332,7 @@ impl Default for Config {
             left_command: None,
             right_command: None,
             frecency_cache: None,
-            colors: Theme::Catppuccin.colors(),
+            palette: Theme::default().palette(),
             lines: 0,
             columns: 1,
             word_delimiters: " ".to_string(),
@@ -368,35 +360,21 @@ impl Default for Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::parse_color;
 
     #[test]
     fn catppuccin_is_the_default_palette() {
         let cfg = Config::default();
-        let catppuccin = Theme::Catppuccin.colors();
-        assert_eq!(cfg.colors[0].fg, catppuccin[0].fg);
-        assert_eq!(cfg.colors[0].bg, catppuccin[0].bg);
-        assert_eq!(cfg.colors[4].bg, catppuccin[4].bg);
+        assert_eq!(Theme::default(), Theme::Catppuccin);
+        assert_eq!(cfg.palette, Theme::Catppuccin.palette());
     }
 
     #[test]
     fn classic_preserves_the_original_palette() {
-        let classic = Theme::Classic.colors();
-        assert_eq!(classic[0].fg, "#DFDFDF");
-        assert_eq!(classic[0].bg, "#121212");
-        assert_eq!(classic[4].fg, "#000000");
-        assert_eq!(classic[4].bg, "#8AB4F8");
-        assert_eq!(classic[8].detail, "#D93025");
-    }
-
-    #[test]
-    fn every_theme_color_is_valid() {
-        for theme in [Theme::Catppuccin, Theme::Classic, Theme::Gruvbox] {
-            for scheme in theme.colors() {
-                for color in [scheme.fg, scheme.bg, scheme.detail] {
-                    assert!(parse_color(&color).is_some(), "{theme:?}: {color}");
-                }
-            }
-        }
+        let classic = Theme::Classic.palette();
+        assert_eq!(classic.normal.fg, crate::render::Color::hex(0xDFDFDF));
+        assert_eq!(classic.normal.bg, crate::render::Color::hex(0x121212));
+        assert_eq!(classic.selected.fg, crate::render::Color::hex(0x000000));
+        assert_eq!(classic.selected.bg, crate::render::Color::hex(0x8AB4F8));
+        assert_eq!(classic.red.detail, crate::render::Color::hex(0xD93025));
     }
 }

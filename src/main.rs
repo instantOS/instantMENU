@@ -5,8 +5,8 @@
 use clap::Parser;
 use instantmenu::backend;
 use instantmenu::cli;
-use instantmenu::config::{Config, LineHeight, MonitorChoice, SlideSettings, Theme};
-use instantmenu::enums::{ColorRole, ExitStatus, Scheme};
+use instantmenu::config::{Config, LineHeight, MonitorChoice, SlideSettings};
+use instantmenu::enums::ExitStatus;
 use instantmenu::menu::{self, Menu};
 use instantmenu::render::Renderer;
 use std::io::IsTerminal;
@@ -18,7 +18,7 @@ fn main() {
 
     let mut cfg = Config::default();
     apply_flags(&args, &mut cfg);
-    let overrides = apply_values(&args, &mut cfg);
+    apply_values(&args, &mut cfg);
 
     /* `slide` subcommand: validate the range and apply the slider defaults
      * before anything is opened */
@@ -37,12 +37,6 @@ fn main() {
             eprintln!("instantmenu: {e}");
             ExitStatus::Failure.exit();
         });
-
-    /* readxresources(): X resources are the base layer under the CLI */
-    apply_resources(backend.as_ref(), &mut cfg);
-
-    /* CLI font/colors override X resources */
-    overrides.apply_to(&mut cfg);
 
     /* Startup ordering: see [`stdin_mode`]. Streaming is the default, so
      * the keyboard is grabbed before anything slow happens; the other modes
@@ -84,7 +78,7 @@ fn main() {
     }
 
     /* drw_fontset_create + lrpad = drw->fonts->h */
-    let renderer = Renderer::new(&cfg.fonts, &cfg.colors, &required_chars);
+    let renderer = Renderer::new(&cfg.fonts, cfg.palette, &required_chars);
 
     if cfg.full_height || cfg.line_height == LineHeight::FromFont {
         cfg.line_height = LineHeight::Pixels((renderer.font_height as f32 * 2.5) as i32);
@@ -256,31 +250,8 @@ fn apply_flags(args: &cli::Args, cfg: &mut Config) {
     }
 }
 
-/// CLI font/color overrides, applied after X resources so the command line
-/// wins (the C version's argument-layering order).
-struct CliOverrides {
-    font: Option<String>,
-    theme: Option<Theme>,
-    colors: Vec<(Scheme, ColorRole, String)>,
-}
-
-impl CliOverrides {
-    fn apply_to(self, cfg: &mut Config) {
-        if let Some(f) = self.font {
-            cfg.fonts[0] = f;
-        }
-        if let Some(theme) = self.theme {
-            cfg.colors = theme.colors();
-        }
-        for (scheme, role, value) in self.colors {
-            *cfg.colors[scheme as usize].role_mut(role) = value;
-        }
-    }
-}
-
-/// Value options, plus the temporary font/color overrides applied after X
-/// resources.
-fn apply_values(args: &cli::Args, cfg: &mut Config) -> CliOverrides {
+/// Apply value options to the runtime configuration.
+fn apply_values(args: &cli::Args, cfg: &mut Config) {
     if let Some(v) = args.menu.toast {
         /* 0 keeps the timeout disabled, like omitting the option */
         cfg.toast = (v > 0.0).then_some(v);
@@ -355,46 +326,28 @@ fn apply_values(args: &cli::Args, cfg: &mut Config) -> CliOverrides {
         });
     }
 
-    /* temporary font/colors: applied AFTER X resources so the CLI wins */
-    let mut font: Option<String> = args.window.font.clone();
+    let mut font = args.window.font.clone();
     if args.window.monospace {
         font = Some("Fira Code Nerd Font:pixelsize=15".to_string());
     }
-    let mut colors = Vec::new();
-    if let Some(c) = &args.window.normal_bg {
-        colors.push((Scheme::Normal, ColorRole::Background, c.clone()));
-    }
-    if let Some(c) = &args.window.normal_fg {
-        colors.push((Scheme::Normal, ColorRole::Foreground, c.clone()));
-    }
-    if let Some(c) = &args.window.selected_bg {
-        colors.push((Scheme::Selected, ColorRole::Background, c.clone()));
-    }
-    if let Some(c) = &args.window.selected_fg {
-        colors.push((Scheme::Selected, ColorRole::Foreground, c.clone()));
+    if let Some(font) = font {
+        cfg.fonts[0] = font;
     }
 
-    CliOverrides {
-        font,
-        theme: args.window.theme,
-        colors,
+    if let Some(theme) = args.window.theme {
+        cfg.palette = theme.palette();
     }
-}
-
-/// Apply X resource "key -> value" pairs to the config.
-fn apply_resources(backend: &dyn backend::Backend, cfg: &mut Config) {
-    for (key, value) in backend.resource_pairs() {
-        if key == "font" {
-            cfg.fonts[0] = value;
-            continue;
-        }
-        for scheme in Scheme::ALL {
-            for role in ColorRole::ALL {
-                if key == format!("{}.{}", scheme.x_resource_name(), role.x_res_name()) {
-                    *cfg.colors[scheme as usize].role_mut(role) = value.clone();
-                }
-            }
-        }
+    if let Some(color) = args.window.normal_bg {
+        cfg.palette.normal.bg = color;
+    }
+    if let Some(color) = args.window.normal_fg {
+        cfg.palette.normal.fg = color;
+    }
+    if let Some(color) = args.window.selected_bg {
+        cfg.palette.selected.bg = color;
+    }
+    if let Some(color) = args.window.selected_fg {
+        cfg.palette.selected.fg = color;
     }
 }
 
@@ -413,10 +366,19 @@ mod tests {
         ])
         .unwrap();
         let mut cfg = Config::default();
-        apply_values(&args, &mut cfg).apply_to(&mut cfg);
+        apply_values(&args, &mut cfg);
 
-        assert_eq!(cfg.colors[Scheme::Normal as usize].bg, "#010203");
-        assert_eq!(cfg.colors[Scheme::Normal as usize].fg, "#EBDBB2");
-        assert_eq!(cfg.colors[Scheme::Selected as usize].bg, "#83A598");
+        assert_eq!(
+            cfg.palette.normal.bg,
+            instantmenu::render::Color::hex(0x010203)
+        );
+        assert_eq!(
+            cfg.palette.normal.fg,
+            instantmenu::render::Color::hex(0xEBDBB2)
+        );
+        assert_eq!(
+            cfg.palette.selected.bg,
+            instantmenu::render::Color::hex(0x83A598)
+        );
     }
 }

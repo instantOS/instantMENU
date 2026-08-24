@@ -12,7 +12,7 @@ mod painter;
 mod renderer;
 
 pub use canvas::Canvas;
-pub use color::{parse_color, scheme_from_strings, Color, SchemeColors, SchemeStrings};
+pub use color::{parse_color, Color, Palette, SchemeColors};
 pub use font::{parse_font_name, FontSpec};
 pub use painter::{Painter, TextStyle, ACCENT_STRIP_HEIGHT};
 pub use renderer::Renderer;

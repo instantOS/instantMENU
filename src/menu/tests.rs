@@ -82,7 +82,7 @@ impl SharedOutput {
 /// A menu with items loaded and the post-setup geometry the handlers read;
 /// `do_match()` has run once against the empty query.
 fn menu_with(cfg: Config, items: &[&str]) -> (Menu, StubHandle, SharedOutput) {
-    let renderer = Renderer::new(&cfg.fonts, &cfg.colors, &HashSet::new());
+    let renderer = Renderer::new(&cfg.fonts, cfg.palette, &HashSet::new());
     let backend = TestBackend {
         monitors: vec![MonitorInfo {
             rect: Rect::new(0, 0, 1920, 1080),
