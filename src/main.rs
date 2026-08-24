@@ -236,7 +236,7 @@ fn apply_flags(args: &cli::Args, cfg: &mut Config) {
     if args.menu.insensitive {
         cfg.insensitive = true;
     }
-    if args.menu.instant {
+    if args.menu.auto_confirm {
         cfg.instant = true;
     }
     if args.menu.password {
@@ -318,7 +318,7 @@ fn apply_values(args: &cli::Args, cfg: &mut Config) -> CliOverrides {
             }
         });
     }
-    if let Some(a) = args.menu.animation {
+    if let Some(a) = args.menu.animation_length {
         cfg.frame_count = a;
         cfg.animated = true;
     }
