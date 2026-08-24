@@ -29,7 +29,7 @@ use super::selection::OfferTracker;
 use super::shield::ShieldTag;
 use super::state::{EventState, OutputEntry, PointerFocus, ToplevelInfo};
 use crate::backend::{
-    lookup_key, translate_key, BackendEvent, InputSource, MonitorInfo, MouseButton,
+    lookup_key, scroll, translate_key, BackendEvent, InputSource, MonitorInfo, MouseButton,
 };
 use crate::geom::{Point, Rect};
 
@@ -404,7 +404,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
                 };
                 match (button_state, focus) {
                     (wl_pointer::ButtonState::Pressed, PointerFocus::Shield) => {
-                        let Some(button) = evdev_button(button) else {
+                        let Some(button) = MouseButton::from_evdev(button) else {
                             return;
                         };
                         state.events.push_back(BackendEvent::ButtonPress {
@@ -415,7 +415,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
                         });
                     }
                     (wl_pointer::ButtonState::Pressed, PointerFocus::Menu) => {
-                        let Some(button) = evdev_button(button) else {
+                        let Some(button) = MouseButton::from_evdev(button) else {
                             return;
                         };
                         state.events.push_back(BackendEvent::ButtonPress {
@@ -426,7 +426,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
                         });
                     }
                     (wl_pointer::ButtonState::Released, PointerFocus::Menu) => {
-                        let Some(button) = evdev_button(button) else {
+                        let Some(button) = MouseButton::from_evdev(button) else {
                             return;
                         };
                         state.events.push_back(BackendEvent::ButtonRelease {
@@ -443,9 +443,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
                 value,
                 ..
             } if focus == PointerFocus::Menu => {
-                /* one scroll step per axis batch; positive scrolls down */
+                /* one scroll step per axis batch */
                 state.events.push_back(BackendEvent::Scroll {
-                    delta: if value > 0.0 { 1 } else { -1 },
+                    delta: scroll::from_axis_value(value),
                 });
             }
             _ => {}
@@ -864,17 +864,6 @@ impl Dispatch<zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1, ()> fo
                 tracker.mimes.push(mime_type);
             }
         }
-    }
-}
-
-/// Linux evdev button code -> normalized button.
-/// BTN_LEFT = 0x110, BTN_RIGHT = 0x111, BTN_MIDDLE = 0x112.
-fn evdev_button(code: u32) -> Option<MouseButton> {
-    match code {
-        0x110 => Some(MouseButton::Left),
-        0x111 => Some(MouseButton::Right),
-        0x112 => Some(MouseButton::Middle),
-        _ => None,
     }
 }
 

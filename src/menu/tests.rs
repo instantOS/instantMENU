@@ -6,17 +6,16 @@ use super::input::read_stdin;
 use super::matcher::Item;
 use super::transition::Transition;
 use super::Menu;
-use crate::backend::{
-    Backend, BackendEvent, EventPoll, InputSource, Modifiers, MonitorInfo, MouseButton,
-};
+use crate::backend::stub::{TestBackend, TestHandle as StubHandle};
+use crate::backend::{BackendEvent, InputSource, Modifiers, MonitorInfo, MouseButton};
 use crate::config::{Config, SlideSettings, Width};
 use crate::enums::{ExitStatus, Scheme};
 use crate::geom::{Point, Rect, Size};
-use crate::render::{Canvas, Color, Renderer};
-use std::collections::{HashSet, VecDeque};
-use std::io::Write;
+use crate::render::{Color, Renderer};
+use std::collections::HashSet;
+use std::io::{Seek, SeekFrom, Write};
+use std::os::fd::AsRawFd;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use xkbcommon::xkb::keysyms as ks;
 
 /* ── modifier shorthands ───────────────────────────────────────────────── */
@@ -58,102 +57,6 @@ const M_LOGO: Modifiers = Modifiers {
     logo: true,
 };
 
-/* ── stub backend ──────────────────────────────────────────────────────── */
-
-#[derive(Default)]
-struct StubState {
-    presents: usize,
-    focus_titles: Vec<String>,
-    selection_requests: Vec<bool>,
-    resizes: Vec<Rect>,
-}
-
-/// A backend with a feedable event queue; `next_event` pops from it and
-/// returns None (connection died) once it is empty.
-struct StubBackend {
-    monitors: Vec<MonitorInfo>,
-    feed: Arc<Mutex<VecDeque<BackendEvent>>>,
-    state: Arc<Mutex<StubState>>,
-}
-
-impl Backend for StubBackend {
-    fn monitors(&self) -> &[MonitorInfo] {
-        &self.monitors
-    }
-    fn root_size(&self) -> Size {
-        Size::new(1920, 1080)
-    }
-    fn create_window(
-        &mut self,
-        _rect: Rect,
-        _border_width: i32,
-        _managed: bool,
-        _grab: bool,
-        _outside_close: bool,
-        _class_hint: &str,
-        _bg: Color,
-        _border_color: Color,
-    ) -> Result<(), String> {
-        Ok(())
-    }
-    fn grab_focus(&mut self, title: &str) -> Result<(), String> {
-        self.state.lock().unwrap().focus_titles.push(title.into());
-        Ok(())
-    }
-    fn set_title(&mut self, _title: &str) {}
-    fn present(&mut self, _canvas: &Canvas) {
-        self.state.lock().unwrap().presents += 1;
-    }
-    fn resize_window(&mut self, rect: Rect) {
-        self.state.lock().unwrap().resizes.push(rect);
-    }
-    fn poll_event(
-        &mut self,
-        timeout: Option<Duration>,
-        _extra: &[std::os::fd::RawFd],
-    ) -> EventPoll {
-        if let Some(ev) = self.feed.lock().unwrap().pop_front() {
-            return EventPoll::Event(ev);
-        }
-        if let Some(timeout) = timeout {
-            std::thread::sleep(timeout);
-            EventPoll::Timeout
-        } else {
-            EventPoll::Closed
-        }
-    }
-    fn request_selection(&mut self, clipboard: bool) {
-        self.state
-            .lock()
-            .unwrap()
-            .selection_requests
-            .push(clipboard);
-    }
-}
-
-/// Test-side handle onto the stub backend living inside the menu.
-#[derive(Clone)]
-struct StubHandle {
-    feed: Arc<Mutex<VecDeque<BackendEvent>>>,
-    state: Arc<Mutex<StubState>>,
-}
-
-impl StubHandle {
-    fn push(&self, ev: BackendEvent) {
-        self.feed.lock().unwrap().push_back(ev);
-    }
-    fn key(&self, sym: u32, mods: Modifiers, text: &str) {
-        self.push(BackendEvent::KeyPress {
-            sym,
-            mods,
-            text: text.to_string(),
-        });
-    }
-    fn state(&self) -> std::sync::MutexGuard<'_, StubState> {
-        self.state.lock().unwrap()
-    }
-}
-
 /* ── captured stdout ───────────────────────────────────────────────────── */
 
 #[derive(Clone, Default)]
@@ -180,16 +83,14 @@ impl SharedOutput {
 /// `do_match()` has run once against the empty query.
 fn menu_with(cfg: Config, items: &[&str]) -> (Menu, StubHandle, SharedOutput) {
     let renderer = Renderer::new(&cfg.fonts, &cfg.colors, &HashSet::new());
-    let feed = Arc::new(Mutex::new(VecDeque::new()));
-    let state = Arc::new(Mutex::new(StubState::default()));
-    let backend = StubBackend {
+    let backend = TestBackend {
         monitors: vec![MonitorInfo {
             rect: Rect::new(0, 0, 1920, 1080),
             name: "stub".into(),
         }],
-        feed: feed.clone(),
-        state: state.clone(),
+        ..TestBackend::new()
     };
+    let stub = backend.handle();
     let mut menu = Menu::new(cfg, renderer, Box::new(backend));
     menu.add_items(items.iter().map(|s| Item::new(*s)).collect());
     menu.stream_dirty = false; // the batch-load is not a pending stream settle
@@ -204,7 +105,7 @@ fn menu_with(cfg: Config, items: &[&str]) -> (Menu, StubHandle, SharedOutput) {
     menu.out = Box::new(out.clone());
 
     let _ = menu.do_match();
-    (menu, StubHandle { feed, state }, out)
+    (menu, stub, out)
 }
 
 /// Type raw text through key events (sym 0: plain characters are only
@@ -1282,6 +1183,38 @@ impl Drop for TestPipe {
     }
 }
 
+/// Startup only consumes a bounded prefix. In particular, a producer that
+/// never reaches EOF cannot hold window creation hostage.
+#[test]
+fn stream_preload_leaves_a_large_remainder_for_the_event_loop() {
+    let path = std::env::temp_dir().join(format!(
+        "instantmenu-preload-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .unwrap();
+    let item_count = 100_000;
+    file.write_all(&b"x\n".repeat(item_count)).unwrap();
+    file.seek(SeekFrom::Start(0)).unwrap();
+
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &[]);
+    menu.begin_stream(file.as_raw_fd());
+    menu.preload_available();
+
+    assert_eq!(menu.matcher.items.len(), 32_768);
+    assert!(menu.stream_active(), "the byte budget stopped before EOF");
+    assert!(menu.drain_stdin(), "the event-loop drain reaches EOF");
+    assert_eq!(menu.matcher.items.len(), item_count);
+
+    drop(file);
+    std::fs::remove_file(path).unwrap();
+}
+
 /// Items stream in batch by batch; the menu keeps running until EOF, which
 /// flushes the unterminated tail line.
 #[test]
@@ -1422,6 +1355,26 @@ fn reflow_resizes_the_window_when_the_grid_grows() {
     assert_eq!(resizes.len(), 1);
     assert_eq!(resizes[0].h, menu.layout.menu_height);
     assert_eq!(menu.layout.input_width, menu.layout.menu_width / 3);
+}
+
+/// An auto-sized multi-column grid can exceed the monitor because the
+/// measured cell width is multiplied by the column count. Preserve that
+/// measurement and cap it; falling back to one cell makes every column tiny.
+#[test]
+fn oversized_multicolumn_auto_width_is_capped_to_the_monitor() {
+    let cfg = Config {
+        lines: 2,
+        columns: 3,
+        width: Width::Auto,
+        ..Config::default()
+    };
+    let wide = "W".repeat(120);
+    let items = vec![wide.as_str(); 6];
+    let (mut menu, _stub, _out) = menu_with(cfg, &items);
+
+    assert!(menu.setup().is_none());
+    assert_eq!(menu.layout.columns, 3);
+    assert_eq!(menu.layout.menu_width, 1920);
 }
 
 /// Regression for the streamed smartrun startup: setup begins with no items

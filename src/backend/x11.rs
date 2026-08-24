@@ -17,7 +17,7 @@ use xkbcommon::xkb::{self, Keycode};
 
 use super::poll::{first_ready, poll_fds, poll_in, remaining_ms, PollOutcome};
 use super::{
-    translate_key, Backend, BackendEvent, EventPoll, InputSource, Modifiers, MonitorInfo,
+    scroll, translate_key, Backend, BackendEvent, EventPoll, InputSource, Modifiers, MonitorInfo,
     MouseButton,
 };
 use crate::geom::{Point, Rect, Size};
@@ -212,10 +212,10 @@ impl X11Backend {
                 };
                 /* vertical wheel buttons become scroll deltas; horizontal
                  * ones (6/7) have no menu action and drop here */
-                if let Some(delta) = wheel_delta(b.detail) {
+                if let Some(delta) = scroll::from_x11_button(b.detail) {
                     return Some(BackendEvent::Scroll { delta });
                 }
-                let button = mouse_button(b.detail)?;
+                let button = MouseButton::from_x11(b.detail)?;
                 Some(BackendEvent::ButtonPress {
                     button,
                     mods: x11_mods(b.state),
@@ -224,7 +224,7 @@ impl X11Backend {
                 })
             }
             Event::ButtonRelease(b) => {
-                let button = mouse_button(b.detail)?;
+                let button = MouseButton::from_x11(b.detail)?;
                 Some(BackendEvent::ButtonRelease {
                     button,
                     pos: Point::new(b.event_x as i32, b.event_y as i32),
@@ -743,35 +743,16 @@ fn query_monitors(connection: &XCBConnection) -> Vec<MonitorInfo> {
     monitors
 }
 
-/// X11 button number -> normalized button (1/2/3 = left/middle/right).
-fn mouse_button(detail: u8) -> Option<MouseButton> {
-    match detail {
-        1 => Some(MouseButton::Left),
-        2 => Some(MouseButton::Middle),
-        3 => Some(MouseButton::Right),
-        _ => None,
-    }
-}
-
-/// X11 vertical wheel buttons -> scroll delta: 4 scrolls up, 5 down.
-/// Horizontal wheel buttons (6/7) have no menu action.
-fn wheel_delta(detail: u8) -> Option<i32> {
-    match detail {
-        4 => Some(-1),
-        5 => Some(1),
-        _ => None,
-    }
-}
-
-/// X11 key/button mask bits -> semantic modifiers
-/// (ShiftMask=1<<0, ControlMask=1<<2, Mod1/Alt=1<<3, Mod4/Logo=1<<6).
+/// X11 key/button mask -> semantic modifiers. Named protocol flags instead
+/// of raw bits; the core only ever sees [`Modifiers`].
 fn x11_mods(state: x11rb::protocol::xproto::KeyButMask) -> Modifiers {
-    let bits = state.bits();
+    use x11rb::protocol::xproto::KeyButMask;
+
     Modifiers {
-        shift: bits & 1 != 0,
-        ctrl: bits & (1 << 2) != 0,
-        alt: bits & (1 << 3) != 0,
-        logo: bits & (1 << 6) != 0,
+        shift: state.contains(KeyButMask::SHIFT),
+        ctrl: state.contains(KeyButMask::CONTROL),
+        alt: state.contains(KeyButMask::MOD1),
+        logo: state.contains(KeyButMask::MOD4),
     }
 }
 

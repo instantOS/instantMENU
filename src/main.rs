@@ -106,17 +106,29 @@ fn main() {
         menu.add_items(items);
     }
 
+    // Streaming used to do setup() with 0 items, which made --width auto
+    // fall back to monitor.w (full width) and then shrink after the first
+    // streamed batch — the wide flash seen in instantstartmenu (echo ... |
+    // instantmenu -w auto -l 10 --position top-left). Preload whatever is
+    // already buffered without blocking so the first layout measures the
+    // final corpus when the producer is fast (echo). Geometry fallback
+    // (content_width) bounds the flash for slow producers.
+    let nonblock_stdin = if streaming {
+        let nb = NonBlockingStdin::new(libc::STDIN_FILENO);
+        menu.begin_stream(libc::STDIN_FILENO);
+        menu.preload_available();
+        Some(nb)
+    } else {
+        None
+    };
+
     if let Some(status) = menu.setup() {
+        drop(nonblock_stdin); // setup can finish before run(), so restore here too
         status.exit();
     }
 
-    let _nonblock_stdin = streaming.then(|| {
-        menu.begin_stream(libc::STDIN_FILENO);
-        NonBlockingStdin::new(libc::STDIN_FILENO)
-    });
-
     let status = menu.run();
-    drop(_nonblock_stdin); // restore the stdin flags before exiting
+    drop(nonblock_stdin); // restore the stdin flags before exiting
     status.exit();
 }
 

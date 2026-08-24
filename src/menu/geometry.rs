@@ -143,7 +143,13 @@ impl Menu {
         layout: &mut Layout,
     ) {
         if self.cfg.follow_cursor {
-            if width != 0 {
+            if self.cfg.width == Width::Auto {
+                layout.menu_width = if width > 0 {
+                    width.min(monitor.w)
+                } else {
+                    self.content_width(layout.prompt_width, monitor.w)
+                };
+            } else if width != 0 {
                 layout.menu_width = width;
             } else {
                 // Keep a cursor-following menu within the selected output,
@@ -163,17 +169,38 @@ impl Menu {
         }
 
         if self.cfg.position == Position::Center {
-            // `center` is a near-full-width popup, not content-sized, so it
-            // does not use `min_width` (unlike the follow-cursor/embed paths).
-            layout.menu_width = if width != 0 && width < monitor.w {
-                width
+            if self.cfg.width == Width::Auto {
+                // Auto should fit content, not be near-full-width. Use the
+                // measured auto width when available, otherwise content width.
+                let available = (monitor.w - 100).max(1);
+                if width > 0 {
+                    layout.menu_width = width.min(available);
+                } else {
+                    layout.menu_width = self.content_width(layout.prompt_width, available);
+                }
             } else {
-                monitor.w - 100
-            };
+                // `center` is a near-full-width popup, not content-sized, so it
+                // does not use `min_width` (unlike the follow-cursor/embed paths).
+                layout.menu_width = if width != 0 && width < monitor.w {
+                    width
+                } else {
+                    monitor.w - 100
+                };
+            }
             while (layout.lines + 1) * layout.bar_height > monitor.h {
                 layout.lines -= 1;
             }
             layout.menu_height = (layout.lines + 1) * layout.bar_height;
+        } else if self.cfg.width == Width::Auto {
+            // --width auto with an empty corpus would have width==0 and fall
+            // back to the full monitor width, flashing very wide before the
+            // streamed items arrive and reflow shrinks it (instantstartmenu).
+            // Use content width (floored at min_width) instead.
+            if width > 0 {
+                layout.menu_width = width.min(monitor.w);
+            } else {
+                layout.menu_width = self.content_width(layout.prompt_width, monitor.w);
+            }
         } else {
             layout.menu_width = if width > 0 && width < monitor.w {
                 width
@@ -223,13 +250,21 @@ impl Menu {
             return Ok(());
         }
 
-        layout.menu_width = if self.cfg.position == Position::Center {
-            self.content_width(layout.prompt_width, parent.w)
-        } else if width > 0 && width < parent.w {
-            width
+        if self.cfg.width == Width::Auto {
+            if width > 0 {
+                layout.menu_width = width.min(parent.w);
+            } else {
+                layout.menu_width = self.content_width(layout.prompt_width, parent.w);
+            }
         } else {
-            parent.w
-        };
+            layout.menu_width = if self.cfg.position == Position::Center {
+                self.content_width(layout.prompt_width, parent.w)
+            } else if width > 0 && width < parent.w {
+                width
+            } else {
+                parent.w
+            };
+        }
 
         let origin = anchor_origin(
             self.cfg.position,
@@ -518,70 +553,9 @@ fn monitor_containing(monitors: &[MonitorInfo], pointer: Point) -> Option<usize>
 #[cfg(test)]
 mod tests {
     use super::{anchor_origin, clamp_origin_to_monitor, follow_cursor_origin, select_monitor};
-    use crate::backend::{Backend, EventPoll, MonitorInfo};
+    use crate::backend::{stub::TestBackend, MonitorInfo};
     use crate::config::{MonitorChoice, Position};
     use crate::geom::{Point, Rect, Size};
-    use crate::render::{Canvas, Color};
-    use std::cell::Cell;
-
-    struct GeometryBackend {
-        focused: Option<usize>,
-        pointer: Option<Point>,
-        focus_calls: Cell<usize>,
-        pointer_calls: usize,
-    }
-
-    impl Backend for GeometryBackend {
-        fn monitors(&self) -> &[MonitorInfo] {
-            &[]
-        }
-
-        fn root_size(&self) -> Size {
-            Size::new(200, 100)
-        }
-
-        fn pointer_position(&mut self) -> Option<Point> {
-            self.pointer_calls += 1;
-            self.pointer
-        }
-
-        fn focused_monitor(&self) -> Option<usize> {
-            self.focus_calls.set(self.focus_calls.get() + 1);
-            self.focused
-        }
-
-        fn create_window(
-            &mut self,
-            _rect: Rect,
-            _border_width: i32,
-            _managed: bool,
-            _grab: bool,
-            _outside_close: bool,
-            _class_hint: &str,
-            _bg: Color,
-            _border_color: Color,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-
-        fn grab_focus(&mut self, _title: &str) -> Result<(), String> {
-            Ok(())
-        }
-
-        fn set_title(&mut self, _title: &str) {}
-
-        fn present(&mut self, _canvas: &Canvas) {}
-
-        fn poll_event(
-            &mut self,
-            _timeout: Option<std::time::Duration>,
-            _extra: &[std::os::fd::RawFd],
-        ) -> EventPoll {
-            EventPoll::Closed
-        }
-
-        fn request_selection(&mut self, _clipboard: bool) {}
-    }
 
     fn monitors() -> Vec<MonitorInfo> {
         vec![
@@ -596,13 +570,11 @@ mod tests {
         ]
     }
 
-    fn backend(focused: Option<usize>, pointer: Option<Point>) -> GeometryBackend {
-        GeometryBackend {
-            focused,
-            pointer,
-            focus_calls: Cell::new(0),
-            pointer_calls: 0,
-        }
+    fn backend(focused: Option<usize>, pointer: Option<Point>) -> TestBackend {
+        let mut backend = TestBackend::new();
+        backend.focused = focused;
+        backend.pointer = pointer;
+        backend
     }
 
     #[test]
@@ -618,8 +590,8 @@ mod tests {
             ),
             0
         );
-        assert_eq!(backend.focus_calls.get(), 0);
-        assert_eq!(backend.pointer_calls, 0);
+        assert_eq!(backend.focus_calls(), 0);
+        assert_eq!(backend.pointer_calls(), 0);
     }
 
     #[test]
@@ -635,8 +607,8 @@ mod tests {
             ),
             1
         );
-        assert_eq!(backend.focus_calls.get(), 0);
-        assert_eq!(backend.pointer_calls, 0);
+        assert_eq!(backend.focus_calls(), 0);
+        assert_eq!(backend.pointer_calls(), 0);
     }
 
     #[test]
@@ -646,14 +618,14 @@ mod tests {
             select_monitor(&monitors(), MonitorChoice::Auto, &mut focused, false, None,),
             1
         );
-        assert_eq!(focused.pointer_calls, 0);
+        assert_eq!(focused.pointer_calls(), 0);
 
         let mut fallback = backend(None, Some(Point::new(150, 50)));
         assert_eq!(
             select_monitor(&monitors(), MonitorChoice::Auto, &mut fallback, false, None,),
             0
         );
-        assert_eq!(fallback.pointer_calls, 0);
+        assert_eq!(fallback.pointer_calls(), 0);
     }
 
     /// Each anchor places the window's top-left corner at the matching
