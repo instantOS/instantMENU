@@ -231,7 +231,7 @@ fn apply_flags(args: &cli::Args, cfg: &mut Config) {
         cfg.insensitive = true;
     }
     if args.menu.auto_confirm {
-        cfg.instant = true;
+        cfg.auto_confirm = true;
     }
     if args.menu.password {
         cfg.password = true;

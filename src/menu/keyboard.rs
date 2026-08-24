@@ -26,7 +26,7 @@ enum KeyPath {
 impl Menu {
     /// select_number — Ctrl-1..9 select the n-th item and hit Return.
     fn select_number(&mut self, number: usize, mut mods: Modifiers) -> Transition {
-        self.selection.selected = self.selection.current;
+        self.selection.selected = self.selection.page_start;
         for _ in 0..number {
             self.select_next();
         }
@@ -350,7 +350,7 @@ impl Menu {
             self.recalc_paging();
             Transition::Redraw
         } else if sym == ks::KEY_Prior || sym == ks::KEY_KP_Prior {
-            if self.selection.current.is_none() {
+            if self.selection.page_start.is_none() {
                 return Transition::Nop;
             }
             self.selection = paging::at(self.paging.prev);
@@ -400,14 +400,14 @@ impl Menu {
                 if temp_selection == 0 {
                     return Transition::Nop;
                 }
-                if self.selection.current == Some(temp_selection) {
+                if self.selection.page_start == Some(temp_selection) {
                     offscreen = true;
                 }
                 temp_selection -= 1;
             }
             self.selection.selected = Some(temp_selection);
             if offscreen {
-                self.selection.current = Some(self.paging.prev);
+                self.selection.page_start = Some(self.paging.prev);
                 self.recalc_paging();
             }
             Transition::Redraw
@@ -453,7 +453,7 @@ impl Menu {
             }
             self.selection.selected = Some(temp_selection);
             if offscreen {
-                self.selection.current = self.paging.next;
+                self.selection.page_start = self.paging.next;
                 self.recalc_paging();
             }
             Transition::Redraw

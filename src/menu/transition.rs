@@ -16,7 +16,7 @@ pub(super) enum Transition {
     Redraw,
     /// Print a line and keep the menu running (confirm with Ctrl held).
     Print(String),
-    /// Print a line and exit successfully (confirm, instant mode, commented
+    /// Print a line and exit successfully (confirm, auto-confirm mode, commented
     /// mode).
     PrintAndExit(String),
     /// Spawn a command detached and keep running (slide mode value change).

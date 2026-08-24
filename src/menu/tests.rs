@@ -380,13 +380,13 @@ fn password_mode_never_records() {
     assert!(!path.exists());
 }
 
-/* ── instant and commented modes ───────────────────────────────────────── */
+/* ── auto-confirm and commented modes ───────────────────────────────────── */
 
 /// -n: typing down to a single fuzzy match prints it and exits mid-edit.
 #[test]
-fn instant_mode_picks_while_typing() {
+fn auto_confirm_mode_picks_while_typing() {
     let cfg = Config {
-        instant: true,
+        auto_confirm: true,
         ..Config::default()
     };
     let (mut menu, _stub, _out) = menu_with(cfg, &["abc", "bcd"]);
@@ -613,11 +613,11 @@ fn scroll_turns_pages() {
 
     assert_eq!(menu.scroll(1), Transition::Redraw);
     assert_eq!(menu.selection.selected, Some(1));
-    assert_eq!(menu.selection.current, Some(1));
+    assert_eq!(menu.selection.page_start, Some(1));
 
     // scrolling back up moves the page, the selection follows the page top
     assert_eq!(menu.scroll(-1), Transition::Redraw);
-    assert_eq!(menu.selection.current, Some(0));
+    assert_eq!(menu.selection.page_start, Some(0));
 }
 
 /* ── the event loop ────────────────────────────────────────────────────── */
@@ -1265,12 +1265,12 @@ fn run_settles_eof_then_behaves_like_a_loaded_menu() {
     assert_eq!(out.contents(), "alpha\n"); // first item selected after EOF
 }
 
-/// Instant mode must not conclude from a partial corpus: a single match
+/// Auto-confirm mode must not conclude from a partial corpus: a single match
 /// mid-stream stays listed, and only fires once EOF settled.
 #[test]
-fn instant_pick_waits_for_eof_when_streaming() {
+fn auto_confirm_pick_waits_for_eof_when_streaming() {
     let cfg = Config {
-        instant: true,
+        auto_confirm: true,
         match_mode: crate::config::MatchMode::Dmenu,
         ..Config::default()
     };
@@ -1435,7 +1435,7 @@ fn streamed_preselection_uses_the_final_layout() {
 
     assert!(menu.finalize_stream().is_none());
     assert_eq!(menu.selection.selected, Some(9));
-    assert_eq!(menu.selection.current, Some(0));
+    assert_eq!(menu.selection.page_start, Some(0));
     assert_eq!(menu.paging.next, Some(10));
 }
 

@@ -275,7 +275,7 @@ impl Menu {
 
     /// EOF settled: the corpus is final, so the deferred conclusions fire
     /// in the order the blocking startup used to run them — match (which
-    /// may instant-pick and exit), then pre-match, then the deferred
+    /// may auto-confirm and exit), then pre-match, then the deferred
     /// preselection — followed by the final layout pass and draw.
     pub(super) fn finalize_stream(&mut self) -> Option<ExitStatus> {
         self.stream_finalized = true;
