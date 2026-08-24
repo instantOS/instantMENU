@@ -190,15 +190,23 @@ impl Matcher {
     /// ordering (history, frecency) intact for equal matches.
     fn fuzzy_search(&mut self, text: &str, complete: bool) -> MatchResult {
         if text.is_empty() {
-            // empty query: everything matches, and — unlike the token
-            // matcher — instant mode does not fire (C early return).
+            // empty query: everything matches. If auto-confirm is enabled and
+            // there is only one item, pick it immediately.
             self.matches.clear();
             self.matches.extend(0..self.items.len());
+            if self.instant && complete && self.matches.len() == 1 {
+                return MatchResult::InstantPick(self.matches[0]);
+            }
             return MatchResult::Listed;
         }
 
+        let max_typos = if self.instant {
+            0
+        } else {
+            (text.chars().count() / 4) as u16
+        };
         let config = frizbee::Config::default()
-            .max_typos(Some((text.chars().count() / 4) as u16))
+            .max_typos(Some(max_typos))
             .casing(if self.insensitive {
                 frizbee::CaseMatching::Ignore
             } else {
@@ -341,13 +349,11 @@ mod tests {
         assert_eq!(m.search("", true), MatchResult::InstantPick(0));
     }
 
-    /// ...but the fuzzy matcher returns early on an empty query, before the
-    /// instant check.
+    /// ...and fuzzy mode also fires instant mode on empty query with a single item.
     #[test]
-    fn instant_mode_does_not_fire_on_empty_fuzzy_query() {
+    fn instant_mode_fires_on_empty_fuzzy_query() {
         let mut m = matcher(|c| c.instant = true, &["only"]);
-        assert_eq!(m.search("", true), MatchResult::Listed);
-        assert_eq!(m.matches, vec![0]);
+        assert_eq!(m.search("", true), MatchResult::InstantPick(0));
     }
 
     /// While the corpus is still streaming in (`complete == false`), instant
@@ -413,4 +419,20 @@ mod tests {
         assert_eq!(m.search("foo", true), MatchResult::Listed);
         assert_eq!(m.matches, vec![0]);
     }
+
+    /// Auto-confirm on single item at startup in fuzzy mode.
+    #[test]
+    fn auto_confirm_single_item_startup() {
+        let mut m = matcher(|c| c.instant = true, &["only_item"]);
+        assert_eq!(m.search("", true), MatchResult::InstantPick(0));
+    }
+
+    /// Auto-confirm in fuzzy mode picks the exact match without false positives from typos.
+    #[test]
+    fn auto_confirm_picks_single_fuzzy_match() {
+        let mut m = matcher(|c| c.instant = true, &["code", "cord", "cold"]);
+        // "code" matches only "code" in strict fuzzy mode (0 typos) -> InstantPick
+        assert_eq!(m.search("code", true), MatchResult::InstantPick(0));
+    }
 }
+
