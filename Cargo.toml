@@ -1,6 +1,6 @@
 [package]
 name = "instantmenu"
-version = "4.9.3"
+version = "4.10.0"
 edition = "2021"
 description = "A dynamic menu for X11 and Wayland - Rust port of instantMENU (dmenu fork)"
 license = "MIT"
