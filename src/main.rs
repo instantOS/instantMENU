@@ -1,8 +1,9 @@
-//! Port of `main()` from instantmenu.c: argument layering (defaults → X
-//! resources → command line), fontset creation, stdin/keyboard ordering and
-//! driving the menu through setup and the event loop.
+//! Port of `main()` from instantmenu.c: configuration, fontset creation,
+//! stdin/keyboard ordering and driving the menu through setup and the event
+//! loop.
 
 use clap::Parser;
+use instantmenu::appearance;
 use instantmenu::backend;
 use instantmenu::cli;
 use instantmenu::config::{Config, LineHeight, MonitorChoice, SlideSettings};
@@ -43,11 +44,40 @@ fn main() {
      * grab after their blocking load instead. */
     let mode = stdin_mode(&cfg);
     let streaming = matches!(mode, StdinMode::Stream);
+    let can_acquire_early = !matches!(mode, StdinMode::Load);
 
     let grab = cfg.toast.is_none() && !cfg.no_grab;
-    if streaming && grab {
-        grab_keyboard(&mut backend);
+    if can_acquire_early && grab {
+        acquire_keyboard(&mut backend, &cfg);
     }
+
+    /* Appearance is intentionally resolved after input acquisition. On
+     * Wayland the backend has already mapped a transparent 1x1 exclusive
+     * layer surface, so a cold or slow config disk cannot lose keystrokes.
+     * CLI appearance values are applied last. */
+    let config_path = if args.window.no_config {
+        None
+    } else {
+        args.window.config.clone().or_else(|| {
+            appearance::default_path(
+                std::env::var_os("XDG_CONFIG_HOME"),
+                std::env::var_os("HOME"),
+            )
+        })
+    };
+    let explicit_config = args.window.config.is_some();
+    match appearance::load(config_path.as_deref(), explicit_config) {
+        Ok(Some(value)) => value.apply(&mut cfg).unwrap_or_else(|error| {
+            eprintln!("instantmenu: invalid appearance config: {error}");
+            ExitStatus::Failure.exit();
+        }),
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("instantmenu: {error}");
+            ExitStatus::Failure.exit();
+        }
+    }
+    apply_appearance_values(&args, &mut cfg);
 
     /* Read candidates before constructing the font database so only fallback
      * fonts needed by the actual corpus have to be loaded. Streamed items
@@ -58,8 +88,8 @@ fn main() {
         StdinMode::Skip => Some(Vec::new()),
         StdinMode::Load => Some(menu::read_stdin(&cfg)),
     };
-    if !streaming && grab {
-        grab_keyboard(&mut backend);
+    if !can_acquire_early && grab {
+        acquire_keyboard(&mut backend, &cfg);
     }
 
     let mut required_chars = std::collections::HashSet::new();
@@ -157,8 +187,32 @@ impl Drop for NonBlockingStdin {
 /// Grab the keyboard or die: the C version exited from inside
 /// grabkeyboard() on failure, and without the grab the menu would leak
 /// keystrokes to whatever had focus.
-fn grab_keyboard(backend: &mut Box<dyn backend::Backend>) {
-    if let Err(e) = backend.grab_keyboard() {
+fn acquire_keyboard(backend: &mut Box<dyn backend::Backend>, cfg: &Config) {
+    let monitor_rects: Vec<_> = backend
+        .monitors()
+        .iter()
+        .map(|monitor| monitor.rect)
+        .collect();
+    let output = match cfg.monitor {
+        MonitorChoice::Index(index) if (index as usize) < monitor_rects.len() => index as usize,
+        MonitorChoice::Index(_) => 0,
+        MonitorChoice::Auto if cfg.follow_cursor => backend
+            .pointer_position()
+            .and_then(|point| {
+                monitor_rects
+                    .iter()
+                    .position(|rect| rect.contains_exclusive(point))
+            })
+            .unwrap_or(0),
+        MonitorChoice::Auto => backend
+            .focused_monitor()
+            .filter(|index| *index < monitor_rects.len())
+            .unwrap_or(0),
+    };
+    /* --embed is X11-only and Wayland intentionally ignores it; only an
+     * xdg-shell managed window prevents layer-surface reuse. */
+    let layer_menu = !cfg.managed;
+    if let Err(e) = backend.acquire_keyboard(output, layer_menu) {
         eprintln!("instantmenu: {e}");
         ExitStatus::Failure.exit();
     }
@@ -325,7 +379,11 @@ fn apply_values(args: &cli::Args, cfg: &mut Config) {
             command: s.resolved_command(),
         });
     }
+}
 
+/// Appearance precedence is built-in defaults, config file, selected CLI
+/// theme, then individual CLI values.
+fn apply_appearance_values(args: &cli::Args, cfg: &mut Config) {
     let mut font = args.window.font.clone();
     if args.window.monospace {
         font = Some("Fira Code Nerd Font:pixelsize=15".to_string());
@@ -366,7 +424,7 @@ mod tests {
         ])
         .unwrap();
         let mut cfg = Config::default();
-        apply_values(&args, &mut cfg);
+        apply_appearance_values(&args, &mut cfg);
 
         assert_eq!(
             cfg.palette.normal.bg,

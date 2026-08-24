@@ -4,7 +4,7 @@
 .SH NAME
 instantmenu \- A dynamic menu for X11 and Wayland (instantMENU, Rust port)
 .SH SYNOPSIS
-\fBinstantmenu\fR [\fB\-\-backend\fR] [\fB\-\-position\fR] [\fB\-\-follow\-cursor\fR] [\fB\-\-monospace\fR] [\fB\-\-no\-grab\fR] [\fB\-\-no\-outside\-close\fR] [\fB\-\-managed\fR] [\fB\-x\fR|\fB\-\-x\-offset\fR] [\fB\-y\fR|\fB\-\-y\-offset\fR] [\fB\-w\fR|\fB\-\-width\fR] [\fB\-m\fR|\fB\-\-monitor\fR] [\fB\-p\fR|\fB\-\-prompt\fR] [\fB\-\-font\fR] [\fB\-\-line\-height\fR] [\fB\-\-theme\fR] [\fB\-\-normal\-bg\fR] [\fB\-\-normal\-fg\fR] [\fB\-\-selected\-bg\fR] [\fB\-\-selected\-fg\fR] [\fB\-\-embed\fR] [\fB\-\-border\-width\fR] [\fB\-r\fR|\fB\-\-reject\-no\-match\fR] [\fB\-\-toast\fR] [\fB\-\-commented\fR] [\fB\-\-input\-only\fR] [\fB\-s\fR|\fB\-\-smart\-case\fR] [\fB\-\-match\-mode\fR] [\fB\-\-pre\-match\fR] [\fB\-\-space\-confirm\fR] [\fB\-\-full\-height\fR] [\fB\-i\fR|\fB\-\-insensitive\fR] [\fB\-n\fR|\fB\-\-auto\-confirm\fR] [\fB\-\-password\fR] [\fB\-\-alt\-tab\fR] [\fB\-\-right\-command\fR] [\fB\-\-left\-command\fR] [\fB\-g\fR|\fB\-\-columns\fR] [\fB\-l\fR|\fB\-\-lines\fR] [\fB\-\-placeholder\fR] [\fB\-a\fR|\fB\-\-animation\-length\fR] [\fB\-\-preselect\fR] [\fB\-\-initial\-text\fR] [\fB\-\-frecency\-cache\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIsubcommands\fR]
+\fBinstantmenu\fR [\fB\-\-config\fR] [\fB\-\-no\-config\fR] [\fB\-\-backend\fR] [\fB\-\-position\fR] [\fB\-\-follow\-cursor\fR] [\fB\-\-monospace\fR] [\fB\-\-no\-grab\fR] [\fB\-\-no\-outside\-close\fR] [\fB\-\-managed\fR] [\fB\-x\fR|\fB\-\-x\-offset\fR] [\fB\-y\fR|\fB\-\-y\-offset\fR] [\fB\-w\fR|\fB\-\-width\fR] [\fB\-m\fR|\fB\-\-monitor\fR] [\fB\-p\fR|\fB\-\-prompt\fR] [\fB\-\-font\fR] [\fB\-\-line\-height\fR] [\fB\-\-theme\fR] [\fB\-\-normal\-bg\fR] [\fB\-\-normal\-fg\fR] [\fB\-\-selected\-bg\fR] [\fB\-\-selected\-fg\fR] [\fB\-\-embed\fR] [\fB\-\-border\-width\fR] [\fB\-r\fR|\fB\-\-reject\-no\-match\fR] [\fB\-\-toast\fR] [\fB\-\-commented\fR] [\fB\-\-input\-only\fR] [\fB\-s\fR|\fB\-\-smart\-case\fR] [\fB\-\-match\-mode\fR] [\fB\-\-pre\-match\fR] [\fB\-\-space\-confirm\fR] [\fB\-\-full\-height\fR] [\fB\-i\fR|\fB\-\-insensitive\fR] [\fB\-n\fR|\fB\-\-auto\-confirm\fR] [\fB\-\-password\fR] [\fB\-\-alt\-tab\fR] [\fB\-\-right\-command\fR] [\fB\-\-left\-command\fR] [\fB\-g\fR|\fB\-\-columns\fR] [\fB\-l\fR|\fB\-\-lines\fR] [\fB\-\-placeholder\fR] [\fB\-a\fR|\fB\-\-animation\-length\fR] [\fB\-\-preselect\fR] [\fB\-\-initial\-text\fR] [\fB\-\-frecency\-cache\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIsubcommands\fR]
 .SH DESCRIPTION
 instantmenu reads a newline\-separated list of items from stdin and displays them in a menu. Selecting an item and pressing Return prints it to stdout and exits; typing narrows the list to matching items.
 .PP
@@ -17,6 +17,14 @@ Print help (see a summary with \*(Aq\-h\*(Aq)
 \fB\-V\fR, \fB\-\-version\fR
 Print version
 .SH "WINDOW OPTIONS"
+.TP
+\fB\-\-config\fR \fI<PATH>\fR
+Read appearance settings from this TOML file.
+
+By default instantmenu reads $XDG_CONFIG_HOME/instantmenu/config.toml, falling back to ~/.config/instantmenu/config.toml. A missing default file is ignored.
+.TP
+\fB\-\-no\-config\fR
+Do not read the default appearance configuration file
 .TP
 \fB\-\-backend\fR \fI<BACKEND>\fR [default: auto]
 Backend to use: auto, x11 or wayland

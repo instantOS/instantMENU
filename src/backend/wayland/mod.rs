@@ -29,6 +29,7 @@ use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
 use probe::PROBE_TIMEOUT_MS;
 use selection::{pump_offer, start_transfer};
+use shm::MemfdPool;
 use state::EventState;
 
 pub struct WaylandBackend {
@@ -313,6 +314,31 @@ impl Backend for WaylandBackend {
         self.state.border_width = border_width;
         self.state.border_color = border_color;
 
+        if !managed && self.state.bootstrap {
+            let full = bordered(rect, border_width);
+            let output_index = self.state.output_for_point(full.origin());
+            let monitor = self
+                .state
+                .outputs
+                .get(output_index)
+                .map(|output| output.info.rect)
+                .unwrap_or(full);
+            let layer_surface = self
+                .state
+                .layer_surface
+                .as_ref()
+                .ok_or("Wayland bootstrap surface was lost")?;
+            place_layer(layer_surface, full, monitor);
+            self.state.bootstrap = false;
+            if let Some(surface) = &self.state.surface {
+                surface.commit();
+            }
+            if outside_close {
+                self.state.create_shields(full);
+            }
+            return Ok(());
+        }
+
         let surface = self
             .state
             .compositor
@@ -324,6 +350,90 @@ impl Backend for WaylandBackend {
             self.create_managed(&surface, class_hint)
         } else {
             self.create_layer(&surface, bordered(rect, border_width), grab, outside_close)
+        }
+    }
+
+    fn acquire_keyboard(&mut self, output: usize, layer_menu: bool) -> Result<(), String> {
+        /* xdg-toplevel has no protocol mechanism equivalent to layer-shell's
+         * exclusive keyboard interactivity. Do not create a second surface
+         * that cannot be cleanly transformed into the requested window. */
+        if !layer_menu {
+            return Ok(());
+        }
+        let state = &mut self.state;
+        let compositor = state
+            .compositor
+            .as_ref()
+            .ok_or("compositor has no wl_compositor")?;
+        let shell = state
+            .layer_shell
+            .as_ref()
+            .ok_or("compositor has no wlr-layer-shell")?;
+        let shm = state.shm.as_ref().ok_or("compositor has no wl_shm")?;
+        let surface = compositor.create_surface(&state.queue_handle, ());
+        let output = state.outputs.get(output).map(|entry| &entry.proxy);
+        let layer_surface = shell.get_layer_surface(
+            &surface,
+            output,
+            zwlr_layer_shell_v1::Layer::Top,
+            "instantmenu".to_string(),
+            &state.queue_handle,
+            (),
+        );
+        layer_surface
+            .set_anchor(zwlr_layer_surface_v1::Anchor::Top | zwlr_layer_surface_v1::Anchor::Left);
+        layer_surface.set_size(1, 1);
+        layer_surface
+            .set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive);
+        let pool = MemfdPool::create(shm, 4, &state.queue_handle)
+            .ok_or("could not allocate Wayland bootstrap buffer")?;
+        let buffer = pool.create_buffer(0, 1, 1, 4, &state.queue_handle);
+        state.surface = Some(surface.clone());
+        state.layer_surface = Some(layer_surface);
+        state.bootstrap = true;
+        state.bootstrap_pool = Some(pool);
+        state.bootstrap_buffer = Some(buffer);
+        surface.commit();
+        self.connection
+            .flush()
+            .map_err(|error| format!("Wayland bootstrap flush failed: {error}"))?;
+
+        /* A layer surface is not mapped until configure has been acknowledged
+         * and a buffer attached. Dispatch here but leave input events in the
+         * state's queue; Menu::run consumes them after the final surface is
+         * drawn, so typing during startup is retained. */
+        let started = Instant::now();
+        while !(self.state.bootstrap_mapped && self.state.keyboard_focused) && !self.state.dead {
+            if started.elapsed() >= Duration::from_secs(1) {
+                return Err("Wayland compositor did not focus the input surface".to_string());
+            }
+            let Some(guard) = self.queue.prepare_read() else {
+                if self.queue.dispatch_pending(&mut self.state).is_err() {
+                    self.state.dead = true;
+                    break;
+                }
+                continue;
+            };
+            let remaining = Duration::from_secs(1).saturating_sub(started.elapsed());
+            let mut fds = [poll_in(guard.connection_fd().as_raw_fd())];
+            match poll_fds(&mut fds, duration_to_poll_ms(remaining)) {
+                PollOutcome::Timeout => break,
+                PollOutcome::Closed => {
+                    self.state.dead = true;
+                    break;
+                }
+                PollOutcome::Ready => {}
+            }
+            if guard.read().is_err() || self.queue.dispatch_pending(&mut self.state).is_err() {
+                self.state.dead = true;
+                break;
+            }
+            let _ = self.connection.flush();
+        }
+        if self.state.bootstrap_mapped && self.state.keyboard_focused {
+            Ok(())
+        } else {
+            Err("Wayland compositor did not focus the input surface".to_string())
         }
     }
 

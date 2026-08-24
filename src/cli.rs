@@ -228,6 +228,18 @@ pub struct MenuArgs {
 #[derive(clap::Args, Debug, Clone)]
 #[command(next_help_heading = "Window options")]
 pub struct WindowArgs {
+    /// Read appearance settings from this TOML file.
+    ///
+    /// By default instantmenu reads
+    /// $XDG_CONFIG_HOME/instantmenu/config.toml, falling back to
+    /// ~/.config/instantmenu/config.toml. A missing default file is ignored.
+    #[arg(long, value_name = "PATH", conflicts_with = "no_config", global = true)]
+    pub config: Option<PathBuf>,
+
+    /// Do not read the default appearance configuration file.
+    #[arg(long, conflicts_with = "config", global = true)]
+    pub no_config: bool,
+
     /// Backend to use: auto, x11 or wayland.
     #[arg(
         long,
@@ -565,6 +577,17 @@ mod tests {
             assert_eq!(a.window.theme, Some(expected), "{value}");
         }
         assert!(Args::try_parse_from(["instantmenu", "--theme", "unknown"]).is_err());
+    }
+
+    #[test]
+    fn config_controls_are_resolved_by_clap() {
+        let args = Args::try_parse_from(["instantmenu", "--config", "/tmp/menu.toml"]).unwrap();
+        assert_eq!(args.window.config, Some(PathBuf::from("/tmp/menu.toml")));
+        assert!(!args.window.no_config);
+        assert!(
+            Args::try_parse_from(["instantmenu", "--config", "/tmp/menu.toml", "--no-config"])
+                .is_err()
+        );
     }
 
     #[test]

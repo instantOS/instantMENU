@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use crate::render::{Palette, SchemeColors};
 use clap::ValueEnum;
+use serde::Deserialize;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -90,11 +91,13 @@ pub enum MatchMode {
 ///
 /// Catppuccin uses the Mocha flavor and is the application default. The
 /// `default` command-line value is accepted as an alias for it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Theme {
     /// Catppuccin Mocha (the default).
     #[default]
     #[value(alias = "default")]
+    #[serde(alias = "default")]
     Catppuccin,
     /// The original instantMENU colors.
     Classic,

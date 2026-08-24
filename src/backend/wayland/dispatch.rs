@@ -286,14 +286,18 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for EventState {
                     WEnum::Value(_) | WEnum::Unknown(_) => (),
                 }
             }
-            wl_keyboard::Event::Enter { keys, .. } => {
+            wl_keyboard::Event::Enter { surface, keys, .. } => {
                 state.key_repeat.cancel();
+                state.keyboard_focused = state.surface.as_ref() == Some(&surface);
                 if let Some(xkb) = state.xkb.as_mut() {
                     xkb.enter(&keys);
                 }
             }
-            wl_keyboard::Event::Leave { .. } => {
+            wl_keyboard::Event::Leave { surface, .. } => {
                 state.key_repeat.cancel();
+                if state.surface.as_ref() == Some(&surface) {
+                    state.keyboard_focused = false;
+                }
                 if let Some(xkb) = state.xkb.as_mut() {
                     xkb.leave();
                 }
@@ -471,6 +475,7 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for EventState {
                 surface.ack_configure(serial);
                 let was_configured = state.configured;
                 state.configured = true;
+                state.map_bootstrap();
                 if !was_configured {
                     if let Some((frame, w, h)) = state.pending_frame.take() {
                         state.draw(&frame, w, h);

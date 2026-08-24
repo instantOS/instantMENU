@@ -5,8 +5,8 @@
 use std::collections::VecDeque;
 
 use wayland_client::protocol::{
-    wl_callback, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer, wl_keyboard,
-    wl_output, wl_pointer, wl_seat, wl_shm, wl_surface,
+    wl_buffer, wl_callback, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer,
+    wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface,
 };
 use wayland_client::QueueHandle;
 use wayland_protocols::wp::primary_selection::zv1::client::{
@@ -102,6 +102,9 @@ pub struct EventState {
     /* keyboard */
     pub(super) xkb: Option<Xkb>,
     pub(super) key_repeat: KeyboardRepeat,
+    /// True only after wl_keyboard.enter names the menu surface. Mapping a
+    /// layer buffer is not by itself proof that the seat has switched focus.
+    pub(super) keyboard_focused: bool,
 
     /* window */
     pub(super) surface: Option<wl_surface::WlSurface>,
@@ -109,6 +112,13 @@ pub struct EventState {
     pub(super) xdg_surface: Option<xdg_surface::XdgSurface>,
     pub(super) xdg_toplevel: Option<xdg_toplevel::XdgToplevel>,
     pub(super) configured: bool,
+    /// A transparent 1x1 buffer maps the layer surface early so exclusive
+    /// keyboard interactivity is effective while config and fonts load.
+    /// The surface itself is retained and becomes the final menu surface.
+    pub(super) bootstrap: bool,
+    pub(super) bootstrap_mapped: bool,
+    pub(super) bootstrap_pool: Option<MemfdPool>,
+    pub(super) bootstrap_buffer: Option<wl_buffer::WlBuffer>,
     /// border drawn around the menu content (`--border-width`); X11 gets this
     /// from the server, but Wayland surfaces have no border, so it is painted
     /// into the buffer here.
@@ -178,11 +188,16 @@ impl EventState {
             probe_answer: None,
             xkb: None,
             key_repeat: KeyboardRepeat::new(),
+            keyboard_focused: false,
             surface: None,
             layer_surface: None,
             xdg_surface: None,
             xdg_toplevel: None,
             configured: false,
+            bootstrap: false,
+            bootstrap_mapped: false,
+            bootstrap_pool: None,
+            bootstrap_buffer: None,
             border_width: 0,
             border_color: Color::rgb(0, 0, 0),
             frame_done: false,
@@ -272,6 +287,28 @@ impl EventState {
             self.frame_callback = Some(surface.frame(&self.queue_handle, ()));
             surface.commit();
         }
+        /* The final frame has replaced the transparent bootstrap buffer.
+         * Destroying the client-side wl_buffer now is protocol-safe: the
+         * committed surface state holds its own compositor-side reference. */
+        if !self.bootstrap {
+            if let Some(buffer) = self.bootstrap_buffer.take() {
+                buffer.destroy();
+            }
+            self.bootstrap_pool = None;
+        }
+    }
+
+    pub(super) fn map_bootstrap(&mut self) {
+        if !self.bootstrap || self.bootstrap_mapped {
+            return;
+        }
+        let (Some(surface), Some(buffer)) = (&self.surface, &self.bootstrap_buffer) else {
+            return;
+        };
+        surface.attach(Some(buffer), 0, 0);
+        surface.damage_buffer(0, 0, 1, 1);
+        surface.commit();
+        self.bootstrap_mapped = true;
     }
 
     /// Freeze the foreign-toplevel state into the small snapshot geometry

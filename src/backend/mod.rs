@@ -245,6 +245,14 @@ pub trait Backend {
     fn grab_keyboard(&mut self) -> Result<(), String> {
         Ok(())
     }
+    /// Acquire keyboard input before appearance configuration and font
+    /// discovery. X11 performs its ordinary server grab; Wayland overrides
+    /// this to map a tiny exclusive layer surface on `output` and later
+    /// reuses that same surface for the menu. Keeping the operation in the
+    /// backend avoids pretending Wayland has an X11-style global grab.
+    fn acquire_keyboard(&mut self, _output: usize, _layer_menu: bool) -> Result<(), String> {
+        self.grab_keyboard()
+    }
     /// Focus grab loop; `title` is set as WM_NAME in managed mode. `Err`
     /// when focus could not be taken.
     fn grab_focus(&mut self, title: &str) -> Result<(), String>;
