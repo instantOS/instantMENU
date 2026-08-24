@@ -8,24 +8,24 @@ use crate::geom::Rect;
 use crate::render::TextStyle;
 
 impl Menu {
-    /// recalculate_numbers
-    fn recalculate_numbers(&mut self) {
+    /// recalculate_match_counter
+    fn recalculate_match_counter(&mut self) {
         let match_count = self.matcher.matches.len();
         if self.cfg.toast.is_some() {
-            self.show_numbers = false;
+            self.show_match_counter = false;
             return;
         }
         let item_count = self.matcher.items.len();
         if match_count > 1 {
             if self.layout.lines > 1 {
-                self.show_numbers = match_count > self.layout.lines as usize;
+                self.show_match_counter = match_count > self.layout.lines as usize;
             } else {
-                self.show_numbers = true;
+                self.show_match_counter = true;
             }
         } else {
-            self.show_numbers = false;
+            self.show_match_counter = false;
         }
-        self.numbers = format!("{match_count}/{item_count}");
+        self.match_counter_text = format!("{match_count}/{item_count}");
     }
 
     /// draw_item — draws one item in `cell`.
@@ -169,7 +169,7 @@ impl Menu {
 
         /* the item counter feeds the header (the ">" sits left of it), so
          * the header geometry is resolved after it is up to date */
-        self.recalculate_numbers();
+        self.recalculate_match_counter();
         let header = self.header();
 
         self.draw_prompt(&header);
@@ -266,7 +266,7 @@ impl Menu {
 
     /// Draw the vertical list / grid of items.
     fn draw_grid(&mut self, x: i32) {
-        let start = self.selection.current.unwrap_or(0);
+        let start = self.selection.page_start.unwrap_or(0);
         let end = self.paging.next.unwrap_or(self.matcher.matches.len());
         for (i, pos) in (start..end).enumerate() {
             let cell = self.layout.grid_cell_rect(i, x);
@@ -280,7 +280,7 @@ impl Menu {
     /// hit area).
     fn draw_horizontal_list(&mut self, header: &Header) {
         let lpad = self.renderer.cell_inset();
-        if self.selection.current.map(|c| c > 0).unwrap_or(false) {
+        if self.selection.page_start.map(|c| c > 0).unwrap_or(false) {
             let mut p = self.painter();
             p.set_scheme(Scheme::Normal);
             p.draw_text(header.left_arrow, lpad, "<");
@@ -302,9 +302,9 @@ impl Menu {
         let bar_height = self.layout.bar_height;
         let lpad = self.renderer.cell_inset();
         let menu_width = self.layout.menu_width;
-        if self.show_numbers {
-            let numbers = self.numbers.clone();
-            let numbers_width = self.cell_width(&numbers);
+        if self.show_match_counter {
+            let match_counter_text = self.match_counter_text.clone();
+            let counter_width = self.cell_width(&match_counter_text);
             let right_padding = if self.cfg.right_command.is_some() {
                 header.command_width
             } else {
@@ -314,13 +314,13 @@ impl Menu {
             p.set_scheme(Scheme::Normal);
             p.draw_text(
                 Rect::new(
-                    menu_width - numbers_width - right_padding,
+                    menu_width - counter_width - right_padding,
                     0,
-                    numbers_width,
+                    counter_width,
                     bar_height,
                 ),
                 lpad,
-                &numbers,
+                &match_counter_text,
             );
         }
         if self.layout.lines > 0 {

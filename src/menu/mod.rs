@@ -84,7 +84,7 @@ pub struct Menu {
     /// pipe, a tty, or a mode that ignores stdin). Stays set after EOF.
     stream_fd: RawFd,
     /// stdin reached end-of-file: the corpus is final and pick conclusions
-    /// (instant/commented/pre-match) may fire.
+    /// (auto-confirm/commented/pre-match) may fire.
     stream_eof: bool,
     /// EOF has been settled (rematch + final draw done) exactly once.
     stream_finalized: bool,
@@ -108,8 +108,8 @@ pub struct Menu {
     pub(in crate::menu) alt_tab: bool,
     /// an Alt+Tab happened; the release confirms.
     pub(in crate::menu) tabbed: bool,
-    pub(in crate::menu) numbers: String,
-    pub(in crate::menu) show_numbers: bool,
+    pub(in crate::menu) match_counter_text: String,
+    pub(in crate::menu) show_match_counter: bool,
     /// y of the selected row, noted during drawing for the selection
     /// animation.
     pub(in crate::menu) selected_y: i32,
@@ -151,8 +151,8 @@ impl Menu {
             canvas: Canvas::new(crate::geom::Size::new(1, 1)),
             alt_tab,
             tabbed: false,
-            numbers: String::new(),
-            show_numbers: false,
+            match_counter_text: String::new(),
+            show_match_counter: false,
             selected_y: 0,
             comment_prompt: None,
             out: Box::new(std::io::stdout()),
@@ -192,7 +192,7 @@ impl Menu {
     }
 
     /// True when the item corpus is final: nothing streams, or EOF was seen.
-    /// Pick conclusions (instant/commented/pre-match) and reject-no-match
+    /// Pick conclusions (auto-confirm/commented/pre-match) and reject-no-match
     /// only act on a complete corpus — mid-stream they would answer from a
     /// prefix of the data.
     pub(super) fn stream_complete(&self) -> bool {
@@ -275,7 +275,7 @@ impl Menu {
                 self.recalc_paging();
                 Transition::Nop
             }
-            MatchResult::InstantPick(idx) => {
+            MatchResult::AutoConfirm(idx) => {
                 Transition::PrintAndExit(self.matcher.items[idx].text.clone())
             }
             MatchResult::CommentPick(pick) => match pick {
@@ -406,9 +406,9 @@ impl Menu {
     /// by drawing and mouse hit-testing, so a click target is always exactly
     /// where its pixels were drawn.
     pub(in crate::menu) fn header(&mut self) -> Header {
-        let show_numbers = self.show_numbers;
-        let numbers_width = if show_numbers {
-            self.cell_width(&self.numbers.clone())
+        let show_match_counter = self.show_match_counter;
+        let counter_width = if show_match_counter {
+            self.cell_width(&self.match_counter_text.clone())
         } else {
             0
         };
@@ -425,8 +425,8 @@ impl Menu {
             self.cfg.right_command.is_some(),
             has_prompt,
             has_matches,
-            show_numbers,
-            numbers_width,
+            show_match_counter,
+            counter_width,
             &mut m,
         )
     }
@@ -434,9 +434,9 @@ impl Menu {
     /// Visible horizontal-list items as `(match_pos, rect)` pairs. The single
     /// source of truth for drawing and hit-testing the horizontal list.
     pub(in crate::menu) fn horizontal_item_rects(&mut self, x: i32) -> Vec<(usize, Rect)> {
-        let start = self.selection.current.unwrap_or(0);
+        let start = self.selection.page_start.unwrap_or(0);
         let end = self.paging.next.unwrap_or(self.matcher.matches.len());
-        let numbers = self.numbers.clone();
+        let match_counter_text = self.match_counter_text.clone();
         let input_width = self.layout.input_width;
         let menu_width = self.layout.menu_width;
         let bar_height = self.layout.bar_height;
@@ -445,7 +445,7 @@ impl Menu {
         let mut rects = Vec::with_capacity(end.saturating_sub(start));
         for pos in start..end {
             let text = self.matcher.text_of_match(pos);
-            let budget = menu_width - x - m.cell_width(">") - m.cell_width(&numbers);
+            let budget = menu_width - x - m.cell_width(">") - m.cell_width(&match_counter_text);
             let width = m.cell_width_clamp(text, budget);
             rects.push((pos, Rect::new(x, 0, width, bar_height)));
             x += width;

@@ -14,7 +14,7 @@ use crate::enums::{EditOp, ExitStatus};
 impl Menu {
     /// Port of insert(): edit the text, re-match, and revert the edit when
     /// `reject` is set and the edit emptied the match list. Returns the
-    /// transition the edit caused (an instant/commented pick can end the
+    /// transition the edit caused (an auto-confirm/commented pick can end the
     /// menu mid-edit).
     pub(super) fn insert_op(&mut self, op: EditOp, reject: bool) -> Transition {
         // only insertion can overflow the TEXT_MAX budget

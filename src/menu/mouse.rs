@@ -29,7 +29,7 @@ impl Menu {
 
     /// Column/grid hover selection: hit-test the same cell layout as draw_grid.
     fn hover_columns(&mut self, pos: Point, header: &Header) -> Transition {
-        let start = self.selection.current.unwrap_or(0);
+        let start = self.selection.page_start.unwrap_or(0);
         let end = self.paging.next.unwrap_or(self.matcher.matches.len());
         for (i, item) in (start..end).enumerate() {
             let cell = self.layout.grid_cell_rect(i, header.content_x);
@@ -46,7 +46,7 @@ impl Menu {
 
     /// Vertical list hover selection: rows only, any x.
     fn hover_vertical(&mut self, pos: Point) -> Transition {
-        let start = self.selection.current.unwrap_or(0);
+        let start = self.selection.page_start.unwrap_or(0);
         let end = self.paging.next.unwrap_or(self.matcher.matches.len());
         for (i, item) in (start..end).enumerate() {
             let (top, bottom) = self.layout.row_band(i);
@@ -97,7 +97,7 @@ impl Menu {
     /// Wheel movement pages through the list (positive scrolls down).
     pub(super) fn scroll(&mut self, delta: i32) -> Transition {
         if delta < 0 {
-            if self.paging.prev != 0 || self.selection.current.map(|c| c > 0).unwrap_or(false) {
+            if self.paging.prev != 0 || self.selection.page_start.map(|c| c > 0).unwrap_or(false) {
                 self.selection = paging::scroll_up(&self.selection, &self.paging);
                 self.recalc_paging();
                 return Transition::Redraw;
@@ -119,7 +119,7 @@ impl Menu {
          * NOTE: if there is no left-arrow the space for < is reserved so
          *       add that to the input width */
         let at_page_top =
-            self.paging.prev == 0 || self.selection.current.map(|c| c == 0).unwrap_or(true);
+            self.paging.prev == 0 || self.selection.page_start.map(|c| c == 0).unwrap_or(true);
         let arrow_pad = if at_page_top { header.left_arrow.w } else { 0 };
         let input_hit =
             (self.layout.lines <= 0 && pos.x >= 0 && pos.x <= header.input.right() + arrow_pad)
@@ -159,7 +159,7 @@ impl Menu {
     /// left-click on the horizontal list: arrows and items.
     fn horizontal_click(&mut self, mods: Modifiers, pos: Point, header: &Header) -> Transition {
         /* left arrow: turn back one page, selection follows the page top */
-        if (self.paging.prev != 0 || self.selection.current.map(|c| c > 0).unwrap_or(false))
+        if (self.paging.prev != 0 || self.selection.page_start.map(|c| c > 0).unwrap_or(false))
             && header.left_arrow.contains(pos)
         {
             self.selection = paging::scroll_up(&self.selection, &self.paging);
