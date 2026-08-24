@@ -173,12 +173,11 @@ impl Matcher {
                 }
             }
         }
-        let had_substr = !substr.is_empty();
         self.matches = exact;
         self.matches.extend(prefix);
         self.matches.extend(substr);
 
-        if self.auto_confirm && complete && self.matches.len() == 1 && !had_substr {
+        if self.auto_confirm && complete && self.matches.len() == 1 {
             return MatchResult::AutoConfirm(self.matches[0]);
         }
         MatchResult::Listed
@@ -320,18 +319,19 @@ mod tests {
         assert_eq!(m.search("abc", true), MatchResult::AutoConfirm(0));
     }
 
-    /// A lone substring match suppresses auto-confirm mode — the C had_substr
-    /// gate.
+    /// Auto-confirm is based on the number of candidates, regardless of how
+    /// dmenu ranked the sole match. Menu entries commonly start with hidden
+    /// metadata or an icon, making the user's visible keyword a substring.
     #[test]
-    fn auto_confirm_mode_is_suppressed_by_substring_matches() {
+    fn auto_confirm_mode_picks_the_single_substring_match() {
         let mut m = matcher(
             |c| {
                 c.match_mode = MatchMode::Dmenu;
                 c.auto_confirm = true;
             },
-            &["xab"],
+            &[":r icon shutdown", ":b icon reboot"],
         );
-        assert_eq!(m.search("ab", true), MatchResult::Listed);
+        assert_eq!(m.search("shut", true), MatchResult::AutoConfirm(0));
         assert_eq!(m.matches, vec![0]);
     }
 
