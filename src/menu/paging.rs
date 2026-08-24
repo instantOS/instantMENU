@@ -11,17 +11,17 @@ pub(super) struct Selection {
     /// selected position inside `matches`.
     pub selected: Option<usize>,
     /// first visible position (page start).
-    pub current: Option<usize>,
+    pub page_start: Option<usize>,
 }
 
 impl Selection {
-    /// After a re-match the list restarts at the top: current = 0 when there
+    /// After a re-match the list restarts at the top: page_start = 0 when there
     /// are matches, and the selection follows.
     pub fn from_match(match_count: usize) -> Self {
         let top = (match_count > 0).then_some(0);
         Selection {
             selected: top,
-            current: top,
+            page_start: top,
         }
     }
 }
@@ -54,7 +54,7 @@ pub(super) fn calc_paging(
 
     /* calculate which items will begin the next page */
     let mut next = None;
-    if let Some(start) = sel.current {
+    if let Some(start) = sel.page_start {
         let mut used: i32 = 0;
         for pos in start..matches.len() {
             used += if layout.lines > 0 {
@@ -71,7 +71,7 @@ pub(super) fn calc_paging(
     }
 
     /* and the previous page */
-    let start = sel.current.unwrap_or(0);
+    let start = sel.page_start.unwrap_or(0);
     let mut used: i32 = 0;
     let mut prev = start;
     for pos in (0..start).rev() {
@@ -99,7 +99,7 @@ pub(super) fn advance(sel: &Selection, match_count: usize, paging: &Paging) -> (
             let next_selection = s + 1;
             sel.selected = Some(next_selection);
             if paging.next == Some(next_selection) {
-                sel.current = paging.next;
+                sel.page_start = paging.next;
                 return (sel, true);
             }
         }
@@ -113,8 +113,8 @@ pub(super) fn retreat(sel: &Selection, paging: &Paging) -> (Selection, bool) {
     if let Some(s) = sel.selected {
         if s > 0 {
             let next_selection = s - 1;
-            if sel.current == Some(next_selection + 1) {
-                sel.current = Some(paging.prev);
+            if sel.page_start == Some(next_selection + 1) {
+                sel.page_start = Some(paging.prev);
                 sel.selected = Some(next_selection);
                 return (sel, true);
             }
@@ -129,7 +129,7 @@ pub(super) fn retreat(sel: &Selection, paging: &Paging) -> (Selection, bool) {
 pub(super) fn at(pos: usize) -> Selection {
     Selection {
         selected: Some(pos),
-        current: Some(pos),
+        page_start: Some(pos),
     }
 }
 
@@ -137,8 +137,8 @@ pub(super) fn at(pos: usize) -> Selection {
 /// follows the old page top (the C wheel handler's up half).
 pub(super) fn scroll_up(sel: &Selection, paging: &Paging) -> Selection {
     Selection {
-        selected: sel.current,
-        current: Some(paging.prev),
+        selected: sel.page_start,
+        page_start: Some(paging.prev),
     }
 }
 
@@ -156,15 +156,15 @@ pub(super) fn jump_to_end(
     };
     let mut sel = Selection {
         selected: Some(last),
-        current: Some(last),
+        page_start: Some(last),
     };
     let mut paging = calc_paging(&sel, items, matches, layout, measure);
-    sel.current = Some(paging.prev);
+    sel.page_start = Some(paging.prev);
     loop {
         paging = calc_paging(&sel, items, matches, layout, measure);
         match paging.next {
-            /* next is always past current; `<= last` means "current < last" */
-            Some(next) if next <= last => sel.current = Some(next),
+            /* next is always past page_start; `<= last` means "page_start < last" */
+            Some(next) if next <= last => sel.page_start = Some(next),
             _ => break,
         }
     }
@@ -210,12 +210,12 @@ mod tests {
     #[test]
     fn selection_resets_to_top_on_match() {
         assert_eq!(Selection::from_match(0).selected, None);
-        assert_eq!(Selection::from_match(0).current, None);
+        assert_eq!(Selection::from_match(0).page_start, None);
         assert_eq!(
             Selection::from_match(3),
             Selection {
                 selected: Some(0),
-                current: Some(0),
+                page_start: Some(0),
             }
         );
     }
@@ -228,7 +228,7 @@ mod tests {
         let matches: Vec<usize> = (0..7).collect();
         let sel = Selection {
             selected: Some(0),
-            current: Some(0),
+            page_start: Some(0),
         };
         // 3 rows of 30px fit into the 90px page; the 4th is the next page
         let paging = calc_paging(&sel, &its, &matches, &lay, &mut FakeMeasure);
@@ -243,7 +243,7 @@ mod tests {
         // page 2 (indices 3..6)
         let sel = Selection {
             selected: Some(3),
-            current: Some(3),
+            page_start: Some(3),
         };
         let paging = calc_paging(&sel, &its, &matches, &lay, &mut FakeMeasure);
         assert_eq!(
@@ -265,7 +265,7 @@ mod tests {
         let matches: Vec<usize> = (0..4).collect();
         let sel = Selection {
             selected: Some(0),
-            current: Some(0),
+            page_start: Some(0),
         };
         let paging = calc_paging(&sel, &its, &matches, &lay, &mut FakeMeasure);
         assert_eq!(
@@ -299,14 +299,14 @@ mod tests {
 
         let within = Selection {
             selected: Some(0),
-            current: Some(0),
+            page_start: Some(0),
         };
         assert_eq!(
             advance(&within, 7, &paging),
             (
                 Selection {
                     selected: Some(1),
-                    current: Some(0)
+                    page_start: Some(0)
                 },
                 false
             )
@@ -314,14 +314,14 @@ mod tests {
 
         let boundary = Selection {
             selected: Some(2),
-            current: Some(0),
+            page_start: Some(0),
         };
         assert_eq!(
             advance(&boundary, 7, &paging),
             (
                 Selection {
                     selected: Some(3),
-                    current: Some(3)
+                    page_start: Some(3)
                 },
                 true
             )
@@ -330,7 +330,7 @@ mod tests {
         // the last match does not advance further
         let end = Selection {
             selected: Some(6),
-            current: Some(6),
+            page_start: Some(6),
         };
         assert_eq!(advance(&end, 7, &paging), (end, false));
     }
@@ -345,14 +345,14 @@ mod tests {
 
         let within = Selection {
             selected: Some(4),
-            current: Some(3),
+            page_start: Some(3),
         };
         assert_eq!(
             retreat(&within, &paging),
             (
                 Selection {
                     selected: Some(3),
-                    current: Some(3)
+                    page_start: Some(3)
                 },
                 false
             )
@@ -360,14 +360,14 @@ mod tests {
 
         let top = Selection {
             selected: Some(3),
-            current: Some(3),
+            page_start: Some(3),
         };
         assert_eq!(
             retreat(&top, &paging),
             (
                 Selection {
                     selected: Some(2),
-                    current: Some(0)
+                    page_start: Some(0)
                 },
                 true
             )
@@ -382,7 +382,7 @@ mod tests {
             at(4),
             Selection {
                 selected: Some(4),
-                current: Some(4)
+                page_start: Some(4)
             }
         );
     }
@@ -397,13 +397,13 @@ mod tests {
         };
         let sel = Selection {
             selected: Some(5),
-            current: Some(3),
+            page_start: Some(3),
         };
         assert_eq!(
             scroll_up(&sel, &paging),
             Selection {
                 selected: Some(3),
-                current: Some(0)
+                page_start: Some(0)
             }
         );
     }
@@ -413,7 +413,7 @@ mod tests {
     #[test]
     fn jump_to_end_walks_to_the_last_page() {
         // 7 items, 3 rows per page: pages start at 0, 3, 6. The last page
-        // window starts at 6, so the walk ends with current = 6.
+        // window starts at 6, so the walk ends with page_start = 6.
         let lay = layout(3, 1, 30, 0);
         let its = items(&["a"; 7]);
         let matches: Vec<usize> = (0..7).collect();
@@ -423,14 +423,14 @@ mod tests {
             sel,
             Selection {
                 selected: Some(6),
-                current: Some(6)
+                page_start: Some(6)
             }
         );
 
         // a single partial page: the window stays at the top
         let matches: Vec<usize> = (0..2).collect();
         let sel = jump_to_end(&its, &matches, &lay, &mut m);
-        assert_eq!(sel.current, Some(0));
+        assert_eq!(sel.page_start, Some(0));
 
         // no matches at all: default state
         let sel = jump_to_end(&its, &[], &lay, &mut m);

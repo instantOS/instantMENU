@@ -173,7 +173,8 @@ pub struct Config {
     (follow-cursor, embedded); not used for the monitor `center` popup */
     pub min_width: i32,
 
-    pub instant: bool,
+    /* --auto-confirm option; auto-confirm when exactly one item matches */
+    pub auto_confirm: bool,
     /* --space-confirm option; confirm selection with the space key */
     pub space_confirm: bool,
     /* --match-mode option; item matching algorithm */
@@ -263,7 +264,7 @@ impl Default for Config {
             position: Position::Top,
             follow_cursor: false,
             min_width: 500,
-            instant: false,
+            auto_confirm: false,
             space_confirm: false,
             match_mode: MatchMode::Fuzzy,
             pre_match: false,

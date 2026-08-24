@@ -22,14 +22,14 @@ impl Item {
     }
 }
 
-/// What a search concluded. `InstantPick`/`CommentPick` are the C version's
-/// print-and-exit paths (-n instant mode, commented instantASSIST mode).
+/// What a search concluded. `AutoConfirm`/`CommentPick` are the C version's
+/// print-and-exit paths (-n auto-confirm mode, commented instantASSIST mode).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum MatchResult {
     /// `matches` was recomputed; the menu keeps running.
     Listed,
-    /// instant mode found exactly one match: print this item and exit.
-    InstantPick(usize),
+    /// auto-confirm mode found exactly one match: print this item and exit.
+    AutoConfirm(usize),
     /// commented mode: print this item (or nothing) and exit.
     CommentPick(Option<usize>),
 }
@@ -42,7 +42,7 @@ pub(super) struct Matcher {
     pub matches: Vec<usize>,
     mode: MatchMode,
     commented: bool,
-    instant: bool,
+    auto_confirm: bool,
     /* case-insensitive matching (the fstrncmp/fstrstr function pointers) */
     insensitive: bool,
     /// smart case: insensitive until the query contains uppercase.
@@ -58,7 +58,7 @@ impl Matcher {
             matches: Vec::new(),
             mode: cfg.match_mode,
             commented: cfg.commented,
-            instant: cfg.instant,
+            auto_confirm: cfg.auto_confirm,
             insensitive: cfg.smart_case || cfg.insensitive,
             smart_case: cfg.smart_case,
         }
@@ -76,7 +76,7 @@ impl Matcher {
     /// Port of match(): recompute `matches` for `text`. `complete` tells
     /// whether the item corpus is final (stdin reached EOF, or there is no
     /// stream). While items are still streaming in, the pick-and-exit
-    /// conclusions (instant mode, commented mode) are deferred: a single
+    /// conclusions (auto-confirm mode, commented mode) are deferred: a single
     /// match can still gain competitors, and the first item starting with a
     /// byte may not have arrived yet. Commented mode falls back to normal
     /// matching for display until then.
@@ -178,8 +178,8 @@ impl Matcher {
         self.matches.extend(prefix);
         self.matches.extend(substr);
 
-        if self.instant && complete && self.matches.len() == 1 && !had_substr {
-            return MatchResult::InstantPick(self.matches[0]);
+        if self.auto_confirm && complete && self.matches.len() == 1 && !had_substr {
+            return MatchResult::AutoConfirm(self.matches[0]);
         }
         MatchResult::Listed
     }
@@ -194,13 +194,13 @@ impl Matcher {
             // there is only one item, pick it immediately.
             self.matches.clear();
             self.matches.extend(0..self.items.len());
-            if self.instant && complete && self.matches.len() == 1 {
-                return MatchResult::InstantPick(self.matches[0]);
+            if self.auto_confirm && complete && self.matches.len() == 1 {
+                return MatchResult::AutoConfirm(self.matches[0]);
             }
             return MatchResult::Listed;
         }
 
-        let max_typos = if self.instant {
+        let max_typos = if self.auto_confirm {
             0
         } else {
             (text.chars().count() / 4) as u16
@@ -222,8 +222,8 @@ impl Matcher {
                 .map(|m| m.index as usize),
         );
 
-        if self.instant && complete && self.matches.len() == 1 {
-            return MatchResult::InstantPick(self.matches[0]);
+        if self.auto_confirm && complete && self.matches.len() == 1 {
+            return MatchResult::AutoConfirm(self.matches[0]);
         }
         MatchResult::Listed
     }
@@ -309,25 +309,25 @@ mod tests {
     }
 
     #[test]
-    fn instant_mode_picks_the_single_exact_match() {
+    fn auto_confirm_mode_picks_the_single_exact_match() {
         let mut m = matcher(
             |c| {
                 c.match_mode = MatchMode::Dmenu;
-                c.instant = true;
+                c.auto_confirm = true;
             },
             &["abc", "bcd"],
         );
-        assert_eq!(m.search("abc", true), MatchResult::InstantPick(0));
+        assert_eq!(m.search("abc", true), MatchResult::AutoConfirm(0));
     }
 
-    /// A lone substring match suppresses instant mode — the C had_substr
+    /// A lone substring match suppresses auto-confirm mode — the C had_substr
     /// gate.
     #[test]
-    fn instant_mode_is_suppressed_by_substring_matches() {
+    fn auto_confirm_mode_is_suppressed_by_substring_matches() {
         let mut m = matcher(
             |c| {
                 c.match_mode = MatchMode::Dmenu;
-                c.instant = true;
+                c.auto_confirm = true;
             },
             &["xab"],
         );
@@ -336,40 +336,40 @@ mod tests {
     }
 
     /// Empty query + single item in dmenu mode counts as an exact match and
-    /// fires instant mode...
+    /// fires auto-confirm mode...
     #[test]
-    fn instant_mode_fires_on_empty_dmenu_query() {
+    fn auto_confirm_mode_fires_on_empty_dmenu_query() {
         let mut m = matcher(
             |c| {
                 c.match_mode = MatchMode::Dmenu;
-                c.instant = true;
+                c.auto_confirm = true;
             },
             &["only"],
         );
-        assert_eq!(m.search("", true), MatchResult::InstantPick(0));
+        assert_eq!(m.search("", true), MatchResult::AutoConfirm(0));
     }
 
-    /// ...and fuzzy mode also fires instant mode on empty query with a single item.
+    /// ...and fuzzy mode also fires auto-confirm mode on empty query with a single item.
     #[test]
-    fn instant_mode_fires_on_empty_fuzzy_query() {
-        let mut m = matcher(|c| c.instant = true, &["only"]);
-        assert_eq!(m.search("", true), MatchResult::InstantPick(0));
+    fn auto_confirm_mode_fires_on_empty_fuzzy_query() {
+        let mut m = matcher(|c| c.auto_confirm = true, &["only"]);
+        assert_eq!(m.search("", true), MatchResult::AutoConfirm(0));
     }
 
-    /// While the corpus is still streaming in (`complete == false`), instant
-    /// mode is deferred: one match can still gain competitors.
+    /// While the corpus is still streaming in (`complete == false`), auto-confirm
+    /// is deferred: one match can still gain competitors.
     #[test]
-    fn instant_pick_is_deferred_until_the_corpus_is_complete() {
+    fn auto_confirm_pick_is_deferred_until_the_corpus_is_complete() {
         let mut m = matcher(
             |c| {
                 c.match_mode = MatchMode::Dmenu;
-                c.instant = true;
+                c.auto_confirm = true;
             },
             &["abc"],
         );
         assert_eq!(m.search("abc", false), MatchResult::Listed);
         // the same query concludes once stdin has reached EOF
-        assert_eq!(m.search("abc", true), MatchResult::InstantPick(0));
+        assert_eq!(m.search("abc", true), MatchResult::AutoConfirm(0));
     }
 
     /// Commented mode with an incomplete corpus falls back to normal
@@ -423,16 +423,15 @@ mod tests {
     /// Auto-confirm on single item at startup in fuzzy mode.
     #[test]
     fn auto_confirm_single_item_startup() {
-        let mut m = matcher(|c| c.instant = true, &["only_item"]);
-        assert_eq!(m.search("", true), MatchResult::InstantPick(0));
+        let mut m = matcher(|c| c.auto_confirm = true, &["only_item"]);
+        assert_eq!(m.search("", true), MatchResult::AutoConfirm(0));
     }
 
     /// Auto-confirm in fuzzy mode picks the exact match without false positives from typos.
     #[test]
     fn auto_confirm_picks_single_fuzzy_match() {
-        let mut m = matcher(|c| c.instant = true, &["code", "cord", "cold"]);
-        // "code" matches only "code" in strict fuzzy mode (0 typos) -> InstantPick
-        assert_eq!(m.search("code", true), MatchResult::InstantPick(0));
+        let mut m = matcher(|c| c.auto_confirm = true, &["code", "cord", "cold"]);
+        // "code" matches only "code" in strict fuzzy mode (0 typos) -> AutoConfirm
+        assert_eq!(m.search("code", true), MatchResult::AutoConfirm(0));
     }
 }
-

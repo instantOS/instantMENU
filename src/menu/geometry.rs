@@ -13,7 +13,7 @@ use crate::geom::{Point, Rect, Size};
 impl Menu {
     /// setup — geometry, monitor selection, window creation, first draw.
     /// Returns Some(status) when the menu cannot start, or an early
-    /// instant/commented pick already ended it.
+    /// auto-confirm/commented pick already ended it.
     pub fn setup(&mut self) -> Option<ExitStatus> {
         let layout = match self.compute_layout() {
             Ok(layout) => layout,
@@ -341,7 +341,7 @@ impl Menu {
         if let Some(next_pos) = self.paging.next {
             for pos in next_pos..self.matcher.matches.len() {
                 if self.matcher.matches[pos] == first_match_item {
-                    self.selection.current = self.selection.selected;
+                    self.selection.page_start = self.selection.selected;
                     break;
                 }
             }

@@ -104,8 +104,8 @@ pub(super) struct Header {
 
 impl Header {
     /// Resolve the header geometry. Measured widths come in through the
-    /// [`Measure`] seam; `numbers_width` is pre-measured by the caller (it
-    /// only exists while numbers are shown).
+    /// [`Measure`] seam; `counter_width` is pre-measured by the caller (it
+    /// only exists while the match counter is shown).
     #[allow(clippy::too_many_arguments)] // every input shapes exactly one rect
     pub(super) fn compute(
         layout: &Layout,
@@ -113,8 +113,8 @@ impl Header {
         has_right_command: bool,
         has_prompt: bool,
         has_matches: bool,
-        show_numbers: bool,
-        numbers_width: i32,
+        show_match_counter: bool,
+        counter_width: i32,
         measure: &mut dyn Measure,
     ) -> Self {
         let bar = layout.bar_height;
@@ -151,10 +151,12 @@ impl Header {
             bar,
         );
         let right_arrow_width = measure.cell_width(">");
-        /* with the item counter shown, the ">" sits left of it — that is
+        /* with the match counter shown, the ">" sits left of it — that is
          * also its click target */
         let right_arrow = Rect::new(
-            layout.menu_width - right_arrow_width - if show_numbers { numbers_width } else { 0 },
+            layout.menu_width
+                - right_arrow_width
+                - if show_match_counter { counter_width } else { 0 },
             0,
             right_arrow_width,
             bar,
