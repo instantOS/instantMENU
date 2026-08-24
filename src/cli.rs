@@ -140,9 +140,9 @@ pub struct MenuArgs {
     #[arg(long, short = 'i')]
     pub insensitive: bool,
 
-    /// Instantly select the only match.
+    /// Auto-confirm when exactly one item matches.
     #[arg(long, short = 'n')]
-    pub instant: bool,
+    pub auto_confirm: bool,
 
     /// Display input as dots.
     #[arg(long)]
@@ -185,14 +185,14 @@ pub struct MenuArgs {
     #[arg(long, value_name = "TEXT")]
     pub placeholder: Option<String>,
 
-    /// Animation duration in frames.
+    /// Animation length in frames.
     #[arg(
-        long,
+        long = "animation-length",
         short = 'a',
         value_name = "N",
         value_parser = clap::value_parser!(i32).range(0..)
     )]
-    pub animation: Option<i32>,
+    pub animation_length: Option<i32>,
 
     /// Preselected item index.
     ///
@@ -674,6 +674,25 @@ mod tests {
     }
 
     #[test]
+    fn renamed_longs_parse() {
+        /* --instant is now --auto-confirm and --animation is now
+         * --animation-length; the old spellings must be rejected */
+        let a = Args::try_parse_from(["instantmenu", "--auto-confirm"]).unwrap();
+        assert!(a.menu.auto_confirm);
+        let a = Args::try_parse_from(["instantmenu", "--animation-length", "5"]).unwrap();
+        assert_eq!(a.menu.animation_length, Some(5));
+        for bad in [
+            &["instantmenu", "--instant"][..],
+            &["instantmenu", "--animation", "5"][..],
+        ] {
+            assert!(
+                Args::try_parse_from(bad).is_err(),
+                "{bad:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
     fn position_is_exclusive_with_follow_cursor() {
         assert!(
             Args::try_parse_from(["instantmenu", "--position", "bottom", "--follow-cursor"])
@@ -739,7 +758,7 @@ mod tests {
     fn nonsense_ranges_rejected() {
         /* negative values used to be accepted and misbehave at runtime */
         assert!(Args::try_parse_from(["instantmenu", "--toast", "-1"]).is_err());
-        assert!(Args::try_parse_from(["instantmenu", "--animation", "-5"]).is_err());
+        assert!(Args::try_parse_from(["instantmenu", "--animation-length", "-5"]).is_err());
         assert!(Args::try_parse_from(["instantmenu", "--border-width", "-3"]).is_err());
         assert!(Args::try_parse_from(["instantmenu", "--monitor", "-2"]).is_err());
         assert!(Args::try_parse_from(["instantmenu", "--lines", "-1"]).is_err());
