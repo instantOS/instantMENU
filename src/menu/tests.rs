@@ -13,7 +13,8 @@ use crate::enums::{ExitStatus, Scheme};
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Color, Renderer};
 use std::collections::HashSet;
-use std::io::Write;
+use std::io::{Seek, SeekFrom, Write};
+use std::os::fd::AsRawFd;
 use std::sync::{Arc, Mutex};
 use xkbcommon::xkb::keysyms as ks;
 
@@ -1182,6 +1183,38 @@ impl Drop for TestPipe {
     }
 }
 
+/// Startup only consumes a bounded prefix. In particular, a producer that
+/// never reaches EOF cannot hold window creation hostage.
+#[test]
+fn stream_preload_leaves_a_large_remainder_for_the_event_loop() {
+    let path = std::env::temp_dir().join(format!(
+        "instantmenu-preload-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .unwrap();
+    let item_count = 100_000;
+    file.write_all(&b"x\n".repeat(item_count)).unwrap();
+    file.seek(SeekFrom::Start(0)).unwrap();
+
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &[]);
+    menu.begin_stream(file.as_raw_fd());
+    menu.preload_available();
+
+    assert_eq!(menu.matcher.items.len(), 32_768);
+    assert!(menu.stream_active(), "the byte budget stopped before EOF");
+    assert!(menu.drain_stdin(), "the event-loop drain reaches EOF");
+    assert_eq!(menu.matcher.items.len(), item_count);
+
+    drop(file);
+    std::fs::remove_file(path).unwrap();
+}
+
 /// Items stream in batch by batch; the menu keeps running until EOF, which
 /// flushes the unterminated tail line.
 #[test]
@@ -1322,6 +1355,26 @@ fn reflow_resizes_the_window_when_the_grid_grows() {
     assert_eq!(resizes.len(), 1);
     assert_eq!(resizes[0].h, menu.layout.menu_height);
     assert_eq!(menu.layout.input_width, menu.layout.menu_width / 3);
+}
+
+/// An auto-sized multi-column grid can exceed the monitor because the
+/// measured cell width is multiplied by the column count. Preserve that
+/// measurement and cap it; falling back to one cell makes every column tiny.
+#[test]
+fn oversized_multicolumn_auto_width_is_capped_to_the_monitor() {
+    let cfg = Config {
+        lines: 2,
+        columns: 3,
+        width: Width::Auto,
+        ..Config::default()
+    };
+    let wide = "W".repeat(120);
+    let items = vec![wide.as_str(); 6];
+    let (mut menu, _stub, _out) = menu_with(cfg, &items);
+
+    assert!(menu.setup().is_none());
+    assert_eq!(menu.layout.columns, 3);
+    assert_eq!(menu.layout.menu_width, 1920);
 }
 
 /// Regression for the streamed smartrun startup: setup begins with no items

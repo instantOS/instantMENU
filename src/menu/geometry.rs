@@ -143,7 +143,13 @@ impl Menu {
         layout: &mut Layout,
     ) {
         if self.cfg.follow_cursor {
-            if width != 0 {
+            if self.cfg.width == Width::Auto {
+                layout.menu_width = if width > 0 {
+                    width.min(monitor.w)
+                } else {
+                    self.content_width(layout.prompt_width, monitor.w)
+                };
+            } else if width != 0 {
                 layout.menu_width = width;
             } else {
                 // Keep a cursor-following menu within the selected output,
@@ -163,17 +169,38 @@ impl Menu {
         }
 
         if self.cfg.position == Position::Center {
-            // `center` is a near-full-width popup, not content-sized, so it
-            // does not use `min_width` (unlike the follow-cursor/embed paths).
-            layout.menu_width = if width != 0 && width < monitor.w {
-                width
+            if self.cfg.width == Width::Auto {
+                // Auto should fit content, not be near-full-width. Use the
+                // measured auto width when available, otherwise content width.
+                let available = (monitor.w - 100).max(1);
+                if width > 0 {
+                    layout.menu_width = width.min(available);
+                } else {
+                    layout.menu_width = self.content_width(layout.prompt_width, available);
+                }
             } else {
-                monitor.w - 100
-            };
+                // `center` is a near-full-width popup, not content-sized, so it
+                // does not use `min_width` (unlike the follow-cursor/embed paths).
+                layout.menu_width = if width != 0 && width < monitor.w {
+                    width
+                } else {
+                    monitor.w - 100
+                };
+            }
             while (layout.lines + 1) * layout.bar_height > monitor.h {
                 layout.lines -= 1;
             }
             layout.menu_height = (layout.lines + 1) * layout.bar_height;
+        } else if self.cfg.width == Width::Auto {
+            // --width auto with an empty corpus would have width==0 and fall
+            // back to the full monitor width, flashing very wide before the
+            // streamed items arrive and reflow shrinks it (instantstartmenu).
+            // Use content width (floored at min_width) instead.
+            if width > 0 {
+                layout.menu_width = width.min(monitor.w);
+            } else {
+                layout.menu_width = self.content_width(layout.prompt_width, monitor.w);
+            }
         } else {
             layout.menu_width = if width > 0 && width < monitor.w {
                 width
@@ -223,13 +250,21 @@ impl Menu {
             return Ok(());
         }
 
-        layout.menu_width = if self.cfg.position == Position::Center {
-            self.content_width(layout.prompt_width, parent.w)
-        } else if width > 0 && width < parent.w {
-            width
+        if self.cfg.width == Width::Auto {
+            if width > 0 {
+                layout.menu_width = width.min(parent.w);
+            } else {
+                layout.menu_width = self.content_width(layout.prompt_width, parent.w);
+            }
         } else {
-            parent.w
-        };
+            layout.menu_width = if self.cfg.position == Position::Center {
+                self.content_width(layout.prompt_width, parent.w)
+            } else if width > 0 && width < parent.w {
+                width
+            } else {
+                parent.w
+            };
+        }
 
         let origin = anchor_origin(
             self.cfg.position,

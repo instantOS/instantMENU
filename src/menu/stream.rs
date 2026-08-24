@@ -143,25 +143,69 @@ use super::matcher::Item;
 use super::Menu;
 use crate::enums::ExitStatus;
 
+/// Keep startup work bounded even when stdin is continuously writable. One
+/// pipe-sized chunk is enough to avoid the empty-layout flash for ordinary
+/// producers; anything beyond it is consumed by the event loop.
+const PRELOAD_MAX_BYTES: usize = 64 * 1024;
+
 impl Menu {
+    /// Opportunistic preload before the first layout: if the producer has
+    /// already written (e.g. `echo ... | instantmenu`), consume what is
+    /// buffered without blocking so `setup()` measures the final width
+    /// instead of the empty `auto` fallback (which previously flashed
+    /// full-monitor width before shrinking). Does not block; a slow
+    /// producer still streams normally after the window is visible.
+    /// Resolves fallback fonts for the preloaded characters so the first
+    /// draw measures correctly. For `auto` this eliminates the wide flash
+    /// entirely for fast producers (instantstartmenu); for slow producers
+    /// the geometry fallback (content_width) bounds the initial flash.
+    pub fn preload_available(&mut self) {
+        if self.stream_fd < 0 {
+            return;
+        }
+        self.drain_stdin_up_to(PRELOAD_MAX_BYTES);
+        if !self.pending_chars.is_empty() {
+            let chars = std::mem::take(&mut self.pending_chars);
+            self.renderer.add_fallbacks(&chars);
+            // Those items are now part of the baseline corpus for setup(),
+            // not a pending dirty batch that needs a later settle/reflow.
+            self.gate.reset();
+            self.stream_dirty = false;
+        }
+    }
+
     /// Read everything currently available from the streaming stdin
     /// (O_NONBLOCK: read until it would block), parse complete lines and
     /// append them as items. Returns true when EOF was reached. Bytes are
     /// never held back: a producer blocked on a full pipe is unblocked by
     /// this drain, and the coalescing gate decides when the batch becomes
     /// visible.
-    pub(super) fn drain_stdin(&mut self) -> bool {
+    pub(crate) fn drain_stdin(&mut self) -> bool {
+        self.drain_stdin_up_to(usize::MAX)
+    }
+
+    /// Drain at most `max_bytes`, leaving a readable descriptor for the event
+    /// loop when the budget is exhausted. The cap is essential before setup:
+    /// a producer such as `yes` may otherwise prevent window creation forever.
+    fn drain_stdin_up_to(&mut self, max_bytes: usize) -> bool {
         let fd = self.stream_fd;
         let mut eof = false;
+        let mut bytes_read = 0usize;
         loop {
             let mut buf = [0u8; 64 * 1024];
-            let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+            let remaining = max_bytes.saturating_sub(bytes_read);
+            if remaining == 0 {
+                break;
+            }
+            let read_len = buf.len().min(remaining);
+            let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), read_len) };
             match n {
                 0 => {
                     eof = true;
                     break;
                 }
                 n if n > 0 => {
+                    bytes_read += n as usize;
                     let lines = self.parser.feed(&buf[..n as usize]);
                     if !lines.is_empty() {
                         /* only completed items open the coalescing window:
