@@ -25,7 +25,7 @@ if [ -n "$2" ] || [ -z "$1" ]; then
 else
     if [ "$1" = "desktop" ]; then
         shift 1
-        i3-dmenu-desktop --dmenu="instantmenu -p desktop --frecency-cache smartrun-desktop --left-command \"instantmenu_smartrun terminal\" --right-command \"instantmenu_smartrun\" --placeholder \"search apps\" -l 10 --position center -i --width 900 --border-width 4${TOAST_DMENU}"
+        i3-dmenu-desktop --dmenu="instantmenu --prompt desktop --frecency-cache smartrun-desktop --left-command \"instantmenu_smartrun terminal\" --right-command \"instantmenu_smartrun\" --placeholder \"search apps\" --lines 10 --position center --insensitive --width 900 --border-width 4${TOAST_DMENU}"
         exit
     fi
     CACHE="smartrun-terminal"
@@ -39,9 +39,18 @@ INITIAL=()
 [ -n "$2" ] && INITIAL=(--initial-text "$2")
 
 read -r SELECTION < <(instantmenu_path | sort -u |
-    instantmenu --frecency-cache "$CACHE" \
-        --right-command "instantmenu_smartrun $RARGS" --left-command "instantmenu_smartrun $LARGS" \
-        -p "${1}" -i --placeholder "search apps" -l 10 --position center --width 900 --border-width 4 "${INITIAL[@]}" "${TOAST_ARGS[@]}")
+    instantmenu \
+        --frecency-cache "$CACHE" \
+        --right-command "instantmenu_smartrun $RARGS" \
+        --left-command "instantmenu_smartrun $LARGS" \
+        --prompt "${1}" \
+        --insensitive \
+        --placeholder "search apps" \
+        --lines 10 \
+        --position center \
+        --width 900 \
+        --border-width 4 \
+        "${INITIAL[@]}" "${TOAST_ARGS[@]}")
 
 if [ -z "$SELECTION" ]; then
     echo "selection empty, exiting"
