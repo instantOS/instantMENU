@@ -32,8 +32,8 @@ bump can also be selected manually from the workflow dispatch form.
 - alt-tab functionality
 - mouse support
 - animations and hover over indicators
-- icon prefixes
-- comments
+- composable item metadata for icons, colors, headings, hidden match terms,
+  and single-key menus
 - slider mode (`instantmenu slide 'brightnessctl s'`)
 - streamed input: the menu opens instantly and items appear as stdin produces them
 - Catppuccin, classic and Gruvbox themes (`--theme`)
@@ -80,6 +80,24 @@ instantMENU started as a fork of dmenu and keeps the dmenu workflow (items on st
 selection on stdout, full keyboard control), with all extra features optional. The
 command line uses modern long options (`--width`, `--right-command`, ...) with a few
 single-letter shortcuts (`-i`, `-p`, `-l`, ...) instead of dmenu's historical flags.
+
+## Item metadata
+
+Each input line is normally its visible label and selected output. A leading
+attribute block adds metadata without becoming part of either:
+
+```text
+Display
+{blue icon=display match="monitor screen"} Display
+{heading green} System actions
+{red icon=power key=q} Power off
+```
+
+Known color names may be bare (`{red}`) or explicit (`{color=red}`). Other
+attributes are `icon`, `key`, `match`, and the `heading` flag. Quote values
+that contain spaces. Run with `--single-key` to show and activate only entries
+that have `key=…`. Prefix a literal markup-like label with an extra opening
+brace: `{{red} literal` displays `{red} literal`.
 
 --------
 ### instantOS is still in early beta, contributions always welcome
