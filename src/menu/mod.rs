@@ -31,7 +31,7 @@ use std::time::SystemTime;
 
 use crate::backend::{Backend, Modifiers};
 use crate::config::Config;
-use crate::enums::{ExitStatus, ItemCategory};
+use crate::enums::ExitStatus;
 use crate::geom::Rect;
 use crate::render::{Canvas, Painter, Renderer};
 
@@ -161,15 +161,19 @@ impl Menu {
 
     /// Append items to the candidate list. Used by both the blocking load
     /// (tty/toast startup) and every streamed-in batch. New characters are
-    /// remembered for the next font-fallback pass; frecency ranks each
-    /// appended slice immediately so arrival order stays meaningful while
-    /// the list grows.
+    /// remembered for the next font-fallback pass — including the glyphs
+    /// icon entries *name*, which never occur in the raw text; frecency
+    /// ranks each appended slice immediately so arrival order stays
+    /// meaningful while the list grows.
     pub fn add_items(&mut self, items: Vec<Item>) {
         if items.is_empty() {
             return;
         }
         for item in &items {
             self.pending_chars.extend(item.text.chars());
+            if let Some(icon) = item.entry.icon {
+                self.pending_chars.insert(icon);
+            }
         }
         let start = self.matcher.items.len();
         self.matcher.items.extend(items);
@@ -333,8 +337,12 @@ impl Menu {
 
     /// The selected item is a non-selectable comment (starts with '>').
     pub(in crate::menu) fn selected_is_comment(&self) -> bool {
-        self.selected_text_ref()
-            .is_some_and(|t| ItemCategory::from_prefix(t, true).0.is_comment())
+        self.selection.selected.is_some_and(|pos| {
+            self.matcher.items[self.matcher.matches[pos]]
+                .entry
+                .kind
+                .is_comment()
+        })
     }
 
     /// Confirm the selection: animate, print, exit unless Ctrl is held, and

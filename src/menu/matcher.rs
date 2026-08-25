@@ -4,21 +4,34 @@
 //! become [`MatchResult`] values the shell translates into transitions.
 
 use crate::config::{Config, MatchMode};
+use crate::entry::ItemEntry;
 
 /// One candidate line from stdin.
 #[derive(Debug, Clone, Default)]
 pub struct Item {
     pub text: String,
+    /// How the line's prefix renders (comment / colored / icon entry);
+    /// parsed once here, so drawing and measuring agree.
+    pub entry: ItemEntry,
     /// printed once already (the C `out` flag) — drawn with the Out scheme.
     pub(crate) already_output: bool,
 }
 
 impl Item {
     pub fn new(text: impl Into<String>) -> Self {
+        let text = text.into();
+        let entry = crate::entry::parse(&text);
         Item {
-            text: text.into(),
+            text,
+            entry,
             already_output: false,
         }
+    }
+
+    /// The label as it is drawn: the text minus its prefix (and, for icon
+    /// entries, the icon field), on a UTF-8 boundary.
+    pub fn label(&self) -> &str {
+        self.text.get(self.entry.label..).unwrap_or(&self.text)
     }
 }
 

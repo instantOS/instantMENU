@@ -28,6 +28,10 @@ rootinstall: man
 man:
     cargo run --bin instantmenu-mangen
 
+# regenerate src/icons/names.rs from the nerd-fonts glyph names
+icons:
+    utils/gen_icons.py > src/icons/names.rs
+
 # format code
 format:
     cargo clippy --fix --allow-dirty

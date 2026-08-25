@@ -332,15 +332,8 @@ enum CharClass {
 
 fn char_class(ch: Option<char>) -> CharClass {
     match ch {
-        Some(c) if matches!(c as u32, 0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD) => {
-            CharClass::Icon
-        }
-        Some(c)
-            if (c as u32) >= 0x1F000
-                || matches!(c as u32, 0x2600..=0x27BF | 0x2190..=0x21FF | 0x2B00..=0x2BFF) =>
-        {
-            CharClass::Emoji
-        }
+        Some(c) if crate::icons::is_icon_char(c) => CharClass::Icon,
+        Some(c) if crate::icons::is_emoji_char(c) => CharClass::Emoji,
         _ => CharClass::Normal,
     }
 }

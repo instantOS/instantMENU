@@ -3,7 +3,8 @@
 
 use super::layout::Header;
 use super::{Menu, LEFT_GLYPH, RIGHT_GLYPH};
-use crate::enums::{output_offset, ColorRole, ItemCategory, Scheme};
+use crate::entry::{ItemEntry, ItemKind};
+use crate::enums::{ColorRole, Scheme};
 use crate::geom::Rect;
 use crate::render::TextStyle;
 
@@ -31,16 +32,39 @@ impl Menu {
     /// draw_item — draws one item in `cell`.
     fn draw_item(&mut self, pos: usize, cell: Rect) {
         let is_selected = self.selection.selected == Some(pos);
-        let text = self.matcher.text_of_match(pos).to_string();
-        let bytes = text.as_bytes();
+        let index = self.matcher.matches[pos];
+        let entry = self.matcher.items[index].entry;
+        let text = self.matcher.items[index].text.clone();
 
-        let mut category = self.classify_item(pos, &text, is_selected);
+        let scheme = match entry.kind {
+            ItemKind::Plain => {
+                // plain item: the scheme follows selection/output state
+                if is_selected {
+                    Scheme::Selected
+                } else if self.matcher.items[index].already_output {
+                    Scheme::Output
+                } else {
+                    Scheme::Normal
+                }
+            }
+            ItemKind::Comment => Scheme::Normal,
+            ItemKind::ColoredComment => entry.scheme.unwrap_or(Scheme::Normal),
+            // a colored item shows its color only while selected
+            ItemKind::Colored => {
+                if is_selected {
+                    entry.scheme.unwrap_or(Scheme::Selected)
+                } else {
+                    Scheme::Normal
+                }
+            }
+            // an icon entry's gutter carries its color at all times
+            ItemKind::Icon => entry.scheme.unwrap_or(Scheme::Normal),
+        };
+        self.renderer.set_scheme(scheme);
 
         let mut temp_padding = 0;
-        let mut label_offset = 0usize;
-        if category == ItemCategory::Colored && bytes.get(2) == Some(&b' ') {
-            (temp_padding, label_offset) = self.draw_icon(&text, is_selected, cell.x, cell.y);
-            category = ItemCategory::Icon;
+        if entry.kind == ItemKind::Icon {
+            temp_padding = self.draw_icon(entry, is_selected, cell.x, cell.y);
         }
 
         let output: &str = if self.cfg.commented {
@@ -51,23 +75,17 @@ impl Menu {
                 None => "",
             }
         } else {
-            &text
+            // the label the entry's prefix leaves
+            text.get(entry.label..).unwrap_or("")
         };
-        /* icon items: the label starts after the ":X " prefix plus the actual
-         * icon bytes, which output_offset cannot express statically */
-        let offset = if category == ItemCategory::Icon {
-            label_offset
-        } else {
-            output_offset(category)
-        };
-        let shown = output.get(offset..).unwrap_or("");
+        let shown = output;
 
         if is_selected {
             self.selected_y = cell.y;
         }
 
         let label_x = cell.x
-            + if category == ItemCategory::Icon {
+            + if entry.kind == ItemKind::Icon {
                 temp_padding
             } else {
                 0
@@ -76,7 +94,7 @@ impl Menu {
             self.layout.bar_height
         } else {
             cell.w
-                - if category == ItemCategory::Icon {
+                - if entry.kind == ItemKind::Icon {
                     temp_padding
                 } else {
                     0
@@ -88,7 +106,7 @@ impl Menu {
             self.renderer.cell_inset()
         };
 
-        let style = if category == ItemCategory::ColoredComment || is_selected {
+        let style = if entry.kind == ItemKind::ColoredComment || is_selected {
             TextStyle::Accented
         } else {
             TextStyle::Normal
@@ -98,44 +116,20 @@ impl Menu {
         p.draw_text_styled(rect, left_padding, shown, style);
     }
 
-    /// Classify an item by its `>`/`:` prefix and set the matching scheme.
-    fn classify_item(&mut self, pos: usize, text: &str, is_selected: bool) -> ItemCategory {
-        let (category, prefixed) = ItemCategory::from_prefix(text, is_selected);
-        let scheme = match prefixed {
-            Some(s) => s,
-            None if category == ItemCategory::Normal => {
-                // plain item: the scheme follows selection/output state
-                if is_selected {
-                    Scheme::Selected
-                } else if self.matcher.items[self.matcher.matches[pos]].already_output {
-                    Scheme::Output
-                } else {
-                    Scheme::Normal
-                }
-            }
-            None => Scheme::Normal, // unselected `:c` item
-        };
-        self.renderer.set_scheme(scheme);
-        category
-    }
-
-    /// Draw the icon of a `:X ` item; returns the cell padding it used and
-    /// the byte offset of the label inside `text` (the 3-byte prefix plus
-    /// the icon glyph — everything actually drawn as the icon).
-    fn draw_icon(&mut self, text: &str, is_selected: bool, x: i32, y: i32) -> (i32, usize) {
+    /// Draw the icon gutter of an icon entry (`:color:icon: label` or the
+    /// legacy `:x <glyph>` spelling) at the row's left edge; returns the
+    /// cell padding it used. The gutter spans the full bar height (the
+    /// `--line-height` value only sets the *minimum* row height), so the
+    /// glyph is vertically centered like the label and the accent strip
+    /// sits at the row's bottom edge instead of 4px from its top. The
+    /// caller has already set the entry's scheme; afterwards the label
+    /// draws in the Hover scheme when selected, Normal otherwise.
+    fn draw_icon(&mut self, entry: ItemEntry, is_selected: bool, x: i32, y: i32) -> i32 {
         let temp_padding = self.renderer.font_height * 3;
-        // the icon is the first UTF-8 char after the ":X " prefix; the label
-        // starts right after it, however many bytes the glyph is
-        let end = text
-            .get(3..)
-            .and_then(|rest| rest.chars().next())
-            .map_or(3, |c| 3 + c.len_utf8());
-        let icon_text = text.get(3..end).unwrap_or("");
+        let icon = entry.icon.unwrap_or('?');
+        let mut glyph = [0u8; 4];
+        let icon_text = icon.encode_utf8(&mut glyph);
         let left_padding = (temp_padding as f64 / 2.6) as i32;
-        // the icon cell spans the full bar height (the `--line-height` value
-        // only sets the *minimum* row height), so the glyph is vertically
-        // centered like the label and the accent strip sits at the row's
-        // bottom edge instead of 4px from its top
         let rect = Rect::new(x, y, temp_padding, self.layout.bar_height);
         let mut p = self.painter();
         let style = if is_selected {
@@ -150,7 +144,7 @@ impl Menu {
             Scheme::Normal
         };
         self.renderer.set_scheme(sc);
-        (temp_padding, end)
+        temp_padding
     }
 
     pub(super) fn draw_menu(&mut self) {

@@ -7,7 +7,7 @@ use super::paging;
 use super::transition::Transition;
 use super::Menu;
 use crate::backend::{Modifiers, MouseButton};
-use crate::enums::{EditOp, ExitStatus, ItemCategory, Side};
+use crate::enums::{EditOp, ExitStatus, Side};
 use crate::geom::Point;
 
 impl Menu {
@@ -169,9 +169,11 @@ impl Menu {
         'items: for (item, rect) in self.horizontal_item_rects(header.content_x) {
             if rect.contains(pos) {
                 let item_text = self.matcher.text_of_match(item).to_string();
-                if ItemCategory::from_prefix(&item_text, false).0.is_comment()
-                    && self.selected_text_ref().is_some_and(|t| !t.is_empty())
-                {
+                let is_comment = self.matcher.items[self.matcher.matches[item]]
+                    .entry
+                    .kind
+                    .is_comment();
+                if is_comment && self.selected_text_ref().is_some_and(|t| !t.is_empty()) {
                     break 'items;
                 }
                 self.selection.selected = Some(item);

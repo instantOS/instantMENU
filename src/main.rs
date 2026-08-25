@@ -95,6 +95,10 @@ fn main() {
     let mut required_chars = std::collections::HashSet::new();
     for item in preloaded.iter().flatten() {
         required_chars.extend(item.text.chars());
+        // icon entries name their glyph; the resolved char is not in the text
+        if let Some(icon) = item.entry.icon {
+            required_chars.insert(icon);
+        }
     }
     for text in [
         args.menu.initial_text.as_deref(),
