@@ -394,7 +394,7 @@ impl Menu {
         );
         let mut len = 0;
         for item in &self.matcher.items {
-            len = len.max(m.cell_width(&item.text));
+            len = len.max(m.item_cell_width(item));
         }
         len
     }
@@ -452,9 +452,9 @@ impl Menu {
         let mut x = x + input_width + m.cell_width("<");
         let mut rects = Vec::with_capacity(end.saturating_sub(start));
         for pos in start..end {
-            let text = self.matcher.text_of_match(pos);
+            let item = &self.matcher.items[self.matcher.matches[pos]];
             let budget = menu_width - x - m.cell_width(">") - m.cell_width(&match_counter_text);
-            let width = m.cell_width_clamp(text, budget);
+            let width = m.item_cell_width_clamp(item, budget);
             rects.push((pos, Rect::new(x, 0, width, bar_height)));
             x += width;
         }

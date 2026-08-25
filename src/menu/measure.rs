@@ -4,14 +4,51 @@
 //! renderer; they take a `&mut dyn Measure` instead. Tests substitute
 //! fixed-width fakes.
 
+use super::matcher::Item;
+use crate::entry::ItemKind;
 use crate::render::Renderer;
+
+/// Width reserved for the colored icon block at the start of an icon item.
+/// Drawing and every item-measurement path use this helper so their geometry
+/// cannot drift apart.
+pub(super) fn icon_gutter_width(font_height: i32) -> i32 {
+    font_height * 3
+}
 
 /// Cell width measurement with dmenu's padding and clamping semantics.
 pub(super) trait Measure {
     /// Cell width: the glyph width plus the horizontal padding.
     fn cell_width(&mut self, s: &str) -> i32;
-    /// Cell width of `s` clamped to `n`. 0 yields 0, negatives are unclamped.
-    fn cell_width_clamp(&mut self, s: &str, n: i32) -> i32;
+
+    /// Width of an item as rendered: its visible label plus an icon gutter
+    /// when the parsed entry is an icon item.
+    fn item_cell_width(&mut self, item: &Item) -> i32 {
+        self.cell_width(item.label())
+            + if item.entry.kind == ItemKind::Icon {
+                self.icon_gutter_width()
+            } else {
+                0
+            }
+    }
+
+    /// Rendered item width clamped to the available horizontal budget.
+    fn item_cell_width_clamp(&mut self, item: &Item, n: i32) -> i32 {
+        if n == 0 {
+            return 0;
+        }
+        let width = self.item_cell_width(item);
+        if n < 0 {
+            width
+        } else {
+            width.min(n)
+        }
+    }
+
+    /// Width of the icon gutter for this measurement context. Pure paging
+    /// test measurers have no gutter unless they opt into one.
+    fn icon_gutter_width(&self) -> i32 {
+        0
+    }
 }
 
 /// [`Measure`] over the shared renderer. In commented mode every text is a
@@ -43,16 +80,7 @@ impl Measure for TextMeasurer<'_> {
         }
     }
 
-    fn cell_width_clamp(&mut self, s: &str, n: i32) -> i32 {
-        if self.commented {
-            return self.bar_height;
-        }
-        if n == 0 {
-            return 0;
-        }
-        if n < 0 {
-            return self.cell_width(s);
-        }
-        (self.renderer.text_width(s) + self.renderer.horizontal_padding).min(n)
+    fn icon_gutter_width(&self) -> i32 {
+        icon_gutter_width(self.renderer.font_height)
     }
 }

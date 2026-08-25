@@ -1135,6 +1135,24 @@ fn icon_cell_spans_the_full_bar_height() {
     assert_eq!(pixel(&menu, 5, 15), bgra(normal.bg));
 }
 
+/// Icon geometry is based on what draw_item paints, not the potentially long
+/// color/name prefix retained in the source item.
+#[test]
+fn icon_item_measurement_uses_label_plus_gutter() {
+    let source = ":red:md-power_off: Label";
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &[source]);
+    let label_width = menu.cell_width("Label");
+    let gutter_width = menu.renderer.font_height * 3;
+
+    assert_eq!(menu.max_cell_width(), label_width + gutter_width);
+
+    menu.match_counter_text.clear();
+    menu.paging.next = None;
+    let rect = menu.horizontal_item_rects(0)[0].1;
+    assert_eq!(rect.w, label_width + gutter_width);
+    assert!(rect.w < menu.cell_width(source));
+}
+
 /// Slide mode does not read items from stdin even when some are provided.
 #[test]
 fn slide_ignores_stdin_items() {

@@ -15,10 +15,14 @@
 
 mod names;
 
-/// Whether `c` is in the private-use ranges Nerd Fonts icons live in
-/// (the ranges the renderer routes to the secondary font).
+/// Whether `c` is in the ranges Nerd Fonts icons live in (the ranges the
+/// renderer routes to the secondary font). The IEC power symbols are
+/// standardized Unicode characters but are also official Nerd Fonts glyphs.
 pub fn is_icon_char(c: char) -> bool {
-    matches!(c as u32, 0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD)
+    matches!(
+        c as u32,
+        0x23FB..=0x23FE | 0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD
+    )
 }
 
 /// Whether `c` is in the emoji/symbol ranges (routed to the emoji font).
@@ -156,6 +160,22 @@ mod tests {
         assert_eq!(lookup("\u{f0425}"), Some('\u{f0425}')); // nf-md-power
         assert_eq!(lookup("\u{1f5a5}"), Some('\u{1f5a5}')); // emoji
         assert_eq!(lookup(" \u{f011} "), Some('\u{f011}'));
+        for glyph in ['\u{23fb}', '\u{23fc}', '\u{23fd}', '\u{23fe}'] {
+            assert_eq!(lookup(&glyph.to_string()), Some(glyph));
+        }
+    }
+
+    #[test]
+    fn iec_power_names_resolve_as_icon_glyphs() {
+        for (name, glyph) in [
+            ("iecpower", '\u{23fb}'),
+            ("iectogglepower", '\u{23fc}'),
+            ("iecpoweron", '\u{23fd}'),
+            ("iecsleepmode", '\u{23fe}'),
+        ] {
+            assert_eq!(lookup(name), Some(glyph), "{name}");
+            assert!(is_icon_char(glyph), "{name}");
+        }
     }
 
     /// Plain words that name no icon do not resolve ("x" does — it is

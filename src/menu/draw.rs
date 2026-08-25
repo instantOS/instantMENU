@@ -2,6 +2,7 @@
 //! from [`Header`] (`Menu::header`) — the same rects mouse hit-testing uses.
 
 use super::layout::Header;
+use super::measure::icon_gutter_width;
 use super::{Menu, LEFT_GLYPH, RIGHT_GLYPH};
 use crate::entry::{ItemEntry, ItemKind};
 use crate::enums::{ColorRole, Scheme};
@@ -125,7 +126,7 @@ impl Menu {
     /// caller has already set the entry's scheme; afterwards the label
     /// draws in the Hover scheme when selected, Normal otherwise.
     fn draw_icon(&mut self, entry: ItemEntry, is_selected: bool, x: i32, y: i32) -> i32 {
-        let temp_padding = self.renderer.font_height * 3;
+        let temp_padding = icon_gutter_width(self.renderer.font_height);
         let icon = entry.icon.unwrap_or('?');
         let mut glyph = [0u8; 4];
         let icon_text = icon.encode_utf8(&mut glyph);

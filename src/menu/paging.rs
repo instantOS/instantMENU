@@ -60,8 +60,7 @@ pub(super) fn calc_paging(
             used += if layout.lines > 0 {
                 layout.bar_height
             } else {
-                let text = items[matches[pos]].text.as_str();
-                measure.cell_width_clamp(text, n)
+                measure.item_cell_width_clamp(&items[matches[pos]], n)
             };
             if used > n {
                 next = Some(pos);
@@ -78,8 +77,7 @@ pub(super) fn calc_paging(
         used += if layout.lines > 0 {
             layout.bar_height
         } else {
-            let text = items[matches[pos]].text.as_str();
-            measure.cell_width_clamp(text, n)
+            measure.item_cell_width_clamp(&items[matches[pos]], n)
         };
         if used > n {
             break;
@@ -182,11 +180,9 @@ mod tests {
         fn cell_width(&mut self, s: &str) -> i32 {
             10 * s.len() as i32
         }
-        fn cell_width_clamp(&mut self, s: &str, n: i32) -> i32 {
-            if n == 0 {
-                return 0;
-            }
-            self.cell_width(s).min(n)
+
+        fn icon_gutter_width(&self) -> i32 {
+            30
         }
     }
 
@@ -284,6 +280,28 @@ mod tests {
             paging,
             Paging {
                 next: Some(1),
+                prev: 0
+            }
+        );
+    }
+
+    #[test]
+    fn horizontal_pages_measure_icon_label_and_gutter() {
+        // n = 200 - (100 input + 20 arrows) = 80. The icon item renders as
+        // its 20px label plus a 30px gutter, so it and one 20px plain item
+        // fit. Measuring its 120px source spelling would turn a page early.
+        let lay = layout(0, 1, 30, 200);
+        let its = items(&[":r:power: aa", "bb", "cc"]);
+        let matches: Vec<usize> = (0..3).collect();
+        let sel = Selection {
+            selected: Some(0),
+            page_start: Some(0),
+        };
+
+        assert_eq!(
+            calc_paging(&sel, &its, &matches, &lay, &mut FakeMeasure),
+            Paging {
+                next: Some(2),
                 prev: 0
             }
         );
