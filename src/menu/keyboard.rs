@@ -9,7 +9,7 @@
 use xkbcommon::xkb::keysyms as ks;
 
 use super::measure::TextMeasurer;
-use super::paging::{self, Selection};
+use super::paging;
 use super::transition::Transition;
 use super::Menu;
 use crate::backend::Modifiers;
@@ -26,7 +26,7 @@ enum KeyPath {
 impl Menu {
     /// select_number — Ctrl-1..9 select the n-th item and hit Return.
     fn select_number(&mut self, number: usize, mut mods: Modifiers) -> Transition {
-        self.selection.selected = self.selection.page_start;
+        self.selection.selected = self.matcher.first_selectable_match();
         for _ in 0..number {
             self.select_next();
         }
@@ -37,8 +37,7 @@ impl Menu {
     /// The Return key branch, shared with select_number and the Ctrl-j/m
     /// remaps.
     fn handle_return(&mut self, mods: Modifiers) -> Transition {
-        // non-selectable comment
-        if self.selected_is_comment() {
+        if self.selected_is_heading() {
             return Transition::Nop;
         }
 
@@ -71,7 +70,7 @@ impl Menu {
             if mods.shift {
                 return Transition::Nop;
             }
-            if self.selected_is_comment() {
+            if self.selected_is_heading() {
                 return Transition::Nop;
             }
             let out = self
@@ -198,9 +197,9 @@ impl Menu {
     fn shift_key(&mut self) {
         if self.alt_tab {
             if let Some(s) = self.selection.selected {
-                if s == 0 {
+                if self.select_prev_position(s).is_none() {
                     // wrap to the last item
-                    self.selection.selected = Some(self.matcher.matches.len() - 1);
+                    self.selection.selected = self.last_selectable_match();
                     self.recalc_paging();
                 } else {
                     self.select_prev();
@@ -240,9 +239,8 @@ impl Menu {
                 self.tabbed = true;
 
                 if let Some(s) = self.selection.selected {
-                    let last = self.matcher.matches.len().saturating_sub(1);
-                    if s == last {
-                        self.selection = Selection::from_match(self.matcher.matches.len());
+                    if self.select_next_position(s).is_none() {
+                        self.select_page(0);
                         self.recalc_paging();
                     } else {
                         self.select_next();
@@ -294,7 +292,7 @@ impl Menu {
             } else if self.paging.next.is_some() {
                 let mut m = TextMeasurer::new(
                     &mut self.renderer,
-                    self.cfg.commented,
+                    self.cfg.single_key,
                     self.layout.bar_height,
                 );
                 self.selection = paging::jump_to_end(
@@ -304,11 +302,7 @@ impl Menu {
                     &mut m,
                 );
             }
-            self.selection.selected = if self.matcher.matches.is_empty() {
-                None
-            } else {
-                Some(self.matcher.matches.len() - 1)
-            };
+            self.selection.selected = self.last_selectable_match();
             Some(Transition::Redraw)
         } else if sym == ks::KEY_Escape {
             Some(Transition::Exit(ExitStatus::Failure))
@@ -318,7 +312,7 @@ impl Menu {
             {
                 self.editor.cursor = 0;
             } else {
-                self.selection = Selection::from_match(self.matcher.matches.len());
+                self.select_page(0);
                 self.recalc_paging();
             }
             Some(Transition::Redraw)
@@ -346,14 +340,14 @@ impl Menu {
             let Some(next) = self.paging.next else {
                 return Transition::Nop;
             };
-            self.selection = paging::at(next);
+            self.select_page(next);
             self.recalc_paging();
             Transition::Redraw
         } else if sym == ks::KEY_Prior || sym == ks::KEY_KP_Prior {
             if self.selection.page_start.is_none() {
                 return Transition::Nop;
             }
-            self.selection = paging::at(self.paging.prev);
+            self.select_page(self.paging.prev);
             self.recalc_paging();
             Transition::Redraw
         } else if sym == ks::KEY_Return || sym == ks::KEY_KP_Enter {
@@ -405,6 +399,12 @@ impl Menu {
                 }
                 temp_selection -= 1;
             }
+            let Some(temp_selection) = (0..=temp_selection)
+                .rev()
+                .find(|&pos| self.matcher.match_is_selectable(pos))
+            else {
+                return Transition::Nop;
+            };
             self.selection.selected = Some(temp_selection);
             if offscreen {
                 self.selection.page_start = Some(self.paging.prev);
@@ -451,6 +451,11 @@ impl Menu {
                     offscreen = true;
                 }
             }
+            let Some(temp_selection) = (temp_selection..self.matcher.matches.len())
+                .find(|&pos| self.matcher.match_is_selectable(pos))
+            else {
+                return Transition::Nop;
+            };
             self.selection.selected = Some(temp_selection);
             if offscreen {
                 self.selection.page_start = self.paging.next;
@@ -483,5 +488,21 @@ impl Menu {
     /// Down navigation shared by XK_Down and the XK_Right fallthrough.
     fn nav_down(&mut self) {
         self.select_next();
+    }
+
+    fn last_selectable_match(&self) -> Option<usize> {
+        (0..self.matcher.matches.len())
+            .rev()
+            .find(|&pos| self.matcher.match_is_selectable(pos))
+    }
+
+    fn select_prev_position(&self, from: usize) -> Option<usize> {
+        (0..from)
+            .rev()
+            .find(|&pos| self.matcher.match_is_selectable(pos))
+    }
+
+    fn select_next_position(&self, from: usize) -> Option<usize> {
+        (from + 1..self.matcher.matches.len()).find(|&pos| self.matcher.match_is_selectable(pos))
     }
 }

@@ -13,7 +13,7 @@ use crate::geom::{Point, Rect, Size};
 impl Menu {
     /// setup — geometry, monitor selection, window creation, first draw.
     /// Returns Some(status) when the menu cannot start, or an early
-    /// auto-confirm/commented pick already ended it.
+    /// auto-confirm/single-key pick already ended it.
     pub fn setup(&mut self) -> Option<ExitStatus> {
         let layout = match self.compute_layout() {
             Ok(layout) => layout,
@@ -36,7 +36,7 @@ impl Menu {
     /// grid shape is derived from the current item count, so this can run
     /// again whenever streamed items change it ([`Menu::reflow`]).
     fn compute_layout(&mut self) -> Result<Layout, ExitStatus> {
-        let count = self.matcher.items.len() as i32;
+        let count = self.matcher.layout_item_count() as i32;
         let grid = super::layout::adjusted_grid(self.cfg.lines, self.cfg.columns, count);
         self.stdin_grid = grid;
         let mut layout = Layout {
@@ -49,7 +49,7 @@ impl Menu {
         /* make a menu line AT LEAST 'line_height' tall */
         layout.bar_height = (self.renderer.font_height + 12).max(self.cfg.line_height.pixels());
         let prompt = self.cfg.prompt.clone();
-        layout.prompt_width = if self.cfg.commented {
+        layout.prompt_width = if self.cfg.single_key {
             layout.bar_height * 15
         } else {
             match prompt.as_deref() {
@@ -94,14 +94,14 @@ impl Menu {
          * setup() matters because streamed input replaces the Layout during
          * reflow; a partially-derived replacement used to silently reset the
          * input width to zero. */
-        layout.input_width = layout.menu_width / if self.cfg.commented { 10 } else { 3 };
+        layout.input_width = layout.menu_width / if self.cfg.single_key { 10 } else { 3 };
         Ok(layout)
     }
 
     /// `--width auto`: measure the items and use the computed width; a
     /// fixed `--width` passes through, an unset one yields 0 ("pick a
     /// default downstream"). Runs before the bar height exists, so
-    /// commented-mode measurement sees a zero bar height exactly like the
+    /// single-key measurement sees a zero bar height exactly like the
     /// C version (which resolved this in main() before setup()).
     fn resolve_auto_width(&mut self, columns: i32) -> i32 {
         match self.cfg.width {
@@ -316,12 +316,12 @@ impl Menu {
     /// menu opened (streaming), it only fires while the input still holds
     /// the untouched `-it` seed; editing the text opts out.
     pub(in crate::menu) fn apply_pre_match(&mut self) -> Option<ExitStatus> {
-        if !(self.cfg.pre_match
-            && !self.pre_match_applied
-            && self.stream_complete()
-            && !self.matcher.matches.is_empty()
-            && !self.editor.text.is_empty()
-            && self.initial_seed.as_deref() == Some(self.editor.text.as_str()))
+        if !self.cfg.pre_match
+            || self.pre_match_applied
+            || !self.stream_complete()
+            || self.matcher.matches.is_empty()
+            || self.editor.text.is_empty()
+            || self.initial_seed.as_deref() != Some(self.editor.text.as_str())
         {
             return None;
         }

@@ -1,84 +1,91 @@
-//! Item matching — the token matcher ports the C `match`; fuzzy matching is
-//! delegated to frizbee (SIMD Smith-Waterman). Pure: no I/O, no exit. The C
-//! version printed and called exit() from inside match(); here those cases
-//! become [`MatchResult`] values the shell translates into transitions.
+//! Item matching — the token matcher ports dmenu's ordering while fuzzy
+//! matching is delegated to frizbee. Item markup is parsed once on arrival;
+//! matching consumes the prepared label/search text and never reparses it.
 
 use crate::config::{Config, MatchMode};
 use crate::entry::ItemEntry;
 
-/// One candidate line from stdin.
+/// One parsed candidate line from stdin.
 #[derive(Debug, Clone, Default)]
 pub struct Item {
+    /// Visible label and value printed when selected.
     pub text: String,
-    /// How the line's prefix renders (comment / colored / icon entry);
-    /// parsed once here, so drawing and measuring agree.
+    /// Label plus hidden `match=` terms. Absent for the fast plain-item path.
+    search_text: Option<String>,
+    /// Presentation, single-key and structural metadata.
     pub entry: ItemEntry,
-    /// printed once already (the C `out` flag) — drawn with the Out scheme.
+    /// Printed once already (the historical `out` flag).
     pub(crate) already_output: bool,
 }
 
 impl Item {
-    pub fn new(text: impl Into<String>) -> Self {
-        let text = text.into();
-        let entry = crate::entry::parse(&text);
+    pub fn new(source: impl Into<String>) -> Self {
+        let source = source.into();
+        let parsed = crate::entry::parse(&source);
+        let label_is_source = parsed.label.len() == source.len()
+            && std::ptr::eq(parsed.label.as_ptr(), source.as_ptr());
+        let entry = parsed.entry;
+        let match_text = parsed.match_text;
+        let parsed_label = (!label_is_source).then(|| parsed.label.to_owned());
+        let text = parsed_label.unwrap_or(source);
+        let search_text = match_text.map(|terms| format!("{text} {terms}"));
         Item {
             text,
+            search_text,
             entry,
             already_output: false,
         }
     }
 
-    /// The label as it is drawn: the text minus its prefix (and, for icon
-    /// entries, the icon field), on a UTF-8 boundary.
     pub fn label(&self) -> &str {
-        self.text.get(self.entry.label..).unwrap_or(&self.text)
+        &self.text
+    }
+
+    pub fn searchable_text(&self) -> &str {
+        self.search_text.as_deref().unwrap_or(&self.text)
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        !self.entry.is_heading()
     }
 }
 
-/// What a search concluded. `AutoConfirm`/`CommentPick` are the C version's
-/// print-and-exit paths (-n auto-confirm mode, commented instantASSIST mode).
+/// What a search concluded. Pick variants let the pure matcher report an
+/// early exit without doing I/O itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum MatchResult {
-    /// `matches` was recomputed; the menu keeps running.
     Listed,
-    /// auto-confirm mode found exactly one match: print this item and exit.
     AutoConfirm(usize),
-    /// commented mode: print this item (or nothing) and exit.
-    CommentPick(Option<usize>),
+    SingleKeyPick(Option<usize>),
 }
 
-/// The item list plus the matching algorithm and its case-sensitivity state.
+/// Candidate corpus plus the matching policy selected by the configuration.
 #[derive(Debug, Clone)]
 pub(super) struct Matcher {
     pub items: Vec<Item>,
-    /// Ordered item indices of the current matches (the C linked list).
+    /// Ordered item indices currently visible. Empty-query headings are in
+    /// this list for layout, but are never valid selection targets.
     pub matches: Vec<usize>,
     mode: MatchMode,
-    commented: bool,
+    single_key: bool,
     auto_confirm: bool,
-    /* case-insensitive matching (the fstrncmp/fstrstr function pointers) */
     insensitive: bool,
-    /// smart case: insensitive until the query contains uppercase.
     smart_case: bool,
 }
 
 impl Matcher {
     pub fn new(items: Vec<Item>, cfg: &Config) -> Self {
-        // Port of -i/-s switching fstrncmp/fstrstr (smartcase starts out
-        // insensitive and turns sensitive on uppercase input).
         Matcher {
             items,
             matches: Vec::new(),
             mode: cfg.match_mode,
-            commented: cfg.commented,
+            single_key: cfg.single_key,
             auto_confirm: cfg.auto_confirm,
             insensitive: cfg.smart_case || cfg.insensitive,
             smart_case: cfg.smart_case,
         }
     }
 
-    /// Smart case: once the query holds an uppercase letter, matching turns
-    /// case-sensitive for good (the C flag was never reset).
     pub fn note_uppercase(&mut self, text: &str) {
         if self.smart_case && text.bytes().any(|b| b.is_ascii_uppercase()) {
             self.smart_case = false;
@@ -86,27 +93,13 @@ impl Matcher {
         }
     }
 
-    /// Port of match(): recompute `matches` for `text`. `complete` tells
-    /// whether the item corpus is final (stdin reached EOF, or there is no
-    /// stream). While items are still streaming in, the pick-and-exit
-    /// conclusions (auto-confirm mode, commented mode) are deferred: a single
-    /// match can still gain competitors, and the first item starting with a
-    /// byte may not have arrived yet. Commented mode falls back to normal
-    /// matching for display until then.
+    /// Recompute visible matches. Single-key mode is deliberately separate
+    /// from fuzzy/token matching: only explicitly keyed items participate,
+    /// and one complete Unicode character activates the matching key.
     pub fn search(&mut self, text: &str, complete: bool) -> MatchResult {
-        if self.commented && complete {
-            // instantASSIST: the first byte of the query picks the first
-            // item starting with it; an empty query falls through to the
-            // normal matcher (C behaviour).
-            if let Some(c) = text.bytes().next() {
-                let pick = self
-                    .items
-                    .iter()
-                    .position(|item| item.text.as_bytes().first() == Some(&c));
-                return MatchResult::CommentPick(pick);
-            }
+        if self.single_key {
+            return self.single_key_search(text, complete);
         }
-
         if self.mode == MatchMode::Fuzzy {
             self.fuzzy_search(text, complete)
         } else {
@@ -115,12 +108,69 @@ impl Matcher {
     }
 
     pub fn text_of_match(&self, pos: usize) -> &str {
-        self.items[self.matches[pos]].text.as_str()
+        self.items[self.matches[pos]].label()
     }
 
-    /// fstrncmp(a, b, n) == 0, honoring the case-insensitivity switch.
-    /// Byte-wise strncmp emulation: compares up to n bytes, treating the end
-    /// of a slice as the C NUL terminator.
+    pub fn match_is_selectable(&self, pos: usize) -> bool {
+        self.matches
+            .get(pos)
+            .is_some_and(|&index| self.items[index].is_selectable())
+    }
+
+    pub fn first_selectable_match(&self) -> Option<usize> {
+        (0..self.matches.len()).find(|&pos| self.match_is_selectable(pos))
+    }
+
+    pub fn selectable_match_count(&self) -> usize {
+        self.matches
+            .iter()
+            .filter(|&&index| self.items[index].is_selectable())
+            .count()
+    }
+
+    pub fn selectable_item_count(&self) -> usize {
+        self.items
+            .iter()
+            .filter(|item| item.is_selectable() && (!self.single_key || item.entry.key.is_some()))
+            .count()
+    }
+
+    pub fn layout_item_count(&self) -> usize {
+        if self.single_key {
+            self.selectable_item_count()
+        } else {
+            self.items.len()
+        }
+    }
+
+    fn single_key_search(&mut self, text: &str, complete: bool) -> MatchResult {
+        let mut chars = text.chars();
+        let key = chars.next();
+        let is_one_character = key.is_some() && chars.next().is_none();
+
+        self.matches.clear();
+        self.matches.extend(
+            self.items
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| {
+                    item.is_selectable()
+                        && item.entry.key.is_some()
+                        && key.is_none_or(|key| item.entry.key == Some(key))
+                })
+                .map(|(index, _)| index),
+        );
+
+        if complete && key.is_some() {
+            let pick = is_one_character
+                .then(|| self.matches.first().copied())
+                .flatten();
+            return MatchResult::SingleKeyPick(pick);
+        }
+        MatchResult::Listed
+    }
+
+    /// Byte-wise strncmp emulation honoring the case setting.
     fn eq_n(&self, a: &[u8], b: &[u8], n: usize) -> bool {
         for i in 0..n {
             let ca = a.get(i).copied().unwrap_or(0);
@@ -134,13 +184,12 @@ impl Matcher {
                 return false;
             }
             if ca == 0 {
-                return true; // both terminated
+                return true;
             }
         }
         true
     }
 
-    /// fstrstr, honoring the case switch.
     fn contains(&self, haystack: &str, needle: &str) -> bool {
         if needle.is_empty() {
             return true;
@@ -155,31 +204,34 @@ impl Matcher {
         })
     }
 
-    /// The dmenu/exact matcher: every whitespace-separated token must appear
-    /// in the item; exact, then prefix, then substring matches (dmenu mode
-    /// only ranks prefixes; exact mode lists everything that matches).
+    /// Every whitespace-separated token must occur in the prepared search
+    /// text. Exact/prefix ranking uses only the visible label, so hidden
+    /// keywords never make a label lose its natural rank.
     fn token_search(&mut self, text: &str, complete: bool) -> MatchResult {
-        // separate input text into tokens to be matched individually
-        // (strtok collapses runs of spaces)
         let tokens: Vec<&str> = text.split(' ').filter(|t| !t.is_empty()).collect();
         let first_token = tokens.first().copied().unwrap_or("");
         let len = first_token.len();
-
-        let mut exact: Vec<usize> = Vec::new();
-        let mut prefix: Vec<usize> = Vec::new();
-        let mut substr: Vec<usize> = Vec::new();
+        let mut exact = Vec::new();
+        let mut prefix = Vec::new();
+        let mut substr = Vec::new();
         let text_bytes = text.as_bytes();
         let textsize = text.len() + 1;
 
         for (i, item) in self.items.iter().enumerate() {
-            if !tokens.iter().all(|tok| self.contains(&item.text, tok)) {
-                continue; // not all tokens match
+            // Headings structure the unfiltered list; they are not results.
+            if !tokens.is_empty() && !item.is_selectable() {
+                continue;
             }
-            if tokens.is_empty() || self.eq_n(text_bytes, item.text.as_bytes(), textsize) {
-                exact.push(i); /* exact matches always go first */
+            if !tokens
+                .iter()
+                .all(|token| self.contains(item.searchable_text(), token))
+            {
+                continue;
+            }
+            if tokens.is_empty() || self.eq_n(text_bytes, item.label().as_bytes(), textsize) {
+                exact.push(i);
             } else if self.mode == MatchMode::Dmenu {
-                /* dmenu mode also ranks prefixes, then substrings */
-                if self.eq_n(first_token.as_bytes(), item.text.as_bytes(), len) {
+                if self.eq_n(first_token.as_bytes(), item.label().as_bytes(), len) {
                     prefix.push(i);
                 } else {
                     substr.push(i);
@@ -189,27 +241,14 @@ impl Matcher {
         self.matches = exact;
         self.matches.extend(prefix);
         self.matches.extend(substr);
-
-        if self.auto_confirm && complete && self.matches.len() == 1 {
-            return MatchResult::AutoConfirm(self.matches[0]);
-        }
-        MatchResult::Listed
+        self.auto_confirm_result(complete)
     }
 
-    /// The fuzzy matcher: frizbee's Smith-Waterman with affine gaps, typo
-    /// tolerant — one typo per four query characters, so a slipped key still
-    /// finds its app. Scores break ties by input order, keeping pipeline
-    /// ordering (history, frecency) intact for equal matches.
     fn fuzzy_search(&mut self, text: &str, complete: bool) -> MatchResult {
         if text.is_empty() {
-            // empty query: everything matches. If auto-confirm is enabled and
-            // there is only one item, pick it immediately.
             self.matches.clear();
             self.matches.extend(0..self.items.len());
-            if self.auto_confirm && complete && self.matches.len() == 1 {
-                return MatchResult::AutoConfirm(self.matches[0]);
-            }
-            return MatchResult::Listed;
+            return self.auto_confirm_result(complete);
         }
 
         let max_typos = if self.auto_confirm {
@@ -225,17 +264,35 @@ impl Matcher {
                 frizbee::CaseMatching::Respect
             });
         let mut fuzzy = frizbee::Matcher::new(text, &config);
-        let haystacks: Vec<&str> = self.items.iter().map(|i| i.text.as_str()).collect();
+        let candidates: Vec<(usize, &str)> = self
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.is_selectable())
+            .map(|(index, item)| (index, item.searchable_text()))
+            .collect();
+        let haystacks: Vec<&str> = candidates.iter().map(|(_, text)| *text).collect();
         self.matches.clear();
         self.matches.extend(
             fuzzy
                 .match_list(&haystacks)
                 .into_iter()
-                .map(|m| m.index as usize),
+                .map(|matched| candidates[matched.index as usize].0),
         );
+        self.auto_confirm_result(complete)
+    }
 
-        if self.auto_confirm && complete && self.matches.len() == 1 {
-            return MatchResult::AutoConfirm(self.matches[0]);
+    /// Auto-confirm counts selectable results, not structural headings.
+    fn auto_confirm_result(&self, complete: bool) -> MatchResult {
+        if self.auto_confirm && complete {
+            let mut selectable = self
+                .matches
+                .iter()
+                .copied()
+                .filter(|&index| self.items[index].is_selectable());
+            if let (Some(only), None) = (selectable.next(), selectable.next()) {
+                return MatchResult::AutoConfirm(only);
+            }
         }
         MatchResult::Listed
     }
@@ -252,7 +309,14 @@ mod tests {
         Matcher::new(items.iter().map(|s| Item::new(*s)).collect(), &cfg)
     }
 
-    /// dmenu ranking: exact, then prefix, then substring.
+    #[test]
+    fn plain_items_reuse_their_input_allocation() {
+        let source = String::from("Display");
+        let source_ptr = source.as_ptr();
+        let item = Item::new(source);
+        assert_eq!(item.text.as_ptr(), source_ptr);
+    }
+
     #[test]
     fn dmenu_ranks_exact_prefix_substring() {
         let mut m = matcher(
@@ -263,8 +327,6 @@ mod tests {
         assert_eq!(m.matches, vec![1, 0, 2, 3]);
     }
 
-    /// Every whitespace-separated token must appear; token order does not
-    /// matter (strtok semantics).
     #[test]
     fn dmenu_tokens_are_and_combined() {
         let mut m = matcher(
@@ -276,48 +338,105 @@ mod tests {
     }
 
     #[test]
+    fn hidden_match_terms_work_without_changing_label_or_exact_rank() {
+        let mut m = matcher(
+            |c| c.match_mode = MatchMode::Dmenu,
+            &["{match='monitor screen'} Display", "monitor configuration"],
+        );
+        assert_eq!(m.items[0].label(), "Display");
+        m.search("Display", true);
+        assert_eq!(m.matches, vec![0]);
+        m.search("monitor", true);
+        assert_eq!(m.matches, vec![1, 0]);
+        m.search("screen", true);
+        assert_eq!(m.matches, vec![0]);
+    }
+
+    #[test]
+    fn hidden_match_terms_participate_in_fuzzy_matching() {
+        let mut m = matcher(|_| (), &["{match='monitor screen'} Display", "Terminal"]);
+        m.search("monitor", true);
+        assert_eq!(m.matches, vec![0]);
+        assert_eq!(m.text_of_match(0), "Display");
+    }
+
+    #[test]
     fn insensitive_matches_across_case() {
         let mut m = matcher(|c| c.insensitive = true, &["foo", "bar"]);
         assert_eq!(m.search("FOO", true), MatchResult::Listed);
         assert_eq!(m.matches, vec![0]);
     }
 
-    /// Smart case starts insensitive; one uppercase letter turns it
-    /// sensitive for good (the C flag was never reset). While insensitive,
-    /// frizbee still ranks the case-identical item first (matching_case_bonus).
     #[test]
     fn smart_case_flips_once_and_never_resets() {
         let mut m = matcher(|c| c.smart_case = true, &["FOO", "foo"]);
-        assert_eq!(m.search("foo", true), MatchResult::Listed);
+        m.search("foo", true);
         assert_eq!(m.matches, vec![1, 0]);
-
         m.note_uppercase("Foo");
-        assert_eq!(m.search("foo", true), MatchResult::Listed);
+        m.search("foo", true);
         assert_eq!(m.matches, vec![1]);
-
-        // lowercase input must not switch back
         m.note_uppercase("foo");
-        assert_eq!(m.search("foo", true), MatchResult::Listed);
+        m.search("foo", true);
         assert_eq!(m.matches, vec![1]);
     }
 
-    /// smart_case is off by default: matching is case-sensitive.
     #[test]
     fn default_matching_is_case_sensitive() {
         let mut m = matcher(|_| (), &["foo"]);
-        assert_eq!(m.search("FOO", true), MatchResult::Listed);
+        m.search("FOO", true);
         assert!(m.matches.is_empty());
     }
 
-    /// commented mode: the first query byte picks the first item starting
-    /// with it; an empty query falls through to the normal matcher.
     #[test]
-    fn commented_mode_picks_by_first_byte() {
-        let mut m = matcher(|c| c.commented = true, &["yes", "no", "maybe"]);
-        assert_eq!(m.search("n", true), MatchResult::CommentPick(Some(1)));
-        assert_eq!(m.search("zzz", true), MatchResult::CommentPick(None));
+    fn single_key_mode_uses_explicit_unicode_keys_and_returns_labels() {
+        let mut m = matcher(
+            |c| c.single_key = true,
+            &["{key=d} Display", "No key", "{key=λ} Lambda"],
+        );
         assert_eq!(m.search("", true), MatchResult::Listed);
+        assert_eq!(m.matches, vec![0, 2]);
+        assert_eq!(m.search("λ", true), MatchResult::SingleKeyPick(Some(2)));
+        assert_eq!(m.items[2].label(), "Lambda");
+        assert_eq!(m.search("x", true), MatchResult::SingleKeyPick(None));
+        assert_eq!(m.search("dd", true), MatchResult::SingleKeyPick(None));
+    }
+
+    #[test]
+    fn single_key_pick_waits_for_stream_completion() {
+        let mut m = matcher(|c| c.single_key = true, &["{key=n} Network"]);
+        assert_eq!(m.search("n", false), MatchResult::Listed);
+        assert_eq!(m.matches, vec![0]);
+        assert_eq!(m.search("n", true), MatchResult::SingleKeyPick(Some(0)));
+    }
+
+    #[test]
+    fn duplicate_single_keys_keep_input_order() {
+        let mut m = matcher(
+            |c| c.single_key = true,
+            &["{key=q} First", "{key=q} Second"],
+        );
+        assert_eq!(m.search("q", true), MatchResult::SingleKeyPick(Some(0)));
+    }
+
+    #[test]
+    fn headings_are_visible_only_before_filtering() {
+        let mut m = matcher(|_| (), &["{heading} Applications", "Display", "Terminal"]);
+        m.search("", true);
         assert_eq!(m.matches, vec![0, 1, 2]);
+        assert_eq!(m.first_selectable_match(), Some(1));
+        m.search("Application", true);
+        assert!(m.matches.is_empty());
+        m.search("Display", true);
+        assert_eq!(m.matches, vec![1]);
+    }
+
+    #[test]
+    fn auto_confirm_ignores_headings() {
+        let mut m = matcher(
+            |c| c.auto_confirm = true,
+            &["{heading} Applications", "Display"],
+        );
+        assert_eq!(m.search("", true), MatchResult::AutoConfirm(1));
     }
 
     #[test]
@@ -332,47 +451,23 @@ mod tests {
         assert_eq!(m.search("abc", true), MatchResult::AutoConfirm(0));
     }
 
-    /// Auto-confirm is based on the number of candidates, regardless of how
-    /// dmenu ranked the sole match. Menu entries commonly start with hidden
-    /// metadata or an icon, making the user's visible keyword a substring.
     #[test]
-    fn auto_confirm_mode_picks_the_single_substring_match() {
+    fn auto_confirm_mode_picks_match_metadata() {
         let mut m = matcher(
             |c| {
                 c.match_mode = MatchMode::Dmenu;
                 c.auto_confirm = true;
             },
-            &[":r:icon: shutdown", ":b:icon: reboot"],
+            &[
+                "{match=shutdown icon=power} Power off",
+                "{match=reboot icon=restart} Restart",
+            ],
         );
-        assert_eq!(m.search("shut", true), MatchResult::AutoConfirm(0));
-        assert_eq!(m.matches, vec![0]);
+        assert_eq!(m.search("shutdown", true), MatchResult::AutoConfirm(0));
     }
 
-    /// Empty query + single item in dmenu mode counts as an exact match and
-    /// fires auto-confirm mode...
     #[test]
-    fn auto_confirm_mode_fires_on_empty_dmenu_query() {
-        let mut m = matcher(
-            |c| {
-                c.match_mode = MatchMode::Dmenu;
-                c.auto_confirm = true;
-            },
-            &["only"],
-        );
-        assert_eq!(m.search("", true), MatchResult::AutoConfirm(0));
-    }
-
-    /// ...and fuzzy mode also fires auto-confirm mode on empty query with a single item.
-    #[test]
-    fn auto_confirm_mode_fires_on_empty_fuzzy_query() {
-        let mut m = matcher(|c| c.auto_confirm = true, &["only"]);
-        assert_eq!(m.search("", true), MatchResult::AutoConfirm(0));
-    }
-
-    /// While the corpus is still streaming in (`complete == false`), auto-confirm
-    /// is deferred: one match can still gain competitors.
-    #[test]
-    fn auto_confirm_pick_is_deferred_until_the_corpus_is_complete() {
+    fn auto_confirm_is_deferred_while_streaming() {
         let mut m = matcher(
             |c| {
                 c.match_mode = MatchMode::Dmenu;
@@ -381,70 +476,39 @@ mod tests {
             &["abc"],
         );
         assert_eq!(m.search("abc", false), MatchResult::Listed);
-        // the same query concludes once stdin has reached EOF
         assert_eq!(m.search("abc", true), MatchResult::AutoConfirm(0));
     }
 
-    /// Commented mode with an incomplete corpus falls back to normal
-    /// matching for display instead of picking (and exiting) by the first
-    /// byte — the item that would win may not have arrived yet.
-    #[test]
-    fn commented_pick_is_deferred_until_the_corpus_is_complete() {
-        let mut m = matcher(|c| c.commented = true, &["yes", "no", "maybe"]);
-        assert_eq!(m.search("n", false), MatchResult::Listed);
-        assert_eq!(m.matches, vec![1]); // normal matching filters instead
-        assert_eq!(m.search("n", true), MatchResult::CommentPick(Some(1)));
-    }
-
-    /// Fuzzy scores by subsequence position: same spread but a later start
-    /// ranks worse.
     #[test]
     fn fuzzy_ranks_tighter_matches_first() {
         let mut m = matcher(|_| (), &["foobar", "fobar"]);
-        assert_eq!(m.search("fb", true), MatchResult::Listed);
+        m.search("fb", true);
         assert_eq!(m.matches, vec![1, 0]);
     }
 
-    /// One typo per four query characters: a slipped key still matches,
-    /// two needle chars without a home are past the budget and filtered.
     #[test]
     fn fuzzy_tolerates_typos() {
         let mut m = matcher(|_| (), &["firefox", "thunderbird"]);
-        assert_eq!(m.search("firefx", true), MatchResult::Listed);
+        m.search("firefx", true);
         assert_eq!(m.matches, vec![0]);
         m.search("firxyx", true);
         assert!(m.matches.is_empty());
     }
 
-    /// Equal scores keep input order (stable ranking), so history/frecency
-    /// ordering survives equal-quality matches.
     #[test]
     fn fuzzy_ties_keep_input_order() {
         let mut m = matcher(|_| (), &["foo", "foo"]);
-        assert_eq!(m.search("foo", true), MatchResult::Listed);
+        m.search("foo", true);
         assert_eq!(m.matches, vec![0, 1]);
     }
 
-    /// Exact mode: only exact matches are listed (no prefix/substr ranking).
     #[test]
-    fn exact_mode_lists_only_exact_matches() {
-        let mut m = matcher(|c| c.match_mode = MatchMode::Exact, &["foo", "foobar"]);
-        assert_eq!(m.search("foo", true), MatchResult::Listed);
+    fn exact_mode_lists_only_exact_labels() {
+        let mut m = matcher(
+            |c| c.match_mode = MatchMode::Exact,
+            &["foo", "foobar", "{match=foo} hidden"],
+        );
+        m.search("foo", true);
         assert_eq!(m.matches, vec![0]);
-    }
-
-    /// Auto-confirm on single item at startup in fuzzy mode.
-    #[test]
-    fn auto_confirm_single_item_startup() {
-        let mut m = matcher(|c| c.auto_confirm = true, &["only_item"]);
-        assert_eq!(m.search("", true), MatchResult::AutoConfirm(0));
-    }
-
-    /// Auto-confirm in fuzzy mode picks the exact match without false positives from typos.
-    #[test]
-    fn auto_confirm_picks_single_fuzzy_match() {
-        let mut m = matcher(|c| c.auto_confirm = true, &["code", "cord", "cold"]);
-        // "code" matches only "code" in strict fuzzy mode (0 typos) -> AutoConfirm
-        assert_eq!(m.search("code", true), MatchResult::AutoConfirm(0));
     }
 }

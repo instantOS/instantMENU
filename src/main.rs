@@ -104,6 +104,9 @@ fn main() {
         if let Some(icon) = item.entry.icon {
             required_chars.insert(icon);
         }
+        if let Some(key) = item.entry.key {
+            required_chars.insert(key);
+        }
     }
     for text in [
         args.menu.initial_text.as_deref(),
@@ -295,9 +298,8 @@ fn apply_flags(args: &cli::Args, cfg: &mut Config) {
     if args.menu.reject_no_match {
         cfg.reject_no_match = true;
     }
-    if args.menu.commented {
-        cfg.commented = true;
-        cfg.prompt = Some("prompts".to_string());
+    if args.menu.single_key {
+        cfg.single_key = true;
     }
     if args.window.follow_cursor {
         cfg.follow_cursor = true;

@@ -1,4 +1,4 @@
-//! Icon resolution for `:color:icon: label` entries.
+//! Icon resolution for item metadata such as `{icon=power}`.
 //!
 //! The icon field of an entry may spell a glyph three ways, all resolved by
 //! [`lookup`]:

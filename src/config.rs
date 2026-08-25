@@ -294,8 +294,8 @@ pub struct Config {
     pub managed: bool,
     /* -r option; reject input that results in no match */
     pub reject_no_match: bool,
-    /* --commented option; instantASSIST mode */
-    pub commented: bool,
+    /* --single-key option; explicit single-key launcher mode */
+    pub single_key: bool,
     /* -m option; monitor index or auto (focus, then first monitor) */
     pub monitor: MonitorChoice,
     /* -x option: horizontal nudge from the anchor */
@@ -350,7 +350,7 @@ impl Default for Config {
             alt_tab: false,
             managed: false,
             reject_no_match: false,
-            commented: false,
+            single_key: false,
             monitor: MonitorChoice::Auto,
             x_offset: 0,
             y_offset: 0,

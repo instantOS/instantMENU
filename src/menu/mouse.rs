@@ -34,6 +34,9 @@ impl Menu {
         for (i, item) in (start..end).enumerate() {
             let cell = self.layout.grid_cell_rect(i, header.content_x);
             if cell.contains(pos) {
+                if !self.matcher.match_is_selectable(item) {
+                    return Transition::Nop;
+                }
                 if self.selection.selected == Some(item) {
                     return Transition::Nop;
                 }
@@ -51,6 +54,9 @@ impl Menu {
         for (i, item) in (start..end).enumerate() {
             let (top, bottom) = self.layout.row_band(i);
             if pos.y >= top && pos.y <= bottom {
+                if !self.matcher.match_is_selectable(item) {
+                    return Transition::Nop;
+                }
                 if self.selection.selected == Some(item) {
                     return Transition::Nop;
                 }
@@ -65,6 +71,9 @@ impl Menu {
     fn hover_horizontal(&mut self, pos: Point, header: &Header) -> Transition {
         for (item, rect) in self.horizontal_item_rects(header.content_x) {
             if rect.contains(pos) {
+                if !self.matcher.match_is_selectable(item) {
+                    return Transition::Nop;
+                }
                 if self.selection.selected == Some(item) {
                     return Transition::Nop;
                 }
@@ -98,12 +107,15 @@ impl Menu {
     pub(super) fn scroll(&mut self, delta: i32) -> Transition {
         if delta < 0 {
             if self.paging.prev != 0 || self.selection.page_start.map(|c| c > 0).unwrap_or(false) {
-                self.selection = paging::scroll_up(&self.selection, &self.paging);
+                let page = paging::scroll_up(&self.selection, &self.paging)
+                    .page_start
+                    .unwrap_or(0);
+                self.select_page(page);
                 self.recalc_paging();
                 return Transition::Redraw;
             }
         } else if let Some(next) = self.paging.next {
-            self.selection = paging::at(next);
+            self.select_page(next);
             self.recalc_paging();
             return Transition::Redraw;
         }
@@ -138,21 +150,37 @@ impl Menu {
             let t = self.insert(EditOp::Delete(self.editor.cursor));
             return t.at_least_redraw();
         } else if self.layout.lines > 0 {
-            return self.vertical_click(mods);
+            return self.vertical_click(mods, pos, &header);
         } else if !self.matcher.matches.is_empty() {
             return self.horizontal_click(mods, pos, &header);
         }
         Transition::Nop
     }
 
-    /// left-click on a vertical list item.
-    fn vertical_click(&mut self, mods: Modifiers) -> Transition {
-        if self.selected_is_comment() {
+    /// Left-click a vertical/grid cell. Resolve the clicked item directly;
+    /// motion events are not guaranteed to precede a button press.
+    fn vertical_click(&mut self, mods: Modifiers, pos: Point, header: &Header) -> Transition {
+        let start = self.selection.page_start.unwrap_or(0);
+        let end = self.paging.next.unwrap_or(self.matcher.matches.len());
+        let clicked = (start..end).enumerate().find_map(|(i, item)| {
+            let hit = if self.layout.columns > 0 {
+                self.layout
+                    .grid_cell_rect(i, header.content_x)
+                    .contains(pos)
+            } else {
+                let (top, bottom) = self.layout.row_band(i);
+                pos.y >= top && pos.y <= bottom
+            };
+            hit.then_some(item)
+        });
+        let Some(clicked) = clicked else {
+            return Transition::Nop;
+        };
+        if !self.matcher.match_is_selectable(clicked) {
             return Transition::Nop;
         }
-        let out = self
-            .selected_text()
-            .unwrap_or_else(|| self.editor.text.clone());
+        self.selection.selected = Some(clicked);
+        let out = self.matcher.text_of_match(clicked).to_string();
         self.confirm(&out, mods).at_least_redraw()
     }
 
@@ -166,16 +194,12 @@ impl Menu {
             self.recalc_paging();
             return Transition::Redraw;
         }
-        'items: for (item, rect) in self.horizontal_item_rects(header.content_x) {
+        for (item, rect) in self.horizontal_item_rects(header.content_x) {
             if rect.contains(pos) {
-                let item_text = self.matcher.text_of_match(item).to_string();
-                let is_comment = self.matcher.items[self.matcher.matches[item]]
-                    .entry
-                    .kind
-                    .is_comment();
-                if is_comment && self.selected_text_ref().is_some_and(|t| !t.is_empty()) {
-                    break 'items;
+                if !self.matcher.match_is_selectable(item) {
+                    return Transition::Nop;
                 }
+                let item_text = self.matcher.text_of_match(item).to_string();
                 self.selection.selected = Some(item);
                 return self.confirm(&item_text, mods).at_least_redraw();
             }
@@ -183,7 +207,7 @@ impl Menu {
         /* right arrow: turn forward one page, selecting the page top */
         if self.paging.next.is_some() && header.right_arrow.contains(pos) {
             let next = self.paging.next.unwrap();
-            self.selection = paging::at(next);
+            self.select_page(next);
             self.recalc_paging();
             return Transition::Redraw;
         }

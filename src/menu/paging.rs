@@ -17,6 +17,7 @@ pub(super) struct Selection {
 impl Selection {
     /// After a re-match the list restarts at the top: page_start = 0 when there
     /// are matches, and the selection follows.
+    #[cfg(test)]
     pub fn from_match(match_count: usize) -> Self {
         let top = (match_count > 0).then_some(0);
         Selection {
@@ -124,6 +125,7 @@ pub(super) fn retreat(sel: &Selection, paging: &Paging) -> (Selection, bool) {
 
 /// A selection parked on `pos`: both the highlight and the page window start
 /// there (wheel down, PageDown and PageUp all land like this).
+#[cfg(test)]
 pub(super) fn at(pos: usize) -> Selection {
     Selection {
         selected: Some(pos),
@@ -291,7 +293,7 @@ mod tests {
         // its 20px label plus a 30px gutter, so it and one 20px plain item
         // fit. Measuring its 120px source spelling would turn a page early.
         let lay = layout(0, 1, 30, 200);
-        let its = items(&[":r:power: aa", "bb", "cc"]);
+        let its = items(&["{red icon=power} aa", "bb", "cc"]);
         let matches: Vec<usize> = (0..3).collect();
         let sel = Selection {
             selected: Some(0),

@@ -5,7 +5,6 @@
 //! fixed-width fakes.
 
 use super::matcher::Item;
-use crate::entry::ItemKind;
 use crate::render::Renderer;
 
 /// Width reserved for the colored icon block at the start of an icon item.
@@ -24,7 +23,7 @@ pub(super) trait Measure {
     /// when the parsed entry is an icon item.
     fn item_cell_width(&mut self, item: &Item) -> i32 {
         self.cell_width(item.label())
-            + if item.entry.kind == ItemKind::Icon {
+            + if item.entry.icon.is_some() {
                 self.icon_gutter_width()
             } else {
                 0
@@ -51,21 +50,21 @@ pub(super) trait Measure {
     }
 }
 
-/// [`Measure`] over the shared renderer. In commented mode every text is a
+/// [`Measure`] over the shared renderer. In single-key mode every key is a
 /// square cell of the bar height.
 pub(super) struct TextMeasurer<'a> {
     renderer: &'a mut Renderer,
-    commented: bool,
+    single_key: bool,
     bar_height: i32,
 }
 
 impl<'a> TextMeasurer<'a> {
     /// Built from disjoint menu fields so callers can hold it alongside
     /// borrows of the item and selection state.
-    pub(super) fn new(renderer: &'a mut Renderer, commented: bool, bar_height: i32) -> Self {
+    pub(super) fn new(renderer: &'a mut Renderer, single_key: bool, bar_height: i32) -> Self {
         TextMeasurer {
             renderer,
-            commented,
+            single_key,
             bar_height,
         }
     }
@@ -73,7 +72,7 @@ impl<'a> TextMeasurer<'a> {
 
 impl Measure for TextMeasurer<'_> {
     fn cell_width(&mut self, s: &str) -> i32 {
-        if self.commented {
+        if self.single_key {
             self.bar_height
         } else {
             self.renderer.text_width(s) + self.renderer.horizontal_padding

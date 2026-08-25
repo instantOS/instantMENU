@@ -380,7 +380,7 @@ fn password_mode_never_records() {
     assert!(!path.exists());
 }
 
-/* ── auto-confirm and commented modes ───────────────────────────────────── */
+/* ── auto-confirm and single-key modes ──────────────────────────────────── */
 
 /// -n: typing down to a single fuzzy match prints it and exits mid-edit.
 #[test]
@@ -396,23 +396,21 @@ fn auto_confirm_mode_picks_while_typing() {
     );
 }
 
-/// -ct: the first typed byte picks the first item starting with it; a byte
-/// no item starts with exits. (The first edit stays applied, so a second
-/// keystroke still decides by the first byte — the menu would have exited
-/// already in production.)
+/// --single-key uses explicit key metadata and returns only the label.
 #[test]
-fn commented_mode_picks_by_first_byte() {
+fn single_key_mode_picks_by_explicit_key() {
     let cfg = Config {
-        commented: true,
+        single_key: true,
         ..Config::default()
     };
-    let (mut menu, _stub, _out) = menu_with(cfg.clone(), &["yes", "no"]);
+    let (mut menu, _stub, _out) =
+        menu_with(cfg.clone(), &["{key=y} Yes", "Not keyed", "{key=n} No"]);
     assert_eq!(
         menu.key_press(0, M_NONE, "n"),
-        Transition::PrintAndExit("no".into())
+        Transition::PrintAndExit("No".into())
     );
 
-    let (mut menu, _stub, _out) = menu_with(cfg.clone(), &["yes", "no"]);
+    let (mut menu, _stub, _out) = menu_with(cfg, &["{key=y} Yes", "{key=n} No"]);
     assert_eq!(
         menu.key_press(0, M_NONE, "x"),
         Transition::Exit(ExitStatus::Success)
@@ -546,6 +544,65 @@ fn vertical_hover_and_click() {
     assert_eq!(
         menu.button_press(MouseButton::Left, M_NONE, pos),
         Transition::PrintAndExit("beta".into())
+    );
+}
+
+#[test]
+fn headings_are_structural_and_navigation_skips_them() {
+    let items = [
+        "{heading blue} Applications",
+        "Display",
+        "{heading green} Tools",
+        "Terminal",
+    ];
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &items);
+    menu.layout.lines = 4;
+    let _ = menu.do_match();
+
+    assert_eq!(menu.matcher.matches, vec![0, 1, 2, 3]);
+    assert_eq!(menu.selection.selected, Some(1));
+    key(&mut menu, ks::KEY_Down, M_NONE);
+    assert_eq!(menu.selection.selected, Some(3));
+    key(&mut menu, ks::KEY_Up, M_NONE);
+    assert_eq!(menu.selection.selected, Some(1));
+    assert_eq!(
+        key(&mut menu, ks::KEY_Return, M_NONE),
+        Transition::PrintAndExit("Display".into())
+    );
+}
+
+#[test]
+fn headings_ignore_hover_and_click_but_actions_do_not() {
+    let items = ["{heading} Applications", "Display"];
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &items);
+    menu.layout.lines = 2;
+    let _ = menu.do_match();
+    assert_eq!(menu.selection.selected, Some(1));
+
+    let heading = Point::new(10, 35);
+    assert_eq!(menu.set_selection(heading), Transition::Nop);
+    assert_eq!(
+        menu.button_press(MouseButton::Left, M_NONE, heading),
+        Transition::Nop
+    );
+    assert_eq!(menu.selection.selected, Some(1));
+
+    let action = Point::new(10, 65);
+    assert_eq!(
+        menu.button_press(MouseButton::Left, M_NONE, action),
+        Transition::PrintAndExit("Display".into())
+    );
+}
+
+#[test]
+fn metadata_is_hidden_from_completion_and_output() {
+    let source = "{red icon=display match='monitor screen'} Display";
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &[source]);
+    assert_eq!(key(&mut menu, ks::KEY_Tab, M_NONE), Transition::Redraw);
+    assert_eq!(menu.editor.text, "Display");
+    assert_eq!(
+        key(&mut menu, ks::KEY_Return, M_NONE),
+        Transition::PrintAndExit("Display".into())
     );
 }
 
@@ -1097,7 +1154,7 @@ fn slide_paints_the_fill_with_the_selected_background() {
     assert_eq!(pixel(&menu, 2, 10), bgra(normal.bg));
 }
 
-/// The icon cell of a `:X ` item spans the full bar height: the gutter is
+/// An icon cell spans the full bar height: the gutter is
 /// painted with the item's scheme down to the row's bottom edge and, for
 /// the selected item, the detail strip sits at the bottom of the row like
 /// every other cell. Regression: the icon cell was drawn at only
@@ -1106,7 +1163,7 @@ fn slide_paints_the_fill_with_the_selected_background() {
 /// the top of the row.
 #[test]
 fn icon_cell_spans_the_full_bar_height() {
-    let (mut menu, _stub, _out) = menu_with(Config::default(), &[":b:\u{f011}: Shutdown"]);
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &["{blue icon=power-off} Shutdown"]);
     menu.layout.lines = 1;
     menu.layout.menu_height = 240;
     menu.canvas.resize(Size::new(600, 240));
@@ -1136,10 +1193,10 @@ fn icon_cell_spans_the_full_bar_height() {
 }
 
 /// Icon geometry is based on what draw_item paints, not the potentially long
-/// color/name prefix retained in the source item.
+/// metadata prefix retained in the source item.
 #[test]
 fn icon_item_measurement_uses_label_plus_gutter() {
-    let source = ":red:md-power_off: Label";
+    let source = "{red icon=md-power_off} Label";
     let (mut menu, _stub, _out) = menu_with(Config::default(), &[source]);
     let label_width = menu.cell_width("Label");
     let gutter_width = menu.renderer.font_height * 3;

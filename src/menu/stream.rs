@@ -381,9 +381,9 @@ mod tests {
         assert!(p.finish().is_empty());
     }
 
-    /// ONE trailing tab per line is stripped (the comment separator).
+    /// One historical trailing tab per line is stripped.
     #[test]
-    fn parser_strips_one_trailing_tab() {
+    fn parser_preserves_inner_tabs_and_strips_one_trailing_tab() {
         let mut p = LineParser::default();
         assert_eq!(
             p.feed(b"name\tcomment\t\nx\t\n"),

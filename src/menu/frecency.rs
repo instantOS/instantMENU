@@ -126,15 +126,27 @@ impl Frecency {
         }
     }
 
-    /// Reorder `items` best-frecency first. Stable: ties and unseen items
-    /// keep their stdin order, and everything cached (still above zero
-    /// after decay) sorts before the unseen.
+    /// Reorder selectable items best-frecency first within each heading
+    /// section. Headings remain fixed boundaries, so ranking can never detach
+    /// a section title from its entries. Ties and unseen items are stable.
     pub(super) fn rank(&self, items: &mut [Item], now: SystemTime) {
-        items.sort_by(|a, b| {
-            let sa = self.score_of(&a.text, now);
-            let sb = self.score_of(&b.text, now);
-            sb.total_cmp(&sa)
-        });
+        let mut start = 0;
+        while start < items.len() {
+            if items[start].entry.is_heading() {
+                start += 1;
+                continue;
+            }
+            let end = items[start..]
+                .iter()
+                .position(|item| item.entry.is_heading())
+                .map_or(items.len(), |offset| start + offset);
+            items[start..end].sort_by(|a, b| {
+                let sa = self.score_of(&a.text, now);
+                let sb = self.score_of(&b.text, now);
+                sb.total_cmp(&sa)
+            });
+            start = end;
+        }
     }
 
     fn score_of(&self, text: &str, now: SystemTime) -> f64 {
@@ -282,6 +294,29 @@ mod tests {
         f.rank(&mut items, secs(10 * day));
         let texts: Vec<&str> = items.iter().map(|i| i.text.as_str()).collect();
         assert_eq!(texts, vec!["fresh", "stale", "unseen"]);
+    }
+
+    #[test]
+    fn rank_preserves_heading_sections() {
+        let f = store(&[("beta", 1.0, 100), ("delta", 2.0, 100)]);
+        let mut items: Vec<Item> = [
+            "{heading} First",
+            "alpha",
+            "beta",
+            "{heading} Second",
+            "gamma",
+            "delta",
+        ]
+        .iter()
+        .map(|text| Item::new(*text))
+        .collect();
+
+        f.rank(&mut items, secs(100));
+        let labels: Vec<&str> = items.iter().map(Item::label).collect();
+        assert_eq!(
+            labels,
+            vec!["First", "beta", "alpha", "Second", "delta", "gamma"]
+        );
     }
 
     /// Render/parse roundtrip, including tabs and backslashes in the text.

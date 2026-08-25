@@ -84,7 +84,7 @@ pub struct Menu {
     /// pipe, a tty, or a mode that ignores stdin). Stays set after EOF.
     stream_fd: RawFd,
     /// stdin reached end-of-file: the corpus is final and pick conclusions
-    /// (auto-confirm/commented/pre-match) may fire.
+    /// (auto-confirm/single-key/pre-match) may fire.
     stream_eof: bool,
     /// EOF has been settled (rematch + final draw done) exactly once.
     stream_finalized: bool,
@@ -113,8 +113,8 @@ pub struct Menu {
     /// y of the selected row, noted during drawing for the selection
     /// animation.
     pub(in crate::menu) selected_y: i32,
-    /// dynamic prompt in commented mode (`prompt = selected->text + 1`)
-    pub(in crate::menu) comment_prompt: Option<String>,
+    /// Dynamic label prompt in single-key mode.
+    pub(in crate::menu) single_key_prompt: Option<String>,
 
     out: Box<dyn Write>,
 }
@@ -154,7 +154,7 @@ impl Menu {
             match_counter_text: String::new(),
             show_match_counter: false,
             selected_y: 0,
-            comment_prompt: None,
+            single_key_prompt: None,
             out: Box::new(std::io::stdout()),
         }
     }
@@ -173,6 +173,9 @@ impl Menu {
             self.pending_chars.extend(item.text.chars());
             if let Some(icon) = item.entry.icon {
                 self.pending_chars.insert(icon);
+            }
+            if let Some(key) = item.entry.key {
+                self.pending_chars.insert(key);
             }
         }
         let start = self.matcher.items.len();
@@ -196,7 +199,7 @@ impl Menu {
     }
 
     /// True when the item corpus is final: nothing streams, or EOF was seen.
-    /// Pick conclusions (auto-confirm/commented/pre-match) and reject-no-match
+    /// Pick conclusions (auto-confirm/single-key/pre-match) and reject-no-match
     /// only act on a complete corpus — mid-stream they would answer from a
     /// prefix of the data.
     pub(super) fn stream_complete(&self) -> bool {
@@ -272,9 +275,14 @@ impl Menu {
                     .then_some(self.selection.selected)
                     .flatten()
                     .filter(|&pos| pos < self.matcher.matches.len());
-                self.selection = Selection::from_match(self.matcher.matches.len());
+                self.selection = Selection {
+                    selected: self.matcher.first_selectable_match(),
+                    page_start: (!self.matcher.matches.is_empty()).then_some(0),
+                };
                 if let Some(pos) = keep {
-                    self.selection.selected = Some(pos);
+                    if self.matcher.match_is_selectable(pos) {
+                        self.selection.selected = Some(pos);
+                    }
                 }
                 self.recalc_paging();
                 Transition::Nop
@@ -282,7 +290,7 @@ impl Menu {
             MatchResult::AutoConfirm(idx) => {
                 Transition::PrintAndExit(self.matcher.items[idx].text.clone())
             }
-            MatchResult::CommentPick(pick) => match pick {
+            MatchResult::SingleKeyPick(pick) => match pick {
                 Some(idx) => Transition::PrintAndExit(self.matcher.items[idx].text.clone()),
                 None => Transition::Exit(ExitStatus::Success),
             },
@@ -291,27 +299,67 @@ impl Menu {
 
     /// Move the selection one item forward, paging when it crosses `next`.
     pub(in crate::menu) fn select_next(&mut self) {
-        let (sel, turned) =
-            paging::advance(&self.selection, self.matcher.matches.len(), &self.paging);
-        self.selection = sel;
-        if turned {
-            self.recalc_paging();
+        loop {
+            let (sel, turned) =
+                paging::advance(&self.selection, self.matcher.matches.len(), &self.paging);
+            if sel == self.selection {
+                break;
+            }
+            self.selection = sel;
+            if turned {
+                self.recalc_paging();
+            }
+            if self
+                .selection
+                .selected
+                .is_some_and(|pos| self.matcher.match_is_selectable(pos))
+            {
+                break;
+            }
         }
     }
 
     /// Move the selection one item backward, paging when it crosses `prev`.
     pub(in crate::menu) fn select_prev(&mut self) {
-        let (sel, turned) = paging::retreat(&self.selection, &self.paging);
-        self.selection = sel;
-        if turned {
-            self.recalc_paging();
+        loop {
+            let (sel, turned) = paging::retreat(&self.selection, &self.paging);
+            if sel == self.selection {
+                break;
+            }
+            self.selection = sel;
+            if turned {
+                self.recalc_paging();
+            }
+            if self
+                .selection
+                .selected
+                .is_some_and(|pos| self.matcher.match_is_selectable(pos))
+            {
+                break;
+            }
         }
+    }
+
+    /// Start a page at `pos` and select its first selectable item. A trailing
+    /// heading cannot trap selection: fall back to the preceding action.
+    pub(in crate::menu) fn select_page(&mut self, pos: usize) {
+        let selected = (pos..self.matcher.matches.len())
+            .find(|&candidate| self.matcher.match_is_selectable(candidate))
+            .or_else(|| {
+                (0..pos)
+                    .rev()
+                    .find(|&candidate| self.matcher.match_is_selectable(candidate))
+            });
+        self.selection = Selection {
+            selected,
+            page_start: (!self.matcher.matches.is_empty()).then_some(pos),
+        };
     }
 
     pub(in crate::menu) fn recalc_paging(&mut self) {
         let mut m = TextMeasurer::new(
             &mut self.renderer,
-            self.cfg.commented,
+            self.cfg.single_key,
             self.layout.bar_height,
         );
         self.paging = paging::calc_paging(
@@ -335,14 +383,10 @@ impl Menu {
         self.selected_text_ref().map(str::to_owned)
     }
 
-    /// The selected item is a non-selectable comment (starts with '>').
-    pub(in crate::menu) fn selected_is_comment(&self) -> bool {
-        self.selection.selected.is_some_and(|pos| {
-            self.matcher.items[self.matcher.matches[pos]]
-                .entry
-                .kind
-                .is_comment()
-        })
+    pub(in crate::menu) fn selected_is_heading(&self) -> bool {
+        self.selection
+            .selected
+            .is_some_and(|pos| !self.matcher.match_is_selectable(pos))
     }
 
     /// Confirm the selection: animate, print, exit unless Ctrl is held, and
@@ -378,31 +422,34 @@ impl Menu {
     pub(in crate::menu) fn cell_width(&mut self, s: &str) -> i32 {
         TextMeasurer::new(
             &mut self.renderer,
-            self.cfg.commented,
+            self.cfg.single_key,
             self.layout.bar_height,
         )
         .cell_width(s)
     }
 
     /// Widest item cell width, measured through the same seam as paging and
-    /// layout so the commented-mode square-cell rule lives in one place.
+    /// layout so the single-key square-cell rule lives in one place.
     pub(in crate::menu) fn max_cell_width(&mut self) -> i32 {
         let mut m = TextMeasurer::new(
             &mut self.renderer,
-            self.cfg.commented,
+            self.cfg.single_key,
             self.layout.bar_height,
         );
         let mut len = 0;
         for item in &self.matcher.items {
+            if self.cfg.single_key && item.entry.key.is_none() {
+                continue;
+            }
             len = len.max(m.item_cell_width(item));
         }
         len
     }
 
-    /// The effective prompt (static -p value, or the dynamic commented-mode
+    /// The effective prompt (static -p value, or the dynamic single-key
     /// prompt which follows the selected item).
     pub(in crate::menu) fn prompt(&self) -> Option<&str> {
-        match &self.comment_prompt {
+        match &self.single_key_prompt {
             Some(dynamic) => Some(dynamic.as_str()),
             None => self.cfg.prompt.as_deref(),
         }
@@ -424,7 +471,7 @@ impl Menu {
         let has_matches = !self.matcher.matches.is_empty();
         let mut m = TextMeasurer::new(
             &mut self.renderer,
-            self.cfg.commented,
+            self.cfg.single_key,
             self.layout.bar_height,
         );
         Header::compute(
@@ -448,7 +495,7 @@ impl Menu {
         let input_width = self.layout.input_width;
         let menu_width = self.layout.menu_width;
         let bar_height = self.layout.bar_height;
-        let mut m = TextMeasurer::new(&mut self.renderer, self.cfg.commented, bar_height);
+        let mut m = TextMeasurer::new(&mut self.renderer, self.cfg.single_key, bar_height);
         let mut x = x + input_width + m.cell_width("<");
         let mut rects = Vec::with_capacity(end.saturating_sub(start));
         for pos in start..end {

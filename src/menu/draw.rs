@@ -4,7 +4,7 @@
 use super::layout::Header;
 use super::measure::icon_gutter_width;
 use super::{Menu, LEFT_GLYPH, RIGHT_GLYPH};
-use crate::entry::{ItemEntry, ItemKind};
+use crate::entry::ItemEntry;
 use crate::enums::{ColorRole, Scheme};
 use crate::geom::Rect;
 use crate::render::TextStyle;
@@ -12,12 +12,12 @@ use crate::render::TextStyle;
 impl Menu {
     /// recalculate_match_counter
     fn recalculate_match_counter(&mut self) {
-        let match_count = self.matcher.matches.len();
+        let match_count = self.matcher.selectable_match_count();
         if self.cfg.toast.is_some() {
             self.show_match_counter = false;
             return;
         }
-        let item_count = self.matcher.items.len();
+        let item_count = self.matcher.selectable_item_count();
         if match_count > 1 {
             if self.layout.lines > 1 {
                 self.show_match_counter = match_count > self.layout.lines as usize;
@@ -37,88 +37,73 @@ impl Menu {
         let entry = self.matcher.items[index].entry;
         let text = self.matcher.items[index].text.clone();
 
-        let scheme = match entry.kind {
-            ItemKind::Plain => {
-                // plain item: the scheme follows selection/output state
-                if is_selected {
-                    Scheme::Selected
-                } else if self.matcher.items[index].already_output {
-                    Scheme::Output
-                } else {
-                    Scheme::Normal
-                }
-            }
-            ItemKind::Comment => Scheme::Normal,
-            ItemKind::ColoredComment => entry.scheme.unwrap_or(Scheme::Normal),
-            // a colored item shows its color only while selected
-            ItemKind::Colored => {
-                if is_selected {
-                    entry.scheme.unwrap_or(Scheme::Selected)
-                } else {
-                    Scheme::Normal
-                }
-            }
-            // an icon entry's gutter carries its color at all times
-            ItemKind::Icon => entry.scheme.unwrap_or(Scheme::Normal),
+        let scheme = if entry.heading || entry.icon.is_some() {
+            entry.scheme.unwrap_or(if is_selected {
+                Scheme::Selected
+            } else {
+                Scheme::Normal
+            })
+        } else if is_selected {
+            entry.scheme.unwrap_or(Scheme::Selected)
+        } else if self.matcher.items[index].already_output {
+            Scheme::Output
+        } else {
+            Scheme::Normal
         };
         self.renderer.set_scheme(scheme);
 
         let mut temp_padding = 0;
-        if entry.kind == ItemKind::Icon {
+        if entry.icon.is_some() {
             temp_padding = self.draw_icon(entry, is_selected, cell.x, cell.y);
+            if entry.heading {
+                self.renderer
+                    .set_scheme(entry.scheme.unwrap_or(Scheme::Normal));
+            }
         }
 
-        let output: &str = if self.cfg.commented {
-            // single letter display (the full first UTF-8 char; a raw byte
-            // cut would panic on multi-byte text)
-            match text.chars().next() {
-                Some(c) => &text[..c.len_utf8()],
-                None => "",
-            }
+        let shown = if self.cfg.single_key {
+            entry.key.map(|key| key.to_string()).unwrap_or_default()
         } else {
-            // the label the entry's prefix leaves
-            text.get(entry.label..).unwrap_or("")
+            text
         };
-        let shown = output;
 
         if is_selected {
             self.selected_y = cell.y;
         }
 
         let label_x = cell.x
-            + if entry.kind == ItemKind::Icon {
+            + if entry.icon.is_some() {
                 temp_padding
             } else {
                 0
             };
-        let label_w = if self.cfg.commented {
+        let label_w = if self.cfg.single_key {
             self.layout.bar_height
         } else {
             cell.w
-                - if entry.kind == ItemKind::Icon {
+                - if entry.icon.is_some() {
                     temp_padding
                 } else {
                     0
                 }
         };
-        let left_padding = if self.cfg.commented {
-            (self.layout.bar_height - self.renderer.text_width(output)) / 2
+        let left_padding = if self.cfg.single_key {
+            (self.layout.bar_height - self.renderer.text_width(&shown)) / 2
         } else {
             self.renderer.cell_inset()
         };
 
-        let style = if entry.kind == ItemKind::ColoredComment || is_selected {
+        let style = if entry.heading || is_selected {
             TextStyle::Accented
         } else {
             TextStyle::Normal
         };
         let rect = Rect::new(label_x, cell.y, label_w, self.layout.bar_height);
         let mut p = self.painter();
-        p.draw_text_styled(rect, left_padding, shown, style);
+        p.draw_text_styled(rect, left_padding, &shown, style);
     }
 
-    /// Draw the icon gutter of a `:color:icon: label` entry at the row's
-    /// left edge; returns the
+    /// Draw an item's icon gutter at the row's left edge; returns the
     /// cell padding it used. The gutter spans the full bar height (the
     /// `--line-height` value only sets the *minimum* row height), so the
     /// glyph is vertically centered like the label and the accent strip
@@ -155,7 +140,7 @@ impl Menu {
         }
         let font_height = self.renderer.font_height;
 
-        self.update_commented_prompt();
+        self.update_single_key_prompt();
 
         let scheme_norm = self.renderer.color_scheme(Scheme::Normal);
         let mut p = self.painter();
@@ -180,12 +165,10 @@ impl Menu {
         self.backend.present(&self.canvas);
     }
 
-    /// commented mode: the prompt follows the selected item.
-    fn update_commented_prompt(&mut self) {
-        if self.cfg.commented && !self.matcher.matches.is_empty() {
-            let selected_text = self.selected_text().unwrap_or_default();
-            let stripped = selected_text.get(1..).unwrap_or("");
-            self.comment_prompt = Some(stripped.to_string());
+    /// Single-key mode: the prompt follows the selected item's full label.
+    fn update_single_key_prompt(&mut self) {
+        if self.cfg.single_key && !self.matcher.matches.is_empty() {
+            self.single_key_prompt = Some(self.selected_text().unwrap_or_default());
         }
     }
 
@@ -234,7 +217,7 @@ impl Menu {
         }
 
         /* Cursor x = the width of the text before the cursor (full minus suffix). */
-        let mut cursor_position = if self.cfg.commented {
+        let mut cursor_position = if self.cfg.single_key {
             0
         } else {
             self.renderer.text_width(&self.editor.text)

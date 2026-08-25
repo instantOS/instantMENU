@@ -16,7 +16,7 @@ impl Menu {
     /// stdin fd alongside the backend and settles coalesced batches at the
     /// top of every iteration — so handler `continue`s can never starve a
     /// pending settle. EOF settles once with the deferred conclusions
-    /// (instant/commented picks, pre-match, preselection).
+    /// (instant/single-key picks, pre-match, preselection).
     pub fn run(&mut self) -> ExitStatus {
         if self.slider.is_some() {
             return self.run_slide();

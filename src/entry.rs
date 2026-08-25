@@ -1,173 +1,290 @@
-//! Parsing of item line prefixes: how a line renders — a plain item, a
-//! `>` comment, a colored item, or an icon entry — and where its label
-//! starts inside the text.
+//! Parsing for instantMENU's line-oriented item format.
 //!
-//! Styled entries use colon-delimited fields (readable by humans and
-//! unambiguous for the scripts and agents that produce them):
+//! A plain line is both the visible label and the value written to stdout:
 //!
 //! ```text
-//! :red:power: Shutdown
-//! : green : power-off :     Shutdown now
-//! :green: A colored entry without an icon
+//! Display
 //! ```
 //!
-//! Whitespace around each colon is tolerated and leading label whitespace is
-//! skipped. The color is a scheme name or single-letter code; the optional
-//! icon is a Nerd Fonts glyph, its name, or a hex codepoint (see
-//! [`crate::icons`]). A styled entry whose color or icon does not resolve is
-//! a plain item showing the **exact** original line.
+//! An optional leading attribute block adds presentation and matching
+//! metadata without becoming part of the label or output:
+//!
+//! ```text
+//! {blue icon=display key=d match="monitor screen"} Display
+//! {heading green} System actions
+//! ```
+//!
+//! Attributes are whitespace-separated. Values containing whitespace may be
+//! single- or double-quoted; a backslash quotes the following character.
+//! Known color names are shorthand for `color=<name>`, so `{red}` and
+//! `{color=red}` are equivalent. A line is interpreted as markup only when
+//! the complete leading block is valid; otherwise it remains literal text.
 
 use crate::enums::Scheme;
 use crate::icons;
 
-/// How an item line renders.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ItemKind {
-    /// A plain item: the whole line is the label.
-    #[default]
-    Plain,
-    /// `>comment`: drawn like an item but cannot be selected or activated.
-    Comment,
-    /// `>>c comment`: a comment drawn in its color scheme.
-    ColoredComment,
-    /// `:color: label`: an item in its color scheme.
-    Colored,
-    /// An icon entry: a colored icon gutter left of the label.
-    Icon,
-}
-
-impl ItemKind {
-    /// `>`-prefixed items can not be selected/activated.
-    pub fn is_comment(self) -> bool {
-        matches!(self, ItemKind::Comment | ItemKind::ColoredComment)
-    }
-}
-
-/// A parsed item line. [`Copy`]: drawn once per frame per visible item.
-/// The default is the plain item.
+/// Parsed metadata which affects one menu item.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ItemEntry {
-    pub kind: ItemKind,
-    /// The scheme the prefix selects (None for plain items and plain
-    /// comments — their scheme follows selection/output state).
+    /// Optional item color. On ordinary items it is used while selected; an
+    /// icon gutter or heading carries it at all times.
     pub scheme: Option<Scheme>,
-    /// The resolved icon glyph of an [`ItemKind::Icon`] entry.
+    /// Optional glyph drawn in the icon gutter.
     pub icon: Option<char>,
-    /// Byte offset of the label inside the item text.
-    pub label: usize,
+    /// Explicit activation key used by `--single-key` mode.
+    pub key: Option<char>,
+    /// Structural, non-selectable heading row.
+    pub heading: bool,
 }
 
-/// The plain item: label = the whole line.
-fn plain() -> ItemEntry {
-    ItemEntry {
-        kind: ItemKind::Plain,
-        scheme: None,
-        icon: None,
-        label: 0,
+impl ItemEntry {
+    pub fn is_heading(self) -> bool {
+        self.heading
     }
 }
 
-/// Parse an item line. See the module docs for the accepted spellings.
-pub fn parse(text: &str) -> ItemEntry {
-    match text.as_bytes().first() {
-        Some(b'>') => parse_comment(text),
-        Some(b':') => parse_colored(text),
-        _ => plain(),
-    }
+/// The borrowed result of parsing one source line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedItem<'a> {
+    /// Visible label and default output value.
+    pub label: &'a str,
+    /// Extra text used only for regular-menu matching.
+    pub match_text: Option<String>,
+    pub entry: ItemEntry,
 }
 
-/// `>comment` (label starts after `>`) and `>>c comment` (label after the
-/// color code; an unknown code falls back to a plain comment).
-fn parse_comment(text: &str) -> ItemEntry {
-    let bytes = text.as_bytes();
-    if bytes.get(1) == Some(&b'>') {
-        match comment_scheme(bytes.get(2).copied()) {
-            Some(scheme) => ItemEntry {
-                kind: ItemKind::ColoredComment,
-                scheme: Some(scheme),
-                icon: None,
-                label: 4,
-            },
-            None => ItemEntry {
-                kind: ItemKind::Comment,
-                scheme: Some(Scheme::Normal),
-                icon: None,
-                label: 1,
-            },
-        }
-    } else {
-        ItemEntry {
-            kind: ItemKind::Comment,
-            scheme: Some(Scheme::Normal),
-            icon: None,
-            label: 1,
+impl<'a> ParsedItem<'a> {
+    fn plain(text: &'a str) -> Self {
+        ParsedItem {
+            label: text,
+            match_text: None,
+            entry: ItemEntry::default(),
         }
     }
 }
 
-/// A `:` line: `:color: label` or `:color:icon: label`.
-fn parse_colored(text: &str) -> ItemEntry {
-    let further_colons = text.as_bytes()[1..].iter().filter(|&&b| b == b':').count();
-    if further_colons >= 2 {
-        /* the icon-entry shape: valid fields make an icon entry, anything
-         * else renders the exact text — a coincidence of shape must not
-         * eat anything */
-        return parse_icon_entry(text).unwrap_or_else(plain);
+/// Parse one item line. Invalid or incomplete markup is deliberately literal:
+/// arbitrary command output remains safe to pipe into instantMENU, while a
+/// valid block has strict names, values and duplicate checking.
+pub fn parse(text: &str) -> ParsedItem<'_> {
+    if text.starts_with("{{") {
+        return ParsedItem::plain(&text[1..]);
     }
-    if further_colons == 1 {
-        return parse_colored_entry(text).unwrap_or_else(plain);
-    }
-    plain()
+    parse_markup(text).unwrap_or_else(|| ParsedItem::plain(text))
 }
 
-/// `:color: label`, with whitespace tolerated around the color delimiter.
-fn parse_colored_entry(text: &str) -> Option<ItemEntry> {
-    let (color, label) = text[1..].split_once(':')?;
-    Some(ItemEntry {
-        kind: ItemKind::Colored,
-        scheme: Some(parse_color(color)?),
-        icon: None,
-        label: text.len() - label.trim_start().len(),
+fn parse_markup(text: &str) -> Option<ParsedItem<'_>> {
+    let body = text.strip_prefix('{')?;
+    let end = closing_brace(body)?;
+    let after = &body[end + 1..];
+    if !after.is_empty() && !after.starts_with(char::is_whitespace) {
+        return None;
+    }
+
+    let mut scanner = AttributeScanner::new(&body[..end]);
+    let mut entry = ItemEntry::default();
+    let mut match_text = None;
+    let mut saw_attribute = false;
+    let mut saw_color = false;
+    let mut saw_icon = false;
+    let mut saw_key = false;
+    let mut saw_heading = false;
+
+    while let Some(attribute) = scanner.next_attribute().ok()? {
+        saw_attribute = true;
+        match (attribute.name.as_str(), attribute.value) {
+            ("color", Some(value)) if !saw_color => {
+                entry.scheme = Some(parse_color(&value)?);
+                saw_color = true;
+            }
+            ("icon", Some(value)) if !saw_icon => {
+                entry.icon = Some(icons::lookup(&value)?);
+                saw_icon = true;
+            }
+            ("key", Some(value)) if !saw_key => {
+                let mut chars = value.chars();
+                let key = chars.next()?;
+                if chars.next().is_some() || key.is_control() || key.is_whitespace() {
+                    return None;
+                }
+                entry.key = Some(key);
+                saw_key = true;
+            }
+            ("match", Some(value)) if match_text.is_none() && !value.is_empty() => {
+                match_text = Some(value);
+            }
+            ("heading", None) if !saw_heading => {
+                entry.heading = true;
+                saw_heading = true;
+            }
+            (name, None) if !saw_color => {
+                entry.scheme = Some(parse_color(name)?);
+                saw_color = true;
+            }
+            _ => return None,
+        }
+    }
+
+    if !saw_attribute || (entry.heading && (entry.key.is_some() || match_text.is_some())) {
+        return None;
+    }
+
+    Some(ParsedItem {
+        label: after.trim_start(),
+        match_text,
+        entry,
     })
 }
 
-/// `:color:icon: label`, with whitespace tolerated around every colon.
-fn parse_icon_entry(text: &str) -> Option<ItemEntry> {
-    let mut fields = text[1..].splitn(3, ':');
-    let color = fields.next()?;
-    let icon = fields.next()?;
-    let label = fields.next()?; // absent: fewer than two further colons
-    let scheme = parse_color(color)?;
-    let icon = icons::lookup(icon)?;
-    Some(ItemEntry {
-        kind: ItemKind::Icon,
-        scheme: Some(scheme),
-        icon: Some(icon),
-        label: text.len() - label.trim_start().len(),
-    })
+/// Find the first unquoted closing brace. Metadata is intentionally flat;
+/// nested blocks are not part of the language.
+fn closing_brace(body: &str) -> Option<usize> {
+    let mut quote = None;
+    let mut escaped = false;
+    for (i, c) in body.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if c == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' => quote = Some(c),
+            '}' => return Some(i),
+            '{' => return None,
+            _ => {}
+        }
+    }
+    None
 }
 
-/// The scheme a `:color:` field names: full names or single-letter codes.
+#[derive(Debug, PartialEq, Eq)]
+struct Attribute {
+    name: String,
+    value: Option<String>,
+}
+
+/// A small shell-like scanner for the flat contents of `{...}`. It accepts
+/// `name=value`, quoted values, and bare shorthand words; whitespace around
+/// `=` is intentionally not accepted so the grammar remains unambiguous.
+struct AttributeScanner<'a> {
+    text: &'a str,
+    cursor: usize,
+}
+
+impl<'a> AttributeScanner<'a> {
+    fn new(text: &'a str) -> Self {
+        AttributeScanner { text, cursor: 0 }
+    }
+
+    fn next_attribute(&mut self) -> Result<Option<Attribute>, ()> {
+        self.skip_whitespace();
+        if self.cursor == self.text.len() {
+            return Ok(None);
+        }
+
+        let name_start = self.cursor;
+        while let Some(c) = self.peek() {
+            if c.is_whitespace() || c == '=' {
+                break;
+            }
+            if matches!(c, '{' | '}' | '\'' | '"' | '\\') {
+                return Err(());
+            }
+            self.bump(c);
+        }
+        if self.cursor == name_start {
+            return Err(());
+        }
+        let name = self.text[name_start..self.cursor].to_ascii_lowercase();
+
+        let value = if self.peek() == Some('=') {
+            self.cursor += 1;
+            Some(self.value().ok_or(())?)
+        } else {
+            None
+        };
+        if self.peek().is_some_and(|c| !c.is_whitespace()) {
+            return Err(());
+        }
+        Ok(Some(Attribute { name, value }))
+    }
+
+    fn value(&mut self) -> Option<String> {
+        let first = self.peek()?;
+        if matches!(first, '\'' | '"') {
+            self.bump(first);
+            let quote = first;
+            let mut value = String::new();
+            let mut escaped = false;
+            while let Some(c) = self.peek() {
+                self.bump(c);
+                if escaped {
+                    value.push(c);
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == quote {
+                    return Some(value);
+                } else {
+                    value.push(c);
+                }
+            }
+            None
+        } else {
+            let start = self.cursor;
+            while let Some(c) = self.peek() {
+                if c.is_whitespace() {
+                    break;
+                }
+                if matches!(c, '=' | '{' | '}' | '\'' | '"' | '\\') {
+                    return None;
+                }
+                self.bump(c);
+            }
+            (self.cursor > start).then(|| self.text[start..self.cursor].to_string())
+        }
+    }
+
+    fn skip_whitespace(&mut self) {
+        while let Some(c) = self.peek() {
+            if !c.is_whitespace() {
+                break;
+            }
+            self.bump(c);
+        }
+    }
+
+    fn peek(&self) -> Option<char> {
+        self.text[self.cursor..].chars().next()
+    }
+
+    fn bump(&mut self, c: char) {
+        self.cursor += c.len_utf8();
+    }
+}
+
+/// Named item schemes. `blue` is the friendly alias for the palette's
+/// historical `selected` role; `default` aliases `normal`.
 fn parse_color(name: &str) -> Option<Scheme> {
-    match name.trim().to_lowercase().as_str() {
-        "red" | "r" => Some(Scheme::Red),
-        "green" | "g" => Some(Scheme::Green),
-        "yellow" | "y" => Some(Scheme::Yellow),
-        "blue" | "b" => Some(Scheme::Selected),
-        "highlight" | "h" => Some(Scheme::Highlight),
+    match name.to_ascii_lowercase().as_str() {
         "normal" | "default" => Some(Scheme::Normal),
-        _ => None,
-    }
-}
-
-/// The scheme for a `>>` color code: r/g/y/h/b.
-fn comment_scheme(code: Option<u8>) -> Option<Scheme> {
-    match code {
-        Some(b'r') => Some(Scheme::Red),
-        Some(b'g') => Some(Scheme::Green),
-        Some(b'y') => Some(Scheme::Yellow),
-        Some(b'h') => Some(Scheme::Highlight),
-        Some(b'b') => Some(Scheme::Selected),
+        "fade" => Some(Scheme::Fade),
+        "highlight" => Some(Scheme::Highlight),
+        "hover" => Some(Scheme::Hover),
+        "selected" | "blue" => Some(Scheme::Selected),
+        "output" => Some(Scheme::Output),
+        "green" => Some(Scheme::Green),
+        "yellow" => Some(Scheme::Yellow),
+        "red" => Some(Scheme::Red),
         _ => None,
     }
 }
@@ -176,188 +293,117 @@ fn comment_scheme(code: Option<u8>) -> Option<Scheme> {
 mod tests {
     use super::*;
 
-    fn parsed(text: &str) -> ItemEntry {
-        parse(text)
+    #[test]
+    fn plain_lines_are_unchanged() {
+        for text in ["Display", "", ":red:power: Shutdown", ">Heading"] {
+            assert_eq!(parse(text), ParsedItem::plain(text), "{text}");
+        }
     }
 
-    /* ── the icon entry ─────────────────────────────────────────────── */
-
-    /// The canonical spellings parse to the icon, color and label.
     #[test]
-    fn icon_entries_parse() {
-        assert_eq!(
-            parsed(":red:power: Shutdown"),
-            ItemEntry {
-                kind: ItemKind::Icon,
-                scheme: Some(Scheme::Red),
-                icon: Some('\u{f0425}'),
-                label: ":red:power: ".len(),
-            }
-        );
-        assert_eq!(
-            parsed(":green:shutdown:Shutdown"),
-            ItemEntry {
-                kind: ItemKind::Icon,
-                scheme: Some(Scheme::Green),
-                icon: Some('\u{f0902}'),
-                label: ":green:shutdown:".len(),
-            }
-        );
-        // the icon may be the literal glyph
-        assert_eq!(
-            parsed(":b:\u{f011}: x"),
-            ItemEntry {
-                kind: ItemKind::Icon,
-                scheme: Some(Scheme::Selected),
-                icon: Some('\u{f011}'),
-                label: ":b:\u{f011}: ".len(),
-            }
-        );
+    fn doubled_opening_brace_escapes_a_literal_markup_like_label() {
+        let parsed = parse("{{red} Literal braces");
+        assert_eq!(parsed, ParsedItem::plain("{red} Literal braces"));
     }
 
-    /// Whitespace around every colon is tolerated; only leading whitespace
-    /// of the label goes away.
     #[test]
-    fn icon_entries_tolerate_whitespace() {
-        let text = ": green : power-off :    Shutdown now";
-        let entry = parsed(text);
-        assert_eq!(entry.kind, ItemKind::Icon);
-        assert_eq!(entry.scheme, Some(Scheme::Green));
-        assert_eq!(entry.icon, Some('\u{f0902}'));
-        assert_eq!(&text[entry.label..], "Shutdown now");
+    fn color_shorthand_and_explicit_color_are_equivalent() {
+        let short = parse("{red} Shut down");
+        let explicit = parse("{color=red} Shut down");
+        assert_eq!(short, explicit);
+        assert_eq!(short.label, "Shut down");
+        assert_eq!(short.entry.scheme, Some(Scheme::Red));
     }
 
-    /// Colors: full names, the legacy letters, case-insensitive.
     #[test]
-    fn icon_entry_colors() {
+    fn every_named_scheme_parses() {
         for (name, scheme) in [
-            ("red", Scheme::Red),
-            ("green", Scheme::Green),
-            ("yellow", Scheme::Yellow),
-            ("blue", Scheme::Selected),
-            ("highlight", Scheme::Highlight),
             ("normal", Scheme::Normal),
             ("default", Scheme::Normal),
-            ("g", Scheme::Green),
-            ("b", Scheme::Selected),
-            ("Yellow", Scheme::Yellow),
+            ("fade", Scheme::Fade),
+            ("highlight", Scheme::Highlight),
+            ("hover", Scheme::Hover),
+            ("selected", Scheme::Selected),
+            ("blue", Scheme::Selected),
+            ("output", Scheme::Output),
+            ("green", Scheme::Green),
+            ("yellow", Scheme::Yellow),
+            ("red", Scheme::Red),
         ] {
+            assert_eq!(parse(&format!("{{{name}}} x")).entry.scheme, Some(scheme));
             assert_eq!(
-                parsed(&format!(":{name}:power: x")).scheme,
-                Some(scheme),
-                "{name}"
+                parse(&format!("{{color={name}}} x")).entry.scheme,
+                Some(scheme)
             );
         }
     }
 
-    /// An invalid color or icon renders the exact text: a plain item whose
-    /// label is the whole line.
     #[test]
-    fn invalid_icon_entries_render_the_exact_text() {
-        for text in [
-            ":bogus:power: Shutdown",
-            ":red:not-an-icon: Shutdown",
-            ":red:: Shutdown",
-            "::power: Shutdown",
-            ": green :   : Shutdown",
-            "h:i: not an entry",
-        ] {
-            let entry = parsed(text);
-            assert_eq!(entry, plain(), "{text}");
-            assert_eq!(&text[entry.label..], text);
+    fn attributes_compose_in_any_order() {
+        let parsed = parse("{key=d blue icon=display match='monitor screen'} Display");
+        assert_eq!(parsed.label, "Display");
+        assert_eq!(parsed.match_text.as_deref(), Some("monitor screen"));
+        assert_eq!(parsed.entry.scheme, Some(Scheme::Selected));
+        assert_eq!(parsed.entry.icon, icons::lookup("display"));
+        assert_eq!(parsed.entry.key, Some('d'));
+        assert!(!parsed.entry.heading);
+    }
+
+    #[test]
+    fn quoted_values_support_spaces_braces_and_escapes() {
+        let parsed = parse(r#"{match="one \"two\" } three" color=green} Label"#);
+        assert_eq!(parsed.label, "Label");
+        assert_eq!(parsed.match_text.as_deref(), Some("one \"two\" } three"));
+    }
+
+    #[test]
+    fn unicode_keys_are_single_characters() {
+        assert_eq!(parse("{key=λ} Lambda").entry.key, Some('λ'));
+        for invalid in ["{key=} x", "{key=ab} x", "{key=' '} x", "{key='\t'} x"] {
+            assert_eq!(parse(invalid), ParsedItem::plain(invalid), "{invalid}");
         }
     }
 
-    /// An icon entry may have an empty label (an icon-only item).
     #[test]
-    fn icon_entries_may_have_an_empty_label() {
-        let entry = parsed(":green:power:");
-        assert_eq!(entry.kind, ItemKind::Icon);
-        assert_eq!(entry.label, ":green:power:".len());
-        assert_eq!(entry.icon, Some('\u{f0425}'));
-    }
+    fn headings_may_be_styled_but_not_searchable_or_activated() {
+        let heading = parse("{heading green icon=display} Displays");
+        assert!(heading.entry.heading);
+        assert_eq!(heading.entry.scheme, Some(Scheme::Green));
+        assert_eq!(heading.entry.icon, icons::lookup("display"));
 
-    /// The label keeps colons and inner whitespace; only leading
-    /// whitespace after the last colon is skipped.
-    #[test]
-    fn icon_entry_labels_keep_their_colons() {
-        let text = ":red:power: note: one  two";
-        let entry = parsed(text);
-        assert_eq!(&text[entry.label..], "note: one  two");
-    }
-
-    /* ── colored entries ────────────────────────────────────────────── */
-
-    #[test]
-    fn colored_entries_parse() {
-        assert_eq!(
-            parsed(":green: Shutdown"),
-            ItemEntry {
-                kind: ItemKind::Colored,
-                scheme: Some(Scheme::Green),
-                icon: None,
-                label: ":green: ".len(),
-            }
-        );
-        assert_eq!(
-            parsed(": g :    Shutdown"),
-            ItemEntry {
-                kind: ItemKind::Colored,
-                scheme: Some(Scheme::Green),
-                icon: None,
-                label: ": g :    ".len(),
-            }
-        );
-    }
-
-    /// Removed prefix layouts render literally rather than being partially
-    /// interpreted as styled entries.
-    #[test]
-    fn unsupported_colored_layouts_render_exactly() {
-        for text in [
-            ":rtext",
-            ":g label",
-            ":b \u{f011}Shutdown",
-            ":q: label",
-            ":",
+        for invalid in [
+            "{heading key=d} Displays",
+            "{heading match=monitor} Displays",
         ] {
-            assert_eq!(parsed(text), plain(), "{text}");
+            assert_eq!(parse(invalid), ParsedItem::plain(invalid), "{invalid}");
         }
     }
 
-    /* ── comments and plain items ───────────────────────────────────── */
-
     #[test]
-    fn comments_parse() {
-        assert_eq!(
-            parsed(">note"),
-            ItemEntry {
-                kind: ItemKind::Comment,
-                scheme: Some(Scheme::Normal),
-                icon: None,
-                label: 1,
-            }
-        );
-        assert_eq!(
-            parsed(">>g green note"),
-            ItemEntry {
-                kind: ItemKind::ColoredComment,
-                scheme: Some(Scheme::Green),
-                icon: None,
-                label: 4,
-            }
-        );
-        assert_eq!(parsed(">>? note").kind, ItemKind::Comment);
-        assert_eq!(parsed(">>? note").scheme, Some(Scheme::Normal));
+    fn invalid_markup_is_literal_and_never_partially_consumed() {
+        for text in [
+            "{} Empty",
+            "{purple} Unknown color",
+            "{color=gren} Typo",
+            "{icon=not-an-icon} Unknown icon",
+            "{wat=yes} Unknown attribute",
+            "{red green} Duplicate color",
+            "{color=red color=green} Duplicate field",
+            "{heading heading} Duplicate flag",
+            "{match=} Empty match",
+            "{red}No separator",
+            "{red Nested { block} Label",
+            "{red Unclosed",
+            "{match=\"unclosed} Label",
+            "{match =value} Label",
+        ] {
+            assert_eq!(parse(text), ParsedItem::plain(text), "{text}");
+        }
     }
 
     #[test]
-    fn plain_items_parse() {
-        let entry = parsed("Shutdown");
-        assert_eq!(entry, plain());
-        assert!(!entry.kind.is_comment());
-        assert_eq!(parsed(""), plain());
-        // only a leading : or > is special
-        assert_eq!(parsed("a:b:c").kind, ItemKind::Plain);
+    fn labels_may_be_empty_and_leading_separator_space_is_not_rendered() {
+        assert_eq!(parse("{icon=power}").label, "");
+        assert_eq!(parse("{red}    padded").label, "padded");
     }
 }

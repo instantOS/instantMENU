@@ -35,8 +35,16 @@ const LONG_ABOUT: &str = concat!(
     "appended.",
 );
 
-/// Keyboard bindings shown by `--help` and the generated man page.
-const KEY_BINDINGS: &str = concat!(
+/// Item format and keyboard bindings shown by `--help` and the generated man
+/// page. Keep the grammar here compact; the website carries the full guide.
+const AFTER_LONG_HELP: &str = concat!(
+    "ITEM FORMAT:\n",
+    "  Each input line is a label. Optional leading `{...}` metadata is hidden\n",
+    "  from display and output: `{red icon=power key=q match=shutdown} Power off`.\n",
+    "  Attributes: color=NAME (or bare NAME), icon=NAME, key=CHAR,\n",
+    "  match=TEXT, and heading. Quote values containing spaces. `{{` escapes a\n",
+    "  literal leading brace.\n",
+    "\n",
     "KEYBOARD CONTROL:\n",
     "  Tab          copy the selected item to the input field\n",
     "  Return       confirm the selection and exit\n",
@@ -69,7 +77,7 @@ const KEY_BINDINGS: &str = concat!(
     about = "A dynamic menu for X11 and Wayland (instantMENU, Rust port)",
     long_about = LONG_ABOUT,
     version = crate::config::VERSION,
-    after_long_help = KEY_BINDINGS,
+    after_long_help = AFTER_LONG_HELP,
     disable_help_subcommand = true,
     args_conflicts_with_subcommands = true,
 )]
@@ -106,9 +114,22 @@ pub struct MenuArgs {
     )]
     pub toast: Option<f32>,
 
-    /// Activate instantASSIST mode (single-letter launcher).
-    #[arg(long)]
-    pub commented: bool,
+    /// Activate items by their explicit `key=` metadata.
+    ///
+    /// Only keyed items are shown. Typing one key immediately prints that
+    /// item's label; matching is otherwise disabled.
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "auto_confirm",
+            "reject_no_match",
+            "match_mode",
+            "pre_match",
+            "smart_case",
+            "insensitive"
+        ]
+    )]
+    pub single_key: bool,
 
     /// Only display the input field, without the item list.
     #[arg(long)]
@@ -690,6 +711,28 @@ mod tests {
                 "{bad:?} should be rejected"
             );
         }
+    }
+
+    #[test]
+    fn single_key_mode_is_named_and_rejects_matching_options() {
+        let args = Args::try_parse_from(["instantmenu", "--single-key"]).unwrap();
+        assert!(args.menu.single_key);
+        assert!(Args::try_parse_from(["instantmenu", "--commented"]).is_err());
+        for option in [
+            "--auto-confirm",
+            "--reject-no-match",
+            "--pre-match",
+            "--smart-case",
+            "--insensitive",
+        ] {
+            assert!(
+                Args::try_parse_from(["instantmenu", "--single-key", option]).is_err(),
+                "{option}"
+            );
+        }
+        assert!(
+            Args::try_parse_from(["instantmenu", "--single-key", "--match-mode", "fuzzy"]).is_err()
+        );
     }
 
     #[test]

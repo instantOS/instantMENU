@@ -4,7 +4,7 @@
 .SH NAME
 instantmenu \- A dynamic menu for X11 and Wayland (instantMENU, Rust port)
 .SH SYNOPSIS
-\fBinstantmenu\fR [\fB\-\-config\fR] [\fB\-\-no\-config\fR] [\fB\-\-backend\fR] [\fB\-\-position\fR] [\fB\-\-follow\-cursor\fR] [\fB\-\-monospace\fR] [\fB\-\-no\-grab\fR] [\fB\-\-no\-outside\-close\fR] [\fB\-\-managed\fR] [\fB\-x\fR|\fB\-\-x\-offset\fR] [\fB\-y\fR|\fB\-\-y\-offset\fR] [\fB\-w\fR|\fB\-\-width\fR] [\fB\-m\fR|\fB\-\-monitor\fR] [\fB\-p\fR|\fB\-\-prompt\fR] [\fB\-\-font\fR] [\fB\-\-line\-height\fR] [\fB\-\-theme\fR] [\fB\-\-normal\-bg\fR] [\fB\-\-normal\-fg\fR] [\fB\-\-selected\-bg\fR] [\fB\-\-selected\-fg\fR] [\fB\-\-embed\fR] [\fB\-\-border\-width\fR] [\fB\-r\fR|\fB\-\-reject\-no\-match\fR] [\fB\-\-toast\fR] [\fB\-\-commented\fR] [\fB\-\-input\-only\fR] [\fB\-s\fR|\fB\-\-smart\-case\fR] [\fB\-\-match\-mode\fR] [\fB\-\-pre\-match\fR] [\fB\-\-space\-confirm\fR] [\fB\-\-full\-height\fR] [\fB\-i\fR|\fB\-\-insensitive\fR] [\fB\-n\fR|\fB\-\-auto\-confirm\fR] [\fB\-\-password\fR] [\fB\-\-alt\-tab\fR] [\fB\-\-right\-command\fR] [\fB\-\-left\-command\fR] [\fB\-g\fR|\fB\-\-columns\fR] [\fB\-l\fR|\fB\-\-lines\fR] [\fB\-\-placeholder\fR] [\fB\-a\fR|\fB\-\-animation\-length\fR] [\fB\-\-preselect\fR] [\fB\-\-initial\-text\fR] [\fB\-\-frecency\-cache\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIsubcommands\fR]
+\fBinstantmenu\fR [\fB\-\-config\fR] [\fB\-\-no\-config\fR] [\fB\-\-backend\fR] [\fB\-\-position\fR] [\fB\-\-follow\-cursor\fR] [\fB\-\-monospace\fR] [\fB\-\-no\-grab\fR] [\fB\-\-no\-outside\-close\fR] [\fB\-\-managed\fR] [\fB\-x\fR|\fB\-\-x\-offset\fR] [\fB\-y\fR|\fB\-\-y\-offset\fR] [\fB\-w\fR|\fB\-\-width\fR] [\fB\-m\fR|\fB\-\-monitor\fR] [\fB\-p\fR|\fB\-\-prompt\fR] [\fB\-\-font\fR] [\fB\-\-line\-height\fR] [\fB\-\-theme\fR] [\fB\-\-normal\-bg\fR] [\fB\-\-normal\-fg\fR] [\fB\-\-selected\-bg\fR] [\fB\-\-selected\-fg\fR] [\fB\-\-embed\fR] [\fB\-\-border\-width\fR] [\fB\-r\fR|\fB\-\-reject\-no\-match\fR] [\fB\-\-toast\fR] [\fB\-\-single\-key\fR] [\fB\-\-input\-only\fR] [\fB\-s\fR|\fB\-\-smart\-case\fR] [\fB\-\-match\-mode\fR] [\fB\-\-pre\-match\fR] [\fB\-\-space\-confirm\fR] [\fB\-\-full\-height\fR] [\fB\-i\fR|\fB\-\-insensitive\fR] [\fB\-n\fR|\fB\-\-auto\-confirm\fR] [\fB\-\-password\fR] [\fB\-\-alt\-tab\fR] [\fB\-\-right\-command\fR] [\fB\-\-left\-command\fR] [\fB\-g\fR|\fB\-\-columns\fR] [\fB\-l\fR|\fB\-\-lines\fR] [\fB\-\-placeholder\fR] [\fB\-a\fR|\fB\-\-animation\-length\fR] [\fB\-\-preselect\fR] [\fB\-\-initial\-text\fR] [\fB\-\-frecency\-cache\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIsubcommands\fR]
 .SH DESCRIPTION
 instantmenu reads a newline\-separated list of items from stdin and displays them in a menu. Selecting an item and pressing Return prints it to stdout and exits; typing narrows the list to matching items.
 .PP
@@ -170,8 +170,10 @@ Toast mode that times out after SECONDS seconds.
 
 The menu draws itself, waits the given time, then exits without a selection. 0 keeps the timeout disabled.
 .TP
-\fB\-\-commented\fR
-Activate instantASSIST mode (single\-letter launcher)
+\fB\-\-single\-key\fR
+Activate items by their explicit `key=` metadata.
+
+Only keyed items are shown. Typing one key immediately prints that item\*(Aqs label; matching is otherwise disabled.
 .TP
 \fB\-\-input\-only\fR
 Only display the input field, without the item list
@@ -288,6 +290,13 @@ Run through the shell with the current value appended as the last argument. Can 
 Discover the Nerd Fonts icon names accepted by icon entries
 
 .SH EXTRA
+ITEM FORMAT:
+  Each input line is a label. Optional leading `{...}` metadata is hidden
+  from display and output: `{red icon=power key=q match=shutdown} Power off`.
+  Attributes: color=NAME (or bare NAME), icon=NAME, key=CHAR,
+  match=TEXT, and heading. Quote values containing spaces. `{{` escapes a
+  literal leading brace.
+
 KEYBOARD CONTROL:
   Tab          copy the selected item to the input field
   Return       confirm the selection and exit
