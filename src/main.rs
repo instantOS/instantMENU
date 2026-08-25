@@ -10,12 +10,17 @@ use instantmenu::config::{Config, LineHeight, MonitorChoice, SlideSettings};
 use instantmenu::enums::ExitStatus;
 use instantmenu::menu::{self, Menu};
 use instantmenu::render::Renderer;
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 
 fn main() {
     /* die silently on a closed pipe like the C version (| head etc.) */
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     let args = cli::Args::parse();
+
+    if let Some(cli::Cmd::Icons(icons)) = &args.subcommand {
+        print_icons(&icons.command);
+        return;
+    }
 
     let mut cfg = Config::default();
     apply_flags(&args, &mut cfg);
@@ -158,6 +163,36 @@ fn main() {
     let status = menu.run();
     drop(nonblock_stdin); // restore the stdin flags before exiting
     status.exit();
+}
+
+/// Print the embedded icon catalog without initializing configuration, fonts,
+/// stdin streaming, or a display backend. One record per line keeps the
+/// output useful to shell tools while the literal glyph remains visible.
+fn print_icons(command: &cli::IconsCmd) {
+    let stdout = std::io::stdout();
+    let mut out = std::io::BufWriter::new(stdout.lock());
+    match command {
+        cli::IconsCmd::List => {
+            for icon in instantmenu::icons::catalog() {
+                writeln!(
+                    out,
+                    "{}\t{}\tU+{:04X}",
+                    icon.name, icon.glyph, icon.glyph as u32
+                )
+                .expect("write icon catalog");
+            }
+        }
+        cli::IconsCmd::Search { query } => {
+            for icon in instantmenu::icons::search(&query.join(" ")) {
+                writeln!(
+                    out,
+                    "{}\t{}\tU+{:04X}",
+                    icon.name, icon.glyph, icon.glyph as u32
+                )
+                .expect("write icon search results");
+            }
+        }
+    }
 }
 
 /// O_NONBLOCK on the streaming stdin, restored on drop. The drain loop must

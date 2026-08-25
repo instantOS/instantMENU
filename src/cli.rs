@@ -1,8 +1,8 @@
 //! Command line: clap with long options as the canonical surface and
 //! single-letter shorts for the common flags.
 //!
-//! The surface is split along two running modes. Menu mode is the default
-//! (`instantmenu`); slide mode is a subcommand (`instantmenu slide`). Options
+//! The surface is split along three modes. Menu mode is the default
+//! (`instantmenu`); slide and icon discovery are subcommands. Options
 //! always follow the mode word: `instantmenu slide --width 600`, never
 //! `instantmenu --width 600 slide` (`args_conflicts_with_subcommands` makes
 //! clap reject any option that precedes a subcommand). Window, geometry,
@@ -82,7 +82,7 @@ pub struct Args {
     #[command(flatten)]
     pub menu: MenuArgs,
 
-    /// Running mode: menu (default) or slide.
+    /// Running mode: menu (default), slide, or icon discovery.
     #[command(subcommand)]
     pub subcommand: Option<Cmd>,
 }
@@ -479,6 +479,29 @@ pub enum Cmd {
     /// without printing. Every value change runs --command (if given) with
     /// the value appended as its last argument.
     Slide(SlideArgs),
+
+    /// Discover the Nerd Fonts icon names accepted by icon entries.
+    Icons(IconsArgs),
+}
+
+/// Icon catalog commands. These print data and never open a display backend.
+#[derive(clap::Args, Debug, Clone)]
+pub struct IconsArgs {
+    #[command(subcommand)]
+    pub command: IconsCmd,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum IconsCmd {
+    /// List every icon as NAME, GLYPH, and U+CODEPOINT (tab-separated).
+    List,
+
+    /// Search icon names, ignoring case, spaces, hyphens, and underscores.
+    Search {
+        /// Words to find in the icon name.
+        #[arg(required = true, num_args = 1..)]
+        query: Vec<String>,
+    },
 }
 
 /// Options for [`Cmd::Slide`] — the value slider.
@@ -563,6 +586,28 @@ mod tests {
         assert_eq!(a.window.backend, BackendChoice::Auto);
         assert!(Args::try_parse_from(["instantmenu", "--backend", "xorg"]).is_err());
         assert!(Args::try_parse_from(["instantmenu", "--backend"]).is_err());
+    }
+
+    #[test]
+    fn icon_catalog_commands_parse() {
+        let args = Args::try_parse_from(["instantmenu", "icons", "list"]).unwrap();
+        assert!(matches!(
+            args.subcommand,
+            Some(Cmd::Icons(IconsArgs {
+                command: IconsCmd::List
+            }))
+        ));
+
+        let args =
+            Args::try_parse_from(["instantmenu", "icons", "search", "power", "off"]).unwrap();
+        let Some(Cmd::Icons(IconsArgs {
+            command: IconsCmd::Search { query },
+        })) = args.subcommand
+        else {
+            panic!("expected icons search");
+        };
+        assert_eq!(query, ["power", "off"]);
+        assert!(Args::try_parse_from(["instantmenu", "icons", "search"]).is_err());
     }
 
     #[test]

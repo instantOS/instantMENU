@@ -8,7 +8,7 @@
 //! - its name: `power-off`, `power_off`, `poweroff` and `power off` all
 //!   resolve, with or without a family qualifier (`md-`, `fa-`, ... and the
 //!   old `nf-` prefix). The ~11k official Nerd Fonts names ship as generated
-//!   tables (see [`names`]); [`ALIASES`] adds the launcher-vocabulary
+//!   catalog (see [`names`]); [`ALIASES`] adds the launcher-vocabulary
 //!   synonyms that are not Nerd Fonts names (`shutdown`, `reboot`, ...).
 //! - a hex codepoint (`f011`, `0xf011`, `u+f011`) — must land in an icon or
 //!   emoji range, so incidental hex words do not resolve.
@@ -81,12 +81,12 @@ pub fn lookup(spec: &str) -> Option<char> {
     let code = ALIASES
         .iter()
         .find(|(alias, _)| *alias == key)
-        .and_then(|(_, target)| find(names::BARE, target))
-        .or_else(|| find(names::BARE, &key))
-        .or_else(|| find(names::QUALIFIED, &key))
+        .and_then(|(_, target)| names::bare().find(target))
+        .or_else(|| names::bare().find(&key))
+        .or_else(|| names::qualified().find(&key))
         .or_else(|| {
             key.strip_prefix("nf")
-                .and_then(|rest| find(names::QUALIFIED, rest))
+                .and_then(|rest| names::qualified().find(rest))
         });
 
     if let Some(code) = code {
@@ -116,12 +116,29 @@ fn normalize(spec: &str) -> String {
         .collect()
 }
 
-/// Binary search in one of the sorted generated tables.
-fn find(table: &[(&str, u32)], key: &str) -> Option<u32> {
-    table
-        .binary_search_by(|(name, _)| (*name).cmp(key))
-        .ok()
-        .map(|index| table[index].1)
+/// One discoverable Nerd Fonts icon. Names are normalized, family-qualified
+/// lookup keys such as `mdpoweroff`; separators are optional when using them
+/// in an icon entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CatalogIcon {
+    pub name: &'static str,
+    pub glyph: char,
+}
+
+/// Every family-qualified Nerd Fonts icon, sorted by name.
+pub fn catalog() -> impl Iterator<Item = CatalogIcon> {
+    names::qualified().iter().filter_map(|(name, codepoint)| {
+        char::from_u32(codepoint).map(|glyph| CatalogIcon { name, glyph })
+    })
+}
+
+/// Search every icon name. Search uses the same case- and separator-insensitive
+/// normalization as entry parsing; an empty query returns the whole catalog.
+pub fn search(query: &str) -> Vec<CatalogIcon> {
+    let query = normalize(query);
+    catalog()
+        .filter(|icon| icon.name.contains(&query))
+        .collect()
 }
 
 #[cfg(test)]
@@ -193,6 +210,16 @@ mod tests {
             let expected = lookup(target).unwrap_or_else(|| panic!("{target}"));
             assert_eq!(resolved, expected, "{alias}");
         }
+    }
+
+    #[test]
+    fn catalog_search_is_normalized_and_complete() {
+        assert_eq!(catalog().count(), names::qualified().len());
+        let results = search("power-off");
+        assert!(results.iter().any(|icon| icon.name == "fapoweroff"));
+        assert!(results.iter().any(|icon| icon.name == "mdpoweroff"));
+        assert_eq!(search("MD POWER_OFF"), search("mdpoweroff"));
+        assert_eq!(search("").len(), catalog().count());
     }
 
     /// Hex codepoints in the icon ranges resolve; hex-looking words outside

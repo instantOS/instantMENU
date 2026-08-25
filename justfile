@@ -28,9 +28,9 @@ rootinstall: man
 man:
     cargo run --bin instantmenu-mangen
 
-# regenerate src/icons/names.rs from the nerd-fonts glyph names
+# regenerate the packed icon catalog from the Nerd Fonts glyph names
 icons:
-    utils/gen_icons.py > src/icons/names.rs
+    python3 utils/gen_icons.py > src/icons/names.bin
 
 # format code
 format:
