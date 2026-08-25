@@ -317,7 +317,7 @@ dependencies = [
 
 [[package]]
 name = "instantmenu"
-version = "4.10.0"
+version = "5.0.0"
 dependencies = [
  "clap",
  "clap_mangen",
