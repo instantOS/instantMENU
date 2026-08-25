@@ -1192,6 +1192,44 @@ fn icon_cell_spans_the_full_bar_height() {
     assert_eq!(pixel(&menu, 5, 15), bgra(normal.bg));
 }
 
+/// An unselected icon item draws entirely in the Normal scheme — its color
+/// appears only while selected/hovered. Regression: icon items carried
+/// their scheme at all times, coloring every row permanently.
+#[test]
+fn unselected_icon_item_stays_in_the_normal_scheme() {
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &["{blue icon=power-off} Shutdown"]);
+    // do_match preselects the first match; clear it for the hover-off state
+    menu.selection.selected = None;
+    menu.layout.lines = 1;
+    menu.layout.menu_height = 240;
+    menu.canvas.resize(Size::new(600, 240));
+    menu.draw_menu();
+
+    let normal = menu.renderer.color_scheme(Scheme::Normal);
+    let selected = menu.renderer.color_scheme(Scheme::Selected);
+    let bgra = |c: Color| {
+        let [r, g, b, a] = c.channels();
+        [b, g, r, a]
+    };
+    let pixel = |m: &Menu, x: usize, y: usize| -> [u8; 4] {
+        m.canvas.data[(y * m.canvas.width as usize + x) * 4..][..4]
+            .try_into()
+            .unwrap()
+    };
+
+    // nothing is selected: the gutter keeps the plain background. x=0 is
+    // left of the glyph (which starts at gutter/2.6), so the pixel cannot
+    // land on a glyph stroke whatever the font metrics resolve to.
+    assert_eq!(pixel(&menu, 0, 45), bgra(normal.bg));
+    // ... and so does the row behind the label
+    assert_eq!(pixel(&menu, 550, 45), bgra(normal.bg));
+
+    // selecting the item colors it with its own scheme
+    menu.selection.selected = Some(0);
+    menu.draw_menu();
+    assert_eq!(pixel(&menu, 0, 45), bgra(selected.bg));
+}
+
 /// Icon geometry is based on what draw_item paints, not the potentially long
 /// metadata prefix retained in the source item.
 #[test]

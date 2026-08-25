@@ -37,14 +37,19 @@ impl Menu {
         let entry = self.matcher.items[index].entry;
         let text = self.matcher.items[index].text.clone();
 
-        let scheme = if entry.heading || entry.icon.is_some() {
+        let scheme = if entry.heading {
+            // headings are not selectable, so their color is constant
             entry.scheme.unwrap_or(if is_selected {
                 Scheme::Selected
             } else {
                 Scheme::Normal
             })
         } else if is_selected {
+            // an ordinary item shows its color while selected …
             entry.scheme.unwrap_or(Scheme::Selected)
+        } else if entry.icon.is_some() {
+            // … and an unselected icon gutter stays uncolored
+            Scheme::Normal
         } else if self.matcher.items[index].already_output {
             Scheme::Output
         } else {
@@ -107,9 +112,10 @@ impl Menu {
     /// cell padding it used. The gutter spans the full bar height (the
     /// `--line-height` value only sets the *minimum* row height), so the
     /// glyph is vertically centered like the label and the accent strip
-    /// sits at the row's bottom edge instead of 4px from its top. The
-    /// caller has already set the entry's scheme; afterwards the label
-    /// draws in the Hover scheme when selected, Normal otherwise.
+    /// sits at the row's bottom edge instead of 4px from its top.
+    /// `draw_item` has already set the scheme (the entry's color while
+    /// selected, Normal otherwise); afterwards the label draws in the
+    /// Hover scheme when selected, Normal otherwise.
     fn draw_icon(&mut self, entry: ItemEntry, is_selected: bool, x: i32, y: i32) -> i32 {
         let temp_padding = icon_gutter_width(self.renderer.font_height);
         let icon = entry.icon.unwrap_or('?');

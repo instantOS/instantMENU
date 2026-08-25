@@ -26,8 +26,8 @@ use crate::icons;
 /// Parsed metadata which affects one menu item.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ItemEntry {
-    /// Optional item color. On ordinary items it is used while selected; an
-    /// icon gutter or heading carries it at all times.
+    /// Optional item color. Ordinary items use it while selected; a
+    /// heading carries it at all times.
     pub scheme: Option<Scheme>,
     /// Optional glyph drawn in the icon gutter.
     pub icon: Option<char>,
