@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0](https://github.com/instantOS/instantMENU/compare/v4.10.0...v5.0.0) - 2026-08-25
+
+### Added
+
+- forgot breaking commit
+
+### Fixed
+
+- auto-confirm doing nothing
+
+### Other
+
+- unify some stuff
+- fix geometry flickering
+- Merge branch 'main' of github.com:instantOS/instantMENU
+- rename some args
+- rename arg stuff
+- more readable instantmenu smartrun
+- Merge branch 'dev' of github.com:instantOS/instantMENU into dev
+- update manual
+- rename misnomer
+- fix auto-confirm in dmenu mode
+- init theme feature
+- more type safe themes, remove Xresources customization
+- add config file and early keyboard grabs for wayland
+- overhaul icon syntax
+- optimize icon gen, add icons subcommand
+- remove legacy icon syntax
+- fix icon measurement thingy
+- new markup
+- more readme
+- remove old theme files
+- fix color selection
+
 ## [4.10.0](https://github.com/instantOS/instantMENU/compare/v4.9.3...v4.10.0) - 2026-08-24
 
 ### Added
