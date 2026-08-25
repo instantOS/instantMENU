@@ -66,14 +66,6 @@ and `detail`. Unknown keys and invalid colors are errors. A configured theme is
 applied first, then configured colors, then command-line `--theme` and color
 overrides.
 
-Startup behavior is not configurable in TOML. Clap resolves it first. On a
-normal Wayland layer-shell menu, instantmenu then maps a transparent 1×1 surface
-with exclusive keyboard interactivity and waits for keyboard focus confirmation
-before opening the config or discovering fonts. The same surface becomes the
-visible menu, and keys received during startup remain queued. X11 keeps its
-early server keyboard grab. Interactive TTY input is still read before either
-backend captures the keyboard.
-
 ## is this dmenu?
 
 instantMENU started as a fork of dmenu and keeps the dmenu workflow (items on stdin,
