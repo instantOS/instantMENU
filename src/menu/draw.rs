@@ -116,8 +116,8 @@ impl Menu {
         p.draw_text_styled(rect, left_padding, shown, style);
     }
 
-    /// Draw the icon gutter of an icon entry (`:color:icon: label` or the
-    /// legacy `:x <glyph>` spelling) at the row's left edge; returns the
+    /// Draw the icon gutter of a `:color:icon: label` entry at the row's
+    /// left edge; returns the
     /// cell padding it used. The gutter spans the full bar height (the
     /// `--line-height` value only sets the *minimum* row height), so the
     /// glyph is vertically centered like the label and the accent strip

@@ -1106,7 +1106,7 @@ fn slide_paints_the_fill_with_the_selected_background() {
 /// the top of the row.
 #[test]
 fn icon_cell_spans_the_full_bar_height() {
-    let (mut menu, _stub, _out) = menu_with(Config::default(), &[":b \u{f011}Shutdown"]);
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &[":b:\u{f011}: Shutdown"]);
     menu.layout.lines = 1;
     menu.layout.menu_height = 240;
     menu.canvas.resize(Size::new(600, 240));

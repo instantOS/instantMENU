@@ -342,7 +342,7 @@ mod tests {
                 c.match_mode = MatchMode::Dmenu;
                 c.auto_confirm = true;
             },
-            &[":r icon shutdown", ":b icon reboot"],
+            &[":r:icon: shutdown", ":b:icon: reboot"],
         );
         assert_eq!(m.search("shut", true), MatchResult::AutoConfirm(0));
         assert_eq!(m.matches, vec![0]);

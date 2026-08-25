@@ -2,26 +2,20 @@
 //! `>` comment, a colored item, or an icon entry — and where its label
 //! starts inside the text.
 //!
-//! Icon entries spell `:color:icon: label` (readable by humans and
+//! Styled entries use colon-delimited fields (readable by humans and
 //! unambiguous for the scripts and agents that produce them):
 //!
 //! ```text
 //! :red:power: Shutdown
 //! : green : power-off :     Shutdown now
+//! :green: A colored entry without an icon
 //! ```
 //!
-//! Whitespace around each colon is tolerated; everything after the third
-//! colon is the label (leading whitespace skipped, the rest kept verbatim).
-//! The color is a scheme name, the icon a Nerd Fonts glyph, its name, or a
-//! hex codepoint (see [`crate::icons`]). An icon entry whose color or icon
-//! does not resolve is a plain item showing the **exact** original line —
-//! a line that only coincidentally has the shape must not lose text.
-//!
-//! The old spellings stay working: `:x label` colors the item, and
-//! `:x <glyph>label` (a literal glyph right after the space) keeps its icon
-//! gutter. What no longer happens is the old reading of `:x label` as
-//! "icon = first letter of the label", which ate the letter and glued the
-//! icon onto the word.
+//! Whitespace around each colon is tolerated and leading label whitespace is
+//! skipped. The color is a scheme name or single-letter code; the optional
+//! icon is a Nerd Fonts glyph, its name, or a hex codepoint (see
+//! [`crate::icons`]). A styled entry whose color or icon does not resolve is
+//! a plain item showing the **exact** original line.
 
 use crate::enums::Scheme;
 use crate::icons;
@@ -36,7 +30,7 @@ pub enum ItemKind {
     Comment,
     /// `>>c comment`: a comment drawn in its color scheme.
     ColoredComment,
-    /// `:x label` / `:xlabel` (legacy): an item in its color scheme.
+    /// `:color: label`: an item in its color scheme.
     Colored,
     /// An icon entry: a colored icon gutter left of the label.
     Icon,
@@ -111,7 +105,7 @@ fn parse_comment(text: &str) -> ItemEntry {
     }
 }
 
-/// A `:` line: the `:color:icon: label` shape, else the legacy `:x` forms.
+/// A `:` line: `:color: label` or `:color:icon: label`.
 fn parse_colored(text: &str) -> ItemEntry {
     let further_colons = text.as_bytes()[1..].iter().filter(|&&b| b == b':').count();
     if further_colons >= 2 {
@@ -120,7 +114,21 @@ fn parse_colored(text: &str) -> ItemEntry {
          * eat anything */
         return parse_icon_entry(text).unwrap_or_else(plain);
     }
-    legacy_colored(text).unwrap_or_else(plain)
+    if further_colons == 1 {
+        return parse_colored_entry(text).unwrap_or_else(plain);
+    }
+    plain()
+}
+
+/// `:color: label`, with whitespace tolerated around the color delimiter.
+fn parse_colored_entry(text: &str) -> Option<ItemEntry> {
+    let (color, label) = text[1..].split_once(':')?;
+    Some(ItemEntry {
+        kind: ItemKind::Colored,
+        scheme: Some(parse_color(color)?),
+        icon: None,
+        label: text.len() - label.trim_start().len(),
+    })
 }
 
 /// `:color:icon: label`, with whitespace tolerated around every colon.
@@ -139,39 +147,7 @@ fn parse_icon_entry(text: &str) -> Option<ItemEntry> {
     })
 }
 
-/// Legacy `:x…`: `x` is a color code (r/g/y/b). `:x <glyph>…` with a
-/// literal icon glyph right after the space stays an icon entry (the old
-/// icon syntax); `:x label` is a colored item showing its whole label.
-fn legacy_colored(text: &str) -> Option<ItemEntry> {
-    let scheme = colored_scheme(text.as_bytes().get(1).copied())?;
-    if let Some(rest) = text[2..].strip_prefix(char::is_whitespace) {
-        if let Some(glyph) = rest.chars().next() {
-            if icons::is_icon_char(glyph) || icons::is_emoji_char(glyph) {
-                return Some(ItemEntry {
-                    kind: ItemKind::Icon,
-                    scheme: Some(scheme),
-                    icon: Some(glyph),
-                    label: 3 + glyph.len_utf8(),
-                });
-            }
-        }
-        return Some(ItemEntry {
-            kind: ItemKind::Colored,
-            scheme: Some(scheme),
-            icon: None,
-            label: text.len() - rest.trim_start().len(),
-        });
-    }
-    Some(ItemEntry {
-        kind: ItemKind::Colored,
-        scheme: Some(scheme),
-        icon: None,
-        label: 2,
-    })
-}
-
-/// The scheme a `:color:` field names: the full names, plus the legacy
-/// single-letter codes.
+/// The scheme a `:color:` field names: full names or single-letter codes.
 fn parse_color(name: &str) -> Option<Scheme> {
     match name.trim().to_lowercase().as_str() {
         "red" | "r" => Some(Scheme::Red),
@@ -191,19 +167,6 @@ fn comment_scheme(code: Option<u8>) -> Option<Scheme> {
         Some(b'g') => Some(Scheme::Green),
         Some(b'y') => Some(Scheme::Yellow),
         Some(b'h') => Some(Scheme::Highlight),
-        Some(b'b') => Some(Scheme::Selected),
-        _ => None,
-    }
-}
-
-/// The scheme for a legacy `:x` colored item: r/g/y/b only — like the C
-/// `drawitem` `:x` branch, a selected item with an unknown code falls back
-/// to a plain item (which is what [`parse`] makes of it).
-fn colored_scheme(code: Option<u8>) -> Option<Scheme> {
-    match code {
-        Some(b'r') => Some(Scheme::Red),
-        Some(b'g') => Some(Scheme::Green),
-        Some(b'y') => Some(Scheme::Yellow),
         Some(b'b') => Some(Scheme::Selected),
         _ => None,
     }
@@ -323,53 +286,43 @@ mod tests {
         assert_eq!(&text[entry.label..], "note: one  two");
     }
 
-    /* ── legacy ─────────────────────────────────────────────────────── */
+    /* ── colored entries ────────────────────────────────────────────── */
 
-    /// `:x <glyph>label` (the old icon syntax) keeps its gutter.
     #[test]
-    fn legacy_glyph_icons_still_parse() {
+    fn colored_entries_parse() {
         assert_eq!(
-            parsed(":b \u{f011}Shutdown"),
-            ItemEntry {
-                kind: ItemKind::Icon,
-                scheme: Some(Scheme::Selected),
-                icon: Some('\u{f011}'),
-                label: 3 + '\u{f011}'.len_utf8(),
-            }
-        );
-        // a non-glyph after the space is a label now, not an eaten letter
-        assert_eq!(
-            parsed(":g shutdown"),
+            parsed(":green: Shutdown"),
             ItemEntry {
                 kind: ItemKind::Colored,
                 scheme: Some(Scheme::Green),
                 icon: None,
-                label: ":g ".len(),
+                label: ":green: ".len(),
             }
         );
-        // several spaces of separation collapse for the label start
         assert_eq!(
-            &":r   red item"[parsed(":r   red item").label..],
-            "red item"
+            parsed(": g :    Shutdown"),
+            ItemEntry {
+                kind: ItemKind::Colored,
+                scheme: Some(Scheme::Green),
+                icon: None,
+                label: ": g :    ".len(),
+            }
         );
     }
 
-    /// `:xlabel` without the space is the colored item it always was.
+    /// Removed prefix layouts render literally rather than being partially
+    /// interpreted as styled entries.
     #[test]
-    fn legacy_colored_items() {
-        assert_eq!(
-            parsed(":rtext"),
-            ItemEntry {
-                kind: ItemKind::Colored,
-                scheme: Some(Scheme::Red),
-                icon: None,
-                label: 2,
-            }
-        );
-        // unknown color code: exact text, selected or not
-        assert_eq!(parsed(":q text"), plain());
-        assert_eq!(parsed(":h text"), plain()); // h is comment-only
-        assert_eq!(parsed(":"), plain());
+    fn unsupported_colored_layouts_render_exactly() {
+        for text in [
+            ":rtext",
+            ":g label",
+            ":b \u{f011}Shutdown",
+            ":q: label",
+            ":",
+        ] {
+            assert_eq!(parsed(text), plain(), "{text}");
+        }
     }
 
     /* ── comments and plain items ───────────────────────────────────── */
