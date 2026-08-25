@@ -60,6 +60,16 @@ impl Slider {
         (self.value - self.min) as f64 / (self.max - self.min) as f64
     }
 
+    /// The slider label: the current value over the maximum ("5/244"), with
+    /// the prompt prepended when one is set.
+    fn label(&self, prompt: Option<&str>) -> String {
+        let value = format!("{}/{}", self.value, self.max);
+        match prompt {
+            Some(p) if !p.is_empty() => format!("{p}  {value}"),
+            _ => value,
+        }
+    }
+
     /// Set the value, clamped into the range; true when it changed.
     fn set(&mut self, value: i32) -> bool {
         let value = value.clamp(self.min, self.max);
@@ -278,23 +288,19 @@ impl Menu {
     /* ── drawing ────────────────────────────────────────────────────────── */
 
     /// One bar: the selected-scheme progress fill with its detail strip,
-    /// and the "prompt  value" label in a normal-scheme box on top (the box
-    /// keeps the label readable over the fill, islide's dark label strip).
+    /// and the "prompt  value/max" label in a normal-scheme box on top (the
+    /// box keeps the label readable over the fill, islide's dark label strip).
     pub(in crate::menu) fn draw_slide(&mut self) {
         let Some(slider) = self.slider.as_ref() else {
             return;
         };
         let width = self.layout.menu_width;
         let height = self.layout.menu_height;
-        let value = slider.value;
         let ratio = slider.ratio();
 
         let fill = (ratio * width as f64).round() as i32;
 
-        let label = match self.prompt() {
-            Some(p) if !p.is_empty() => format!("{p}  {value}"),
-            _ => value.to_string(),
-        };
+        let label = slider.label(self.prompt());
         let lpad = self.renderer.cell_inset();
         let label_width = self.cell_width(&label);
 
@@ -380,6 +386,18 @@ mod tests {
             ..SlideSettings::default()
         };
         assert_eq!(slider(s).big_step, 20);
+    }
+
+    #[test]
+    fn label_shows_value_over_maximum() {
+        let s = slider(SlideSettings {
+            max: 244,
+            value: Some(5),
+            ..SlideSettings::default()
+        });
+        assert_eq!(s.label(None), "5/244");
+        assert_eq!(s.label(Some("brightness")), "brightness  5/244");
+        assert_eq!(s.label(Some("")), "5/244");
     }
 
     #[test]
