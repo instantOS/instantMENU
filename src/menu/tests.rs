@@ -998,19 +998,27 @@ fn slide_changes_spawn_the_command() {
 #[test]
 fn slide_click_and_drag_set_the_value() {
     let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
-    // menu_width is 600 in the stub geometry; clicking the exact current
-    // value is a no-op
+    // Click mapping is relative to the bar which starts after the reserved
+    // label box, so compute bar geometry from the rendered label widths.
+    let label_for = |v: i32| format!("{}/{}", v, 100);
+    let w_min = menu.cell_width(&label_for(0));
+    let w_max = menu.cell_width(&label_for(100));
+    let label_box = w_min.max(w_max).min(menu.layout.menu_width);
+    let bar_x = label_box;
+    let bar_w = (menu.layout.menu_width - bar_x).max(1);
+    let x_for = |frac: f64| (bar_x as f64 + frac * bar_w as f64).round() as i32;
+    // clicking the exact current value is a no-op
     assert_eq!(
-        menu.slide_button(MouseButton::Left, M_NONE, Point::new(300, 5)),
+        menu.slide_button(MouseButton::Left, M_NONE, Point::new(x_for(0.5), 5)),
         Transition::Nop
     );
     assert_eq!(slide_value(&menu), 50);
     assert_eq!(
-        menu.slide_button(MouseButton::Left, M_NONE, Point::new(150, 5)),
+        menu.slide_button(MouseButton::Left, M_NONE, Point::new(x_for(0.25), 5)),
         Transition::Redraw
     );
     assert_eq!(slide_value(&menu), 25);
-    assert_eq!(menu.slide_motion(Point::new(450, 5)), Transition::Redraw);
+    assert_eq!(menu.slide_motion(Point::new(x_for(0.75), 5)), Transition::Redraw);
     assert_eq!(slide_value(&menu), 75);
     // outside the bar: clamped into the range
     assert_eq!(menu.slide_motion(Point::new(-20, 5)), Transition::Redraw);
