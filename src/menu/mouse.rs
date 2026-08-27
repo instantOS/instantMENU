@@ -133,9 +133,9 @@ impl Menu {
         let at_page_top =
             self.paging.prev == 0 || self.selection.page_start.map(|c| c == 0).unwrap_or(true);
         let arrow_pad = if at_page_top { header.left_arrow.w } else { 0 };
-        let input_hit =
-            (self.layout.lines <= 0 && pos.x >= 0 && pos.x <= header.input.right() + arrow_pad)
-                || (self.layout.lines > 0 && pos.y >= 0 && pos.y <= row_height);
+        let input_hit = !self.cfg.single_key
+            && ((self.layout.lines <= 0 && pos.x >= 0 && pos.x <= header.input.right() + arrow_pad)
+                || (self.layout.lines > 0 && pos.y >= 0 && pos.y <= row_height));
         if input_hit {
             if let Some(cell) = header.left_command {
                 if pos.x < cell.right() {

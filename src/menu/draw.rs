@@ -196,8 +196,12 @@ impl Menu {
     }
 
     /// Draw the input field (text, placeholder or password dots)
-    /// and the cursor.
+    /// and the cursor. In single-key mode the field is dead — typing a
+    /// single key immediately picks — so no field or cursor is drawn.
     fn draw_input_field(&mut self, header: &Header, font_height: i32) {
+        if self.cfg.single_key {
+            return;
+        }
         let field = header.input;
         let w = field.w;
         let field_x = field.x;
@@ -223,14 +227,10 @@ impl Menu {
         }
 
         /* Cursor x = the width of the text before the cursor (full minus suffix). */
-        let mut cursor_position = if self.cfg.single_key {
-            0
-        } else {
-            self.renderer.text_width(&self.editor.text)
+        let mut cursor_position = self.renderer.text_width(&self.editor.text)
                 - self
                     .renderer
-                    .text_width(&self.editor.text[self.editor.cursor..])
-        };
+                    .text_width(&self.editor.text[self.editor.cursor..]);
         cursor_position += self.renderer.cell_inset() - 1;
         if cursor_position < w {
             // disable cursor on password prompt

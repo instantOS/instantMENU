@@ -94,7 +94,11 @@ impl Menu {
          * setup() matters because streamed input replaces the Layout during
          * reflow; a partially-derived replacement used to silently reset the
          * input width to zero. */
-        layout.input_width = layout.menu_width / if self.cfg.single_key { 10 } else { 3 };
+        layout.input_width = if self.cfg.single_key {
+            0
+        } else {
+            layout.menu_width / 3
+        };
         Ok(layout)
     }
 

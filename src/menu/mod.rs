@@ -483,6 +483,7 @@ impl Menu {
             show_match_counter,
             counter_width,
             &mut m,
+            self.cfg.single_key,
         )
     }
 

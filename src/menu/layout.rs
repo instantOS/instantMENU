@@ -116,6 +116,7 @@ impl Header {
         show_match_counter: bool,
         counter_width: i32,
         measure: &mut dyn Measure,
+        single_key: bool,
     ) -> Self {
         let bar = layout.bar_height;
         let command_width = layout.command_width;
@@ -136,8 +137,12 @@ impl Header {
         let content_x = prompt_x + if has_prompt { layout.prompt_width } else { 0 };
 
         /* the input field spans the rest of the header row in list modes
-         * with nothing listed; in horizontal mode it keeps its fixed width */
-        let input_width = if layout.lines > 0 || !has_matches {
+         * with nothing listed; in horizontal mode it keeps its fixed width.
+         * Single-key mode has no editable field, so its width is 0 and the
+         * horizontal items start right after the prompt. */
+        let input_width = if single_key {
+            0
+        } else if layout.lines > 0 || !has_matches {
             layout.menu_width - content_x
         } else {
             layout.input_width
@@ -145,7 +150,7 @@ impl Header {
         let input = Rect::new(content_x, 0, input_width, bar);
 
         let left_arrow = Rect::new(
-            content_x + layout.input_width,
+            content_x + if single_key { 0 } else { layout.input_width },
             0,
             measure.cell_width("<"),
             bar,
