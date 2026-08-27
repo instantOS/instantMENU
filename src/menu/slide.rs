@@ -63,12 +63,18 @@ impl Slider {
     /// The slider label: the current value over the maximum ("5/244"), with
     /// the prompt prepended when one is set.
     fn label(&self, prompt: Option<&str>) -> String {
-        let value = format!("{}/{}", self.value, self.max);
+        self.label_for(self.value, prompt)
+    }
+
+    fn label_for(&self, value: i32, prompt: Option<&str>) -> String {
+        let s = format!("{}/{}", value, self.max);
         match prompt {
-            Some(p) if !p.is_empty() => format!("{p}  {value}"),
-            _ => value,
+            Some(p) if !p.is_empty() => format!("{p}  {s}"),
+            _ => s,
         }
     }
+
+
 
     /// Set the value, clamped into the range; true when it changed.
     fn set(&mut self, value: i32) -> bool {
@@ -183,9 +189,27 @@ impl Menu {
     }
 
     /// Snap the value to a pointer x position within the bar.
+    /// Clicks on the label box clamp to the minimum; the bar itself starts
+    /// after the reserved label width so visual fill and pointer mapping align.
     fn slide_snap_to_x(&mut self, x: i32) -> Transition {
         let width = self.layout.menu_width;
-        self.slide_edit(|s| s.snap_to_fraction(x as f64 / width as f64))
+        let Some(slider) = self.slider.as_ref() else {
+            return Transition::Nop;
+        };
+        let prompt = self.prompt().map(|s| s.to_string());
+        let prompt_ref = prompt.as_deref();
+        let label_for_min = slider.label_for(slider.min, prompt_ref);
+        let label_for_max = slider.label_for(slider.max, prompt_ref);
+        let label_current = slider.label(prompt_ref);
+        let label_box_width = self
+            .cell_width(&label_for_min)
+            .max(self.cell_width(&label_for_max))
+            .max(self.cell_width(&label_current))
+            .min(width);
+        let bar_x = label_box_width;
+        let bar_w = (width - bar_x).max(1);
+        let fraction = (x - bar_x) as f64 / bar_w as f64;
+        self.slide_edit(|s| s.snap_to_fraction(fraction))
     }
 
     /* ── keyboard ───────────────────────────────────────────────────────── */
@@ -298,25 +322,39 @@ impl Menu {
         let height = self.layout.menu_height;
         let ratio = slider.ratio();
 
-        let fill = (ratio * width as f64).round() as i32;
-
-        let label = slider.label(self.prompt());
+        let prompt = self.prompt().map(|s| s.to_string());
+        let prompt_ref = prompt.as_deref();
+        let label = slider.label(prompt_ref);
         let lpad = self.renderer.cell_inset();
-        let label_width = self.cell_width(&label);
+        // Reserve the widest possible label so the bar start stays stable
+        // as the value changes (avoids jitter and keeps click mapping stable).
+        let label_for_min = slider.label_for(slider.min, prompt_ref);
+        let label_for_max = slider.label_for(slider.max, prompt_ref);
+        let label_box_width = self
+            .cell_width(&label_for_min)
+            .max(self.cell_width(&label_for_max))
+            .max(self.cell_width(&label))
+            .min(width);
+        let bar_x = label_box_width;
+        let bar_w = (width - bar_x).max(0);
+        let fill_w = (ratio * bar_w as f64).round() as i32;
 
         let mut p = self.painter();
         p.set_scheme(Scheme::Normal);
         let normal_bg = p.scheme().bg;
         p.clear(normal_bg);
 
-        // Selected-scheme progress fill with bottom detail accent strip
+        // Selected-scheme progress fill starts *after* the label box so
+        // small values (0 and the first steps) are visibly distinct and
+        // the label no longer covers the bar.
         p.set_scheme(Scheme::Selected);
-        p.fill_accented_rect(Rect::new(0, 0, fill, height));
+        if bar_w > 0 && fill_w > 0 {
+            p.fill_accented_rect(Rect::new(bar_x, 0, fill_w, height));
+        }
 
-        // Normal-scheme label box over the fill keeps the value readable —
-        // draw_text fills the cell with the scheme background itself.
+        // Normal-scheme label box keeps the value readable.
         p.set_scheme(Scheme::Normal);
-        p.draw_text(Rect::new(0, 0, label_width, height), lpad, &label);
+        p.draw_text(Rect::new(0, 0, label_box_width, height), lpad, &label);
 
         self.backend.present(&self.canvas);
     }
