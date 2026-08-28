@@ -45,8 +45,8 @@ impl Menu {
         // with reject_no_match off, shift+return prints the raw input instead
         // of the selection.
         let shift_suppresses = mods.shift && !self.cfg.reject_no_match;
-        let out = if self.selected_text().is_some() && !shift_suppresses {
-            self.selected_text().unwrap_or_default()
+        let out = if self.selected_output().is_some() && !shift_suppresses {
+            self.selected_output().unwrap_or_default()
         } else {
             self.editor.text.clone()
         };
@@ -74,7 +74,7 @@ impl Menu {
                 return Transition::Nop;
             }
             let out = self
-                .selected_text()
+                .selected_output()
                 .unwrap_or_else(|| self.editor.text.clone());
             return self.confirm(&out, mods);
         }

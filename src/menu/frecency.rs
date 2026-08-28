@@ -141,8 +141,8 @@ impl Frecency {
                 .position(|item| item.entry.is_heading())
                 .map_or(items.len(), |offset| start + offset);
             items[start..end].sort_by(|a, b| {
-                let sa = self.score_of(&a.text, now);
-                let sb = self.score_of(&b.text, now);
+                let sa = self.score_of(a.output(), now);
+                let sb = self.score_of(b.output(), now);
                 sb.total_cmp(&sa)
             });
             start = end;
@@ -434,5 +434,28 @@ mod tests {
         f.record("alpha", secs(50));
         assert!(dir.join("nested").join("cache").exists());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rank_distinguishes_values_with_same_label() {
+        // same label, different values have distinct keys
+        let f = store(&[("/tmp/a", 2.0, 100), ("/tmp/b", 1.0, 100)]);
+        let mut items: Vec<Item> = [
+            "{value=/tmp/b} Report",
+            "{value=/tmp/a} Report",
+            "Other",
+        ]
+        .iter()
+        .map(|s| Item::new(*s))
+        .collect();
+        f.rank(&mut items, secs(100));
+        // /tmp/a has higher score, so its item should come first
+        assert_eq!(items[0].output(), "/tmp/a");
+        assert_eq!(items[1].output(), "/tmp/b");
+        // plain item falls back to label
+        let g = store(&[("plain", 5.0, 100)]);
+        let mut plain_items: Vec<Item> = ["plain", "other"].iter().map(|s| Item::new(*s)).collect();
+        g.rank(&mut plain_items, secs(100));
+        assert_eq!(plain_items[0].output(), "plain");
     }
 }

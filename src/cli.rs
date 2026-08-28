@@ -42,7 +42,7 @@ const AFTER_LONG_HELP: &str = concat!(
     "  Each input line is a label. Optional leading `{...}` metadata is hidden\n",
     "  from display and output: `{red icon=power key=q match=shutdown} Power off`.\n",
     "  Attributes: color=NAME (or bare NAME), icon=NAME, key=CHAR,\n",
-    "  match=TEXT, and heading. Quote values containing spaces. `{{` escapes a\n",
+    "  match=TEXT, value=TEXT, and heading. Quote values containing spaces. `{{` escapes a\n",
     "  literal leading brace.\n",
     "\n",
     "KEYBOARD CONTROL:\n",

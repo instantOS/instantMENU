@@ -12,6 +12,7 @@
 //! ```text
 //! {blue icon=display key=d match="monitor screen"} Display
 //! {heading green} System actions
+//! {value="/tmp/a b"} My File
 //! ```
 //!
 //! Attributes are whitespace-separated. Values containing whitespace may be
@@ -50,6 +51,8 @@ pub struct ParsedItem<'a> {
     pub label: &'a str,
     /// Extra text used only for regular-menu matching.
     pub match_text: Option<String>,
+    /// Optional output value printed when selected.
+    pub value: Option<String>,
     pub entry: ItemEntry,
 }
 
@@ -58,6 +61,7 @@ impl<'a> ParsedItem<'a> {
         ParsedItem {
             label: text,
             match_text: None,
+            value: None,
             entry: ItemEntry::default(),
         }
     }
@@ -84,6 +88,7 @@ fn parse_markup(text: &str) -> Option<ParsedItem<'_>> {
     let mut scanner = AttributeScanner::new(&body[..end]);
     let mut entry = ItemEntry::default();
     let mut match_text = None;
+    let mut value: Option<String> = None;
     let mut saw_attribute = false;
     let mut saw_color = false;
     let mut saw_icon = false;
@@ -113,6 +118,9 @@ fn parse_markup(text: &str) -> Option<ParsedItem<'_>> {
             ("match", Some(value)) if match_text.is_none() && !value.is_empty() => {
                 match_text = Some(value);
             }
+            ("value", Some(v)) if value.is_none() && !v.is_empty() => {
+                value = Some(v);
+            }
             ("heading", None) if !saw_heading => {
                 entry.heading = true;
                 saw_heading = true;
@@ -125,13 +133,16 @@ fn parse_markup(text: &str) -> Option<ParsedItem<'_>> {
         }
     }
 
-    if !saw_attribute || (entry.heading && (entry.key.is_some() || match_text.is_some())) {
+    if !saw_attribute
+        || (entry.heading && (entry.key.is_some() || match_text.is_some() || value.is_some()))
+    {
         return None;
     }
 
     Some(ParsedItem {
         label: after.trim_start(),
         match_text,
+        value,
         entry,
     })
 }
@@ -347,6 +358,36 @@ mod tests {
         assert_eq!(parsed.entry.icon, icons::lookup("display"));
         assert_eq!(parsed.entry.key, Some('d'));
         assert!(!parsed.entry.heading);
+        assert_eq!(parsed.value, None);
+    }
+
+    #[test]
+    fn value_is_hidden_output_without_changing_label_or_search() {
+        let parsed = parse("{value=one} same");
+        assert_eq!(parsed.label, "same");
+        assert_eq!(parsed.value.as_deref(), Some("one"));
+        assert_eq!(parsed.match_text, None);
+
+        let with_match = parse("{value=two match=alt} Label");
+        assert_eq!(with_match.label, "Label");
+        assert_eq!(with_match.value.as_deref(), Some("two"));
+        assert_eq!(with_match.match_text.as_deref(), Some("alt"));
+
+        let quoted = parse(r#"{value="file:/tmp/a b"} My File"#);
+        assert_eq!(quoted.label, "My File");
+        assert_eq!(quoted.value.as_deref(), Some("file:/tmp/a b"));
+
+        let icon_value = parse("{value=one icon=star} same");
+        assert_eq!(icon_value.label, "same");
+        assert_eq!(icon_value.value.as_deref(), Some("one"));
+        assert_eq!(icon_value.entry.icon, icons::lookup("star"));
+
+        // value composes in any order with other attributes
+        let any_order = parse("{icon=display value=out match=alt red} X");
+        assert_eq!(any_order.label, "X");
+        assert_eq!(any_order.value.as_deref(), Some("out"));
+        assert_eq!(any_order.match_text.as_deref(), Some("alt"));
+        assert_eq!(any_order.entry.scheme, Some(Scheme::Red));
     }
 
     #[test]
@@ -374,6 +415,7 @@ mod tests {
         for invalid in [
             "{heading key=d} Displays",
             "{heading match=monitor} Displays",
+            "{heading value=one} Displays",
         ] {
             assert_eq!(parse(invalid), ParsedItem::plain(invalid), "{invalid}");
         }
@@ -391,11 +433,15 @@ mod tests {
             "{color=red color=green} Duplicate field",
             "{heading heading} Duplicate flag",
             "{match=} Empty match",
+            "{value=} Empty value",
+            "{value=one value=two} Duplicate value",
+            "{value =one} Space before equals",
             "{red}No separator",
             "{red Nested { block} Label",
             "{red Unclosed",
             "{match=\"unclosed} Label",
             "{match =value} Label",
+            "{value=\"unclosed} Label",
         ] {
             assert_eq!(parse(text), ParsedItem::plain(text), "{text}");
         }

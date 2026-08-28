@@ -606,6 +606,44 @@ fn metadata_is_hidden_from_completion_and_output() {
     );
 }
 
+#[test]
+fn value_is_hidden_from_completion_but_used_for_output() {
+    let source = "{value=one} same";
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &[source]);
+    // Tab copies label, not value
+    assert_eq!(key(&mut menu, ks::KEY_Tab, M_NONE), Transition::Redraw);
+    assert_eq!(menu.editor.text, "same");
+    // Return prints value
+    assert_eq!(
+        key(&mut menu, ks::KEY_Return, M_NONE),
+        Transition::PrintAndExit("one".into())
+    );
+
+    // duplicate labels with distinct values disambiguate output
+    let sources = ["{value=one} same", "{value=two} same"];
+    let (mut menu2, _stub, _out) = menu_with(Config::default(), &sources);
+    // first item selected by default
+    assert_eq!(
+        key(&mut menu2, ks::KEY_Return, M_NONE),
+        Transition::PrintAndExit("one".into())
+    );
+    // move to second and confirm
+    let (mut menu3, _stub, _out) = menu_with(Config::default(), &sources);
+    key(&mut menu3, ks::KEY_Down, M_NONE);
+    assert_eq!(
+        key(&mut menu3, ks::KEY_Return, M_NONE),
+        Transition::PrintAndExit("two".into())
+    );
+
+    // quoted value with spaces
+    let source_q = r#"{value="file:/tmp/a b"} My File"#;
+    let (mut menu4, _stub, _out) = menu_with(Config::default(), &[source_q]);
+    assert_eq!(
+        key(&mut menu4, ks::KEY_Return, M_NONE),
+        Transition::PrintAndExit("file:/tmp/a b".into())
+    );
+}
+
 /// Left-click on the input field clears it.
 #[test]
 fn left_click_on_input_clears_it() {

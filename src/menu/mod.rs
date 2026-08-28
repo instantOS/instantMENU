@@ -288,10 +288,10 @@ impl Menu {
                 Transition::Nop
             }
             MatchResult::AutoConfirm(idx) => {
-                Transition::PrintAndExit(self.matcher.items[idx].text.clone())
+                Transition::PrintAndExit(self.matcher.items[idx].output().to_owned())
             }
             MatchResult::SingleKeyPick(pick) => match pick {
-                Some(idx) => Transition::PrintAndExit(self.matcher.items[idx].text.clone()),
+                Some(idx) => Transition::PrintAndExit(self.matcher.items[idx].output().to_owned()),
                 None => Transition::Exit(ExitStatus::Success),
             },
         }
@@ -381,6 +381,16 @@ impl Menu {
 
     fn selected_text(&self) -> Option<String> {
         self.selected_text_ref().map(str::to_owned)
+    }
+
+    pub(in crate::menu) fn selected_output_ref(&self) -> Option<&str> {
+        self.selection
+            .selected
+            .map(|pos| self.matcher.output_of_match(pos))
+    }
+
+    fn selected_output(&self) -> Option<String> {
+        self.selected_output_ref().map(str::to_owned)
     }
 
     pub(in crate::menu) fn selected_is_heading(&self) -> bool {

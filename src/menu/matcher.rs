@@ -10,6 +10,8 @@ use crate::entry::ItemEntry;
 pub struct Item {
     /// Visible label and value printed when selected.
     pub text: String,
+    /// Optional output value printed when selected.
+    pub value: Option<String>,
     /// Label plus hidden `match=` terms. Absent for the fast plain-item path.
     search_text: Option<String>,
     /// Presentation, single-key and structural metadata.
@@ -26,11 +28,13 @@ impl Item {
             && std::ptr::eq(parsed.label.as_ptr(), source.as_ptr());
         let entry = parsed.entry;
         let match_text = parsed.match_text;
+        let value = parsed.value;
         let parsed_label = (!label_is_source).then(|| parsed.label.to_owned());
         let text = parsed_label.unwrap_or(source);
         let search_text = match_text.map(|terms| format!("{text} {terms}"));
         Item {
             text,
+            value,
             search_text,
             entry,
             already_output: false,
@@ -39,6 +43,10 @@ impl Item {
 
     pub fn label(&self) -> &str {
         &self.text
+    }
+
+    pub fn output(&self) -> &str {
+        self.value.as_deref().unwrap_or(&self.text)
     }
 
     pub fn searchable_text(&self) -> &str {
@@ -109,6 +117,10 @@ impl Matcher {
 
     pub fn text_of_match(&self, pos: usize) -> &str {
         self.items[self.matches[pos]].label()
+    }
+
+    pub fn output_of_match(&self, pos: usize) -> &str {
+        self.items[self.matches[pos]].output()
     }
 
     pub fn match_is_selectable(&self, pos: usize) -> bool {
@@ -510,5 +522,31 @@ mod tests {
         );
         m.search("foo", true);
         assert_eq!(m.matches, vec![0]);
+    }
+
+    #[test]
+    fn value_is_hidden_from_label_and_search_but_used_for_output() {
+        let item = Item::new("{value=one} same");
+        assert_eq!(item.label(), "same");
+        assert_eq!(item.output(), "one");
+        assert_eq!(item.searchable_text(), "same");
+        // value does not affect searchable text
+        let with_match = Item::new("{value=two match=alt} Label");
+        assert_eq!(with_match.label(), "Label");
+        assert_eq!(with_match.output(), "two");
+        assert_eq!(with_match.searchable_text(), "Label alt");
+
+        // plain item falls back to label
+        let plain = Item::new("plain");
+        assert_eq!(plain.label(), "plain");
+        assert_eq!(plain.output(), "plain");
+
+        // matcher output helpers distinguish duplicates
+        let mut m = matcher(|_| (), &["{value=one} same", "{value=two} same"]);
+        m.search("same", true);
+        assert_eq!(m.matches, vec![0, 1]);
+        assert_eq!(m.text_of_match(0), "same");
+        assert_eq!(m.output_of_match(0), "one");
+        assert_eq!(m.output_of_match(1), "two");
     }
 }

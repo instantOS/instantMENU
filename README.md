@@ -86,10 +86,12 @@ Display
 ```
 
 Known color names may be bare (`{red}`) or explicit (`{color=red}`). Other
-attributes are `icon`, `key`, `match`, and the `heading` flag. Quote values
+attributes are `icon`, `key`, `match`, `value`, and the `heading` flag. Quote values
 that contain spaces. Run with `--single-key` to show and activate only entries
 that have `key=…`. Prefix a literal markup-like label with an extra opening
-brace: `{{red} literal` displays `{red} literal`.
+brace: `{{red} literal` displays `{red} literal`. Use `value` to set a
+different output from the display label: `{value="file:/tmp/a b"} My File` displays
+`My File` but prints `file:/tmp/a b`.
 
 --------
 ### instantOS is still in early beta, contributions always welcome
