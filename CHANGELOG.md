@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.1](https://github.com/instantOS/instantMENU/compare/v5.0.0...v5.0.1) - 2026-08-31
+
+### Fixed
+
+- alttab for wayland
+
+### Other
+
+- fix slider label text
+- fix single key rendering
+- bump stuff
+- fix slider offset
+- Merge branch 'dev' of github.com:instantOS/instantMENU into dev
+- add value field to instantmenu line entries
+- init AGENTS.md
+
 ## [5.0.0](https://github.com/instantOS/instantMENU/compare/v4.10.0...v5.0.0) - 2026-08-25
 
 ### Added
