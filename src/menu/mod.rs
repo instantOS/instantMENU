@@ -55,6 +55,21 @@ use stream::{Gate, LineParser};
 const LEFT_GLYPH: &str = "\u{f060}";
 const RIGHT_GLYPH: &str = "\u{f061}";
 
+/// The `--alt-tab` state machine. The C version modelled this with two
+/// globals (`alttab`, `tabbed`); the enum makes the reachable combinations
+/// explicit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AltTab {
+    /// Mode not active (the default, or cancelled with Alt+Space).
+    Off,
+    /// Mode active: the next release of the Alt key itself confirms the
+    /// selection.
+    Armed,
+    /// An Alt+Tab cycle is in progress: the Tab press advanced the
+    /// selection, and its own release is absorbed and re-arms the state.
+    Tabbed,
+}
+
 /// The menu shell: pure-core state plus the display machinery. All field
 /// access is module-internal; the public surface is
 /// [`Menu::new`]/[`Menu::add_items`]/[`Menu::begin_stream`]/[`Menu::setup`]/[`Menu::run`].
@@ -104,10 +119,8 @@ pub struct Menu {
     auto_width_warned: bool,
 
     /* runtime flags */
-    /// -A alt-tab behaviour: toggled off by Alt+Space at runtime.
-    pub(in crate::menu) alt_tab: bool,
-    /// an Alt+Tab happened; the release confirms.
-    pub(in crate::menu) tabbed: bool,
+    /// --alt-tab state machine: see [`AltTab`].
+    pub(in crate::menu) alt_tab: AltTab,
     pub(in crate::menu) match_counter_text: String,
     pub(in crate::menu) show_match_counter: bool,
     /// y of the selected row, noted during drawing for the selection
@@ -121,7 +134,11 @@ pub struct Menu {
 
 impl Menu {
     pub fn new(cfg: Config, renderer: Renderer, backend: Box<dyn Backend>) -> Self {
-        let alt_tab = cfg.alt_tab;
+        let alt_tab = if cfg.alt_tab {
+            AltTab::Armed
+        } else {
+            AltTab::Off
+        };
         let frecency = cfg.frecency_cache.as_deref().map(Frecency::open);
         Menu {
             matcher: Matcher::new(Vec::new(), &cfg),
@@ -150,7 +167,6 @@ impl Menu {
             backend,
             canvas: Canvas::new(crate::geom::Size::new(1, 1)),
             alt_tab,
-            tabbed: false,
             match_counter_text: String::new(),
             show_match_counter: false,
             selected_y: 0,

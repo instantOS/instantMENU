@@ -470,8 +470,9 @@ fn outside_click_closes_modal_menu() {
 
 /* ── alt-tab ───────────────────────────────────────────────────────────── */
 
-/// -A: Alt+Tab advances without confirming; the following Alt release
-/// confirms the selection.
+/// Alt+Tab advances without confirming; the release of the Alt key itself
+/// confirms the selection. X11 order: the release event reports the released
+/// modifier as still held.
 #[test]
 fn alt_tab_release_confirms() {
     let cfg = Config {
@@ -488,6 +489,186 @@ fn alt_tab_release_confirms() {
     // the Alt release confirms
     assert_eq!(
         menu.key_release(ks::KEY_Alt_L, M_ALT),
+        Transition::PrintAndExit("beta".into())
+    );
+}
+
+/// Wayland order: the compositor sends the modifiers event *before* the key
+/// release, so the Alt release arrives with alt already cleared. The confirm
+/// keys off the released keysym — not the stale modifier bits (which is how
+/// the port used to lose the confirm on Wayland entirely).
+#[test]
+fn alt_tab_release_confirms_on_wayland_event_order() {
+    let cfg = Config {
+        alt_tab: true,
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta", "gamma"]);
+
+    assert_eq!(key(&mut menu, ks::KEY_Tab, M_ALT), Transition::Redraw);
+    assert_eq!(menu.key_release(ks::KEY_Tab, M_ALT), Transition::Nop);
+    assert_eq!(
+        menu.key_release(ks::KEY_Alt_L, M_NONE),
+        Transition::PrintAndExit("beta".into())
+    );
+}
+
+/// Tapping Tab twice advances two items; only the final Alt release
+/// confirms.
+#[test]
+fn alt_tab_double_tap_advances_two_items() {
+    let cfg = Config {
+        alt_tab: true,
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta", "gamma"]);
+
+    assert_eq!(key(&mut menu, ks::KEY_Tab, M_ALT), Transition::Redraw);
+    assert_eq!(menu.key_release(ks::KEY_Tab, M_ALT), Transition::Nop);
+    assert_eq!(key(&mut menu, ks::KEY_Tab, M_ALT), Transition::Redraw);
+    assert_eq!(menu.selection.selected, Some(2));
+    assert_eq!(menu.key_release(ks::KEY_Tab, M_ALT), Transition::Nop);
+    assert_eq!(
+        menu.key_release(ks::KEY_Alt_L, M_ALT),
+        Transition::PrintAndExit("gamma".into())
+    );
+}
+
+/// Only the release of an Alt keysym confirms. The C version confirmed on
+/// *any* key released while Alt was held; that breadth is narrowed
+/// deliberately.
+#[test]
+fn alt_tab_other_key_releases_do_not_confirm() {
+    let cfg = Config {
+        alt_tab: true,
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta", "gamma"]);
+
+    assert_eq!(key(&mut menu, ks::KEY_Tab, M_ALT), Transition::Redraw);
+    assert_eq!(menu.key_release(ks::KEY_Tab, M_ALT), Transition::Nop);
+    assert_eq!(menu.key_release(ks::KEY_x, M_ALT), Transition::Nop);
+    // still running — the Alt release does the confirming
+    assert_eq!(
+        menu.key_release(ks::KEY_Alt_L, M_ALT),
+        Transition::PrintAndExit("beta".into())
+    );
+}
+
+/// Shift+Alt release does not confirm (C parity: the shift guard stays).
+#[test]
+fn alt_tab_shift_release_does_not_confirm() {
+    let cfg = Config {
+        alt_tab: true,
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta", "gamma"]);
+
+    assert_eq!(key(&mut menu, ks::KEY_Tab, M_ALT), Transition::Redraw);
+    assert_eq!(menu.key_release(ks::KEY_Tab, M_ALT), Transition::Nop);
+    assert_eq!(menu.key_release(ks::KEY_Alt_L, M_SHIFT), Transition::Nop);
+    assert_eq!(
+        menu.key_release(ks::KEY_Alt_L, M_NONE),
+        Transition::PrintAndExit("beta".into())
+    );
+}
+
+/// Alt+Space cancels the mode at runtime: the release no longer confirms,
+/// and Alt+Tab falls back to the plain Tab completion.
+#[test]
+fn alt_space_cancels_alt_tab_mode() {
+    let cfg = Config {
+        alt_tab: true,
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta", "gamma"]);
+
+    assert_eq!(key(&mut menu, ks::KEY_space, M_ALT), Transition::Redraw);
+    // the mode is off: Alt+Tab completes the selection instead of cycling
+    assert_eq!(key(&mut menu, ks::KEY_Tab, M_ALT), Transition::Redraw);
+    assert_eq!(menu.editor.text, "alpha");
+    assert_eq!(menu.key_release(ks::KEY_Tab, M_ALT), Transition::Nop);
+    assert_eq!(menu.key_release(ks::KEY_Alt_L, M_ALT), Transition::Nop);
+}
+
+/// Shift+Tab moves the selection back; before the first item it wraps to
+/// the last. The C branch ran this for every shifted key — typing capitals
+/// no longer moves the selection.
+#[test]
+fn shift_tab_wraps_backward_and_typing_does_not() {
+    let cfg = Config {
+        alt_tab: true,
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta", "gamma"]);
+
+    // a shifted letter is no longer a wrap binding
+    assert_eq!(key(&mut menu, ks::KEY_a, M_SHIFT), Transition::Redraw);
+    assert_eq!(menu.selection.selected, Some(0));
+
+    // Shift+Tab from the first item wraps to the last
+    assert_eq!(key(&mut menu, ks::KEY_Tab, M_SHIFT), Transition::Redraw);
+    assert_eq!(menu.selection.selected, Some(2));
+    // and back
+    assert_eq!(key(&mut menu, ks::KEY_Tab, M_SHIFT), Transition::Redraw);
+    assert_eq!(menu.selection.selected, Some(1));
+}
+
+/// With nothing selected (no matches), the confirm falls back to the input
+/// text — the C version dereferenced a null `sel` here.
+#[test]
+fn alt_tab_release_without_selection_prints_input() {
+    let cfg = Config {
+        alt_tab: true,
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta"]);
+
+    menu.editor.set_text("zz");
+    let _ = menu.do_match();
+    assert!(menu.matcher.matches.is_empty());
+
+    assert_eq!(key(&mut menu, ks::KEY_Tab, M_ALT), Transition::Redraw);
+    assert_eq!(menu.key_release(ks::KEY_Tab, M_ALT), Transition::Nop);
+    assert_eq!(
+        menu.key_release(ks::KEY_Alt_L, M_ALT),
+        Transition::PrintAndExit("zz".into())
+    );
+}
+
+/// Plain Tab in alt-tab mode marks a cycle like the C main switch: the next
+/// release is absorbed once.
+#[test]
+fn plain_tab_marks_a_cycle() {
+    let cfg = Config {
+        alt_tab: true,
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta", "gamma"]);
+
+    assert_eq!(key(&mut menu, ks::KEY_Tab, M_NONE), Transition::Redraw);
+    assert_eq!(menu.selection.selected, Some(0));
+    assert_eq!(menu.key_release(ks::KEY_Alt_L, M_ALT), Transition::Nop);
+    assert_eq!(
+        menu.key_release(ks::KEY_Alt_L, M_ALT),
+        Transition::PrintAndExit("alpha".into())
+    );
+}
+
+/// KeyboardLeft (wl_keyboard.leave / FocusOut) concludes a pending cycle so
+/// the next Alt release confirms instead of being absorbed.
+#[test]
+fn keyboard_left_concludes_pending_cycle() {
+    let cfg = Config {
+        alt_tab: true,
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta", "gamma"]);
+
+    assert_eq!(key(&mut menu, ks::KEY_Tab, M_ALT), Transition::Redraw);
+    menu.keyboard_left();
+    assert_eq!(
+        menu.key_release(ks::KEY_Alt_L, M_NONE),
         Transition::PrintAndExit("beta".into())
     );
 }
@@ -1056,7 +1237,10 @@ fn slide_click_and_drag_set_the_value() {
         Transition::Redraw
     );
     assert_eq!(slide_value(&menu), 25);
-    assert_eq!(menu.slide_motion(Point::new(x_for(0.75), 5)), Transition::Redraw);
+    assert_eq!(
+        menu.slide_motion(Point::new(x_for(0.75), 5)),
+        Transition::Redraw
+    );
     assert_eq!(slide_value(&menu), 75);
     // outside the bar: clamped into the range
     assert_eq!(menu.slide_motion(Point::new(-20, 5)), Transition::Redraw);

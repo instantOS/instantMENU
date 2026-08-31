@@ -7,8 +7,8 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xinerama;
 use x11rb::protocol::xproto::{
     AtomEnum, ChangeWindowAttributesAux, ConfigureWindowAux, ConnectionExt as _, CreateGCAux,
-    CreateWindowAux, EventMask, GrabMode, GrabStatus, InputFocus, PropMode, Visibility, Window,
-    WindowClass,
+    CreateWindowAux, EventMask, GrabMode, GrabStatus, InputFocus, NotifyMode, PropMode, Visibility,
+    Window, WindowClass,
 };
 use x11rb::protocol::Event;
 use x11rb::xcb_ffi::XCBConnection;
@@ -246,6 +246,15 @@ impl X11Backend {
             Event::FocusIn(f) => {
                 if f.event != self.window {
                     Some(BackendEvent::FocusInOther)
+                } else {
+                    None
+                }
+            }
+            Event::FocusOut(f) => {
+                /* only genuine focus changes — the server also emits
+                 * NotifyGrab/NotifyUngrab bookkeeping around our own grabs */
+                if f.event == self.window && f.mode == NotifyMode::NORMAL {
+                    Some(BackendEvent::KeyboardLeft)
                 } else {
                     None
                 }

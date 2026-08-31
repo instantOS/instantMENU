@@ -228,9 +228,9 @@ impl Menu {
 
         /* Cursor x = the width of the text before the cursor (full minus suffix). */
         let mut cursor_position = self.renderer.text_width(&self.editor.text)
-                - self
-                    .renderer
-                    .text_width(&self.editor.text[self.editor.cursor..]);
+            - self
+                .renderer
+                .text_width(&self.editor.text[self.editor.cursor..]);
         cursor_position += self.renderer.cell_inset() - 1;
         if cursor_position < w {
             // disable cursor on password prompt

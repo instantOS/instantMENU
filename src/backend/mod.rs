@@ -169,6 +169,10 @@ pub enum BackendEvent {
     Expose,
     /// Focus went to another window — regrab focus.
     FocusInOther,
+    /// The keyboard left the menu (Wayland `wl_keyboard.leave`, X11
+    /// FocusOut). No further key events arrive until it returns, so
+    /// interactions that conclude on a key release are concluded here.
+    KeyboardLeft,
     /// Window got obscured — raise it again.
     VisibilityObscured,
     /// Our window was destroyed.

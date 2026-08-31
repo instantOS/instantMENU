@@ -217,7 +217,9 @@ Auto\-confirm when exactly one item matches
 Display input as dots
 .TP
 \fB\-\-alt\-tab\fR
-Alt\-tab behaviour
+Alt\-tab behaviour: cycle items with Alt+Tab.
+
+While Alt is held, Tab advances to the next item and Shift+Tab goes back; releasing Alt confirms the selection, Alt+Space cancels the mode. Requires the keyboard grab (the default): without it the compositor keeps the keys and the menu never sees them.
 .TP
 \fB\-\-right\-command\fR \fI<CMD>\fR
 Execute this command on shift + right arrow
@@ -311,6 +313,11 @@ KEYBOARD CONTROL:
   C\-y paste primary  C\-Y paste clipboard
   M\-b word start  M\-f word end  M\-g Home  M\-G End  M\-h Up
   M\-j page down  M\-k page up  M\-l Down  M\-F4 quit
+ALT\-TAB MODE (\-\-alt\-tab):
+  Alt+Tab      advance to the next item
+  Shift+Tab    go back to the previous item
+  release Alt  confirm the selection
+  Alt+Space    cancel alt\-tab mode
 SLIDE MODE (`slide`):
   Left h       decrease by \-\-step        Right l    increase by \-\-step
   Down j       decrease by \-\-big\-step    Up k       increase by \-\-big\-step

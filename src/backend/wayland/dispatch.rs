@@ -297,6 +297,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for EventState {
                 state.key_repeat.cancel();
                 if state.surface.as_ref() == Some(&surface) {
                     state.keyboard_focused = false;
+                    state.events.push_back(BackendEvent::KeyboardLeft);
                 }
                 if let Some(xkb) = state.xkb.as_mut() {
                     xkb.leave();

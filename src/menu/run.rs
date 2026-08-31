@@ -106,6 +106,11 @@ impl Menu {
                     }
                     continue;
                 }
+                BackendEvent::KeyboardLeft => {
+                    /* a release-driven cycle can no longer complete */
+                    self.keyboard_left();
+                    continue;
+                }
                 BackendEvent::KeyPress { sym, mods, text } => self.key_press(sym, mods, &text),
                 BackendEvent::KeyRelease { sym, mods } => self.key_release(sym, mods),
                 BackendEvent::SelectionNotify { text } => self.paste(&text),

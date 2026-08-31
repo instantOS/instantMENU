@@ -29,7 +29,8 @@ bump can also be selected manually from the workflow dispatch form.
 
 ## Features
 
-- alt-tab functionality
+- alt-tab switcher mode: cycle with Alt+Tab, release Alt to pick
+  (`--alt-tab`)
 - mouse support
 - animations and hover over indicators
 - composable item metadata for icons, colors, headings, hidden match terms,

@@ -74,8 +74,6 @@ impl Slider {
         }
     }
 
-
-
     /// Set the value, clamped into the range; true when it changed.
     fn set(&mut self, value: i32) -> bool {
         let value = value.clamp(self.min, self.max);
@@ -141,6 +139,15 @@ impl Menu {
                     continue;
                 }
                 BackendEvent::FocusInOther => {
+                    let title = self.prompt().unwrap_or("slider").to_string();
+                    if self.backend.grab_focus(&title).is_err() {
+                        return ExitStatus::Failure;
+                    }
+                    continue;
+                }
+                BackendEvent::KeyboardLeft => {
+                    /* no release-driven state in slide mode, but get the
+                     * keyboard back like a focus change would */
                     let title = self.prompt().unwrap_or("slider").to_string();
                     if self.backend.grab_focus(&title).is_err() {
                         return ExitStatus::Failure;

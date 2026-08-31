@@ -288,7 +288,8 @@ pub struct Config {
     pub no_grab: bool,
     /* --no-outside-close option; don't close on a click outside the menu */
     pub outside_close: bool,
-    /* --alt-tab option; alt-tab behaviour */
+    /* --alt-tab option; Alt+Tab cycle mode, cancelled at runtime with
+     * Alt+Space */
     pub alt_tab: bool,
     /* --managed option; display as managed wm window */
     pub managed: bool,

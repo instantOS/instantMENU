@@ -440,14 +440,10 @@ mod tests {
     fn rank_distinguishes_values_with_same_label() {
         // same label, different values have distinct keys
         let f = store(&[("/tmp/a", 2.0, 100), ("/tmp/b", 1.0, 100)]);
-        let mut items: Vec<Item> = [
-            "{value=/tmp/b} Report",
-            "{value=/tmp/a} Report",
-            "Other",
-        ]
-        .iter()
-        .map(|s| Item::new(*s))
-        .collect();
+        let mut items: Vec<Item> = ["{value=/tmp/b} Report", "{value=/tmp/a} Report", "Other"]
+            .iter()
+            .map(|s| Item::new(*s))
+            .collect();
         f.rank(&mut items, secs(100));
         // /tmp/a has higher score, so its item should come first
         assert_eq!(items[0].output(), "/tmp/a");

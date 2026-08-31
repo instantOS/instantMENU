@@ -59,6 +59,11 @@ const AFTER_LONG_HELP: &str = concat!(
     "  C-y paste primary  C-Y paste clipboard\n",
     "  M-b word start  M-f word end  M-g Home  M-G End  M-h Up\n",
     "  M-j page down  M-k page up  M-l Down  M-F4 quit\n",
+    "ALT-TAB MODE (--alt-tab):\n",
+    "  Alt+Tab      advance to the next item\n",
+    "  Shift+Tab    go back to the previous item\n",
+    "  release Alt  confirm the selection\n",
+    "  Alt+Space    cancel alt-tab mode\n",
     "SLIDE MODE (`slide`):\n",
     "  Left h       decrease by --step        Right l    increase by --step\n",
     "  Down j       decrease by --big-step    Up k       increase by --big-step\n",
@@ -170,8 +175,13 @@ pub struct MenuArgs {
     #[arg(long)]
     pub password: bool,
 
-    /// Alt-tab behaviour.
-    #[arg(long)]
+    /// Alt-tab behaviour: cycle items with Alt+Tab.
+    ///
+    /// While Alt is held, Tab advances to the next item and Shift+Tab goes
+    /// back; releasing Alt confirms the selection, Alt+Space cancels the
+    /// mode. Requires the keyboard grab (the default): without it the
+    /// compositor keeps the keys and the menu never sees them.
+    #[arg(long, conflicts_with = "input_only")]
     pub alt_tab: bool,
 
     /// Execute this command on shift + right arrow.
@@ -733,6 +743,14 @@ mod tests {
         assert!(
             Args::try_parse_from(["instantmenu", "--single-key", "--match-mode", "fuzzy"]).is_err()
         );
+    }
+
+    #[test]
+    fn alt_tab_conflicts_with_input_only() {
+        /* alt-tab cycles a visible item list; input-only has none */
+        assert!(Args::try_parse_from(["instantmenu", "--alt-tab", "--input-only"]).is_err());
+        let a = Args::try_parse_from(["instantmenu", "--alt-tab"]).unwrap();
+        assert!(a.menu.alt_tab);
     }
 
     #[test]

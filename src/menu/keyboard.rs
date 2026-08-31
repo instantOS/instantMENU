@@ -11,7 +11,7 @@ use xkbcommon::xkb::keysyms as ks;
 use super::measure::TextMeasurer;
 use super::paging;
 use super::transition::Transition;
-use super::Menu;
+use super::{AltTab, Menu};
 use crate::backend::Modifiers;
 use crate::enums::{Direction, EditOp, ExitStatus, Side};
 
@@ -56,29 +56,42 @@ impl Menu {
     /// key_release — alt-tab release handling. Unlike every other confirm
     /// path this does not redraw afterwards (the C event loop called
     /// keyrelease outside the drawing branch).
+    ///
+    /// The confirm fires on the release of the Alt key itself, identified by
+    /// keysym — not on the modifier bitmask. Wayland compositors deliver the
+    /// modifiers event *before* the key release, so by the time Alt's own
+    /// release arrives the cached modifier state no longer has alt set; the
+    /// X11 quirk the C version relied on (a release reports the released
+    /// key's own modifier as still held) does not carry over. This also
+    /// deliberately narrows the C behaviour, which confirmed on *any* key
+    /// released while Alt was held.
     pub(super) fn key_release(&mut self, sym: u32, mods: Modifiers) -> Transition {
-        let _ = sym;
-        if !self.alt_tab {
-            return Transition::Nop;
+        match self.alt_tab {
+            AltTab::Off => Transition::Nop,
+            AltTab::Tabbed => {
+                /* the release ending a cycle is absorbed and re-arms */
+                self.alt_tab = AltTab::Armed;
+                Transition::Nop
+            }
+            AltTab::Armed => {
+                if !is_alt_key(sym) || mods.shift || self.selected_is_heading() {
+                    return Transition::Nop;
+                }
+                let out = self
+                    .selected_output()
+                    .unwrap_or_else(|| self.editor.text.clone());
+                self.confirm(&out, mods)
+            }
         }
-        if self.tabbed {
-            self.tabbed = false;
-            return Transition::Nop;
-        }
+    }
 
-        if mods.alt {
-            if mods.shift {
-                return Transition::Nop;
-            }
-            if self.selected_is_heading() {
-                return Transition::Nop;
-            }
-            let out = self
-                .selected_output()
-                .unwrap_or_else(|| self.editor.text.clone());
-            return self.confirm(&out, mods);
+    /// The backend lost the keyboard (Wayland `wl_keyboard.leave`, X11
+    /// FocusOut). A cycle in progress can no longer complete normally —
+    /// its Tab release never arrives — so conclude it and re-arm.
+    pub(super) fn keyboard_left(&mut self) {
+        if self.alt_tab == AltTab::Tabbed {
+            self.alt_tab = AltTab::Armed;
         }
-        Transition::Nop
     }
 
     /// key_press — remap modifier prefixes, then run the unmodified key
@@ -90,9 +103,9 @@ impl Menu {
                 KeyPath::Done(t) => return t,
             }
         } else if mods.shift {
-            // shift-prefixed keys run the alt-tab wrap-around selection and
-            // still fall through with the original sym (the C switch)
-            self.shift_key();
+            // Shift+Tab runs the alt-tab wrap-around selection and still
+            // falls through with the original sym (the C switch)
+            self.shift_key(sym);
             (sym, mods)
         } else if mods.alt {
             match self.mod1_key(sym, mods) {
@@ -191,19 +204,24 @@ impl Menu {
         KeyPath::Continue(sym, mods)
     }
 
-    /// Shift-prefixed keys (alt-tab wrap-around selection). Any shifted key
-    /// does this while alt-tab mode is on — the C branch never looked at
-    /// the keysym — and still falls through to the main switch.
-    fn shift_key(&mut self) {
-        if self.alt_tab {
-            if let Some(s) = self.selection.selected {
-                if self.select_prev_position(s).is_none() {
-                    // wrap to the last item
-                    self.selection.selected = self.last_selectable_match();
-                    self.recalc_paging();
-                } else {
-                    self.select_prev();
-                }
+    /// Shift+Tab in alt-tab mode: move the selection back one item, wrapping
+    /// to the last. Any shifted key still falls through to the main switch.
+    /// The C branch ran the wrap for *every* shifted key — typing a capital
+    /// letter moved the selection too; only Tab is bound now.
+    fn shift_key(&mut self, sym: u32) {
+        if self.alt_tab == AltTab::Off {
+            return;
+        }
+        if !matches!(sym, ks::KEY_Tab | ks::KEY_KP_Tab) {
+            return;
+        }
+        if let Some(s) = self.selection.selected {
+            if self.select_prev_position(s).is_none() {
+                // wrap to the last item
+                self.selection.selected = self.last_selectable_match();
+                self.recalc_paging();
+            } else {
+                self.select_prev();
             }
         }
     }
@@ -230,20 +248,29 @@ impl Menu {
             s if s == ks::KEY_k => sym = ks::KEY_Prior,
             s if s == ks::KEY_l => sym = ks::KEY_Down,
             s if s == ks::KEY_space => {
-                if self.alt_tab {
-                    self.tabbed = false;
-                    self.alt_tab = false;
+                if self.alt_tab != AltTab::Off {
+                    self.alt_tab = AltTab::Off;
                 }
             }
             s if s == ks::KEY_Tab => {
-                self.tabbed = true;
+                /* Alt+Tab advances the selection and starts a cycle: its own
+                 * release is absorbed and re-arms (repeat presses keep
+                 * advancing). Without the mode it falls through to the main
+                 * switch, where Tab completes the selection. The C version
+                 * compounded the two paths, advancing the selection *and*
+                 * completing the selected item's text. */
+                if self.alt_tab != AltTab::Off {
+                    if self.alt_tab == AltTab::Armed {
+                        self.alt_tab = AltTab::Tabbed;
+                    }
 
-                if let Some(s) = self.selection.selected {
-                    if self.select_next_position(s).is_none() {
-                        self.select_page(0);
-                        self.recalc_paging();
-                    } else {
-                        self.select_next();
+                    if let Some(s) = self.selection.selected {
+                        if self.select_next_position(s).is_none() {
+                            self.select_page(0);
+                            self.recalc_paging();
+                        } else {
+                            self.select_next();
+                        }
                     }
                 }
             }
@@ -358,7 +385,7 @@ impl Menu {
             self.nav_down();
             Transition::Redraw
         } else if sym == ks::KEY_Tab {
-            if !self.alt_tab {
+            if self.alt_tab == AltTab::Off {
                 let Some(s) = self.selection.selected else {
                     return Transition::Nop;
                 };
@@ -366,7 +393,11 @@ impl Menu {
                 self.editor.set_text(&selected_text);
                 return self.do_match().at_least_redraw();
             }
-            self.tabbed = true;
+            /* plain Tab in alt-tab mode marks a cycle, so the next release
+             * is absorbed (the C main switch did the same) */
+            if self.alt_tab == AltTab::Armed {
+                self.alt_tab = AltTab::Tabbed;
+            }
             Transition::Redraw
         } else if sym == ks::KEY_space && self.cfg.space_confirm {
             self.handle_return(mods).at_least_redraw()
@@ -505,4 +536,13 @@ impl Menu {
     fn select_next_position(&self, from: usize) -> Option<usize> {
         (from + 1..self.matcher.matches.len()).find(|&pos| self.matcher.match_is_selectable(pos))
     }
+}
+
+/// The keysyms the standard xkb compat rules map to Mod1 (Alt) — the C
+/// version detected them through the Mod1Mask bit instead.
+fn is_alt_key(sym: u32) -> bool {
+    matches!(
+        sym,
+        ks::KEY_Alt_L | ks::KEY_Alt_R | ks::KEY_Meta_L | ks::KEY_Meta_R
+    )
 }
