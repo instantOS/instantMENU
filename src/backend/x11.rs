@@ -44,6 +44,10 @@ pub struct X11Backend {
     /// as long as the menu, so the server never resets them behind our
     /// back and this cannot go stale.
     current_cursor: Cursor,
+    /// The window origin in root coordinates: exactly what create_window
+    /// and resize_window last placed. Used to map pointer events that the
+    /// grab delivers against the root back to menu-local coordinates.
+    window_rect: Rect,
 
     /* keyboard (ctx/keymap keep the C-level keymap alive for the state; only
      * the state is read from) */
@@ -110,6 +114,7 @@ impl X11Backend {
             drag_cursor,
             resize_h_cursor,
             current_cursor: x11rb::NONE,
+            window_rect: Rect::default(),
             xkb_context,
             xkb_keymap,
             xkb_state,
@@ -129,6 +134,20 @@ impl X11Backend {
 
     fn flush(&self) {
         let _ = self.connection.flush();
+    }
+
+    /// Whether pointer events delivered against the grab window can be
+    /// mapped back to menu-local coordinates. The window origin tracked in
+    /// `window_rect` is only authoritative for a plain override-redirect
+    /// child of the root: managed windows can be reparented or framed by
+    /// the WM, and embed parents (`-W`) sit elsewhere in the window tree.
+    fn root_events_mappable(&self) -> bool {
+        !self.managed && self.parent == self.root
+    }
+
+    /// Root coordinates -> menu-local, via the tracked window origin.
+    fn root_to_menu(&self, x: i16, y: i16) -> Point {
+        Point::new(x as i32 - self.window_rect.x, y as i32 - self.window_rect.y)
     }
 
     /// The grab loop from grabfocus(): 100 tries, managed windows rename
@@ -244,30 +263,48 @@ impl X11Backend {
             }
             Event::ButtonRelease(b) => {
                 let button = MouseButton::from_x11(b.detail)?;
-                /* like presses: under the grab, releases outside our
-                 * window are reported against the grab window and carry
-                 * root-relative coordinates */
-                let source = if b.event == self.window || !self.pointer_grabbed {
-                    InputSource::Menu
-                } else {
-                    InputSource::External
-                };
+                if self.pointer_grabbed && b.event != self.window {
+                    /* like presses: under the grab, releases outside our
+                     * window are delivered against the grab window. Map
+                     * them back where the stored origin is authoritative
+                     * (the release position feeds the hover cursor);
+                     * otherwise report External so the core ends the drag
+                     * without reading unusable coordinates. */
+                    let (pos, source) = if self.root_events_mappable() {
+                        (self.root_to_menu(b.root_x, b.root_y), InputSource::Menu)
+                    } else {
+                        (
+                            Point::new(b.event_x as i32, b.event_y as i32),
+                            InputSource::External,
+                        )
+                    };
+                    return Some(BackendEvent::ButtonRelease { button, pos, source });
+                }
                 Some(BackendEvent::ButtonRelease {
                     button,
                     pos: Point::new(b.event_x as i32, b.event_y as i32),
-                    source,
+                    source: InputSource::Menu,
                 })
             }
             Event::MotionNotify(m) => {
-                /* while the pointer grab is active, motion outside our
-                 * window is reported against the grab window with
-                 * root-relative coordinates — nothing menu-local can be
-                 * derived from them, so the events are dropped (drags
-                 * pause while the pointer is outside and resume when it
-                 * re-enters; Wayland reports surface-local coordinates
-                 * there, so its drags keep tracking) */
                 if self.pointer_grabbed && m.event != self.window {
-                    return None;
+                    /* Under the grab, motion outside our window is
+                     * delivered against the grab window (the root). The
+                     * event carries root coordinates, so map them back
+                     * through the window origin and drags keep tracking
+                     * past the window edge exactly like on Wayland
+                     * (snap-to-value clamps at the range ends). Where the
+                     * origin is not authoritative the events are dropped:
+                     * drags pause and resume on re-entry instead of being
+                     * mis-mapped, and hovers wait for the pointer. */
+                    if !self.root_events_mappable() {
+                        return None;
+                    }
+                    return Some(BackendEvent::Motion {
+                        time: m.time,
+                        pos: self.root_to_menu(m.root_x, m.root_y),
+                        source: InputSource::Menu,
+                    });
                 }
                 Some(BackendEvent::Motion {
                     time: m.time,
@@ -455,6 +492,7 @@ impl Backend for X11Backend {
         self.window = window;
         self.created = true;
         self.managed = managed;
+        self.window_rect = rect;
         if outside_close {
             self.grab_pointer();
         }
@@ -644,6 +682,7 @@ impl Backend for X11Backend {
                 .width(rect.w.max(1) as u32)
                 .height(rect.h.max(1) as u32),
         );
+        self.window_rect = rect;
         self.flush();
     }
 

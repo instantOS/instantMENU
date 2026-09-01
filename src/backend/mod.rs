@@ -155,8 +155,11 @@ pub enum BackendEvent {
         /// Server timestamp (ms) for the 60fps throttle.
         time: u32,
         pos: Point,
-        /// `Menu` when the pointer is over the menu window; the event is
-        /// dropped otherwise, so this is always `Menu` when present.
+        /// Menu-local coordinates wherever the pointer is: over the menu
+        /// window directly, or (X11 grabs) mapped back from root
+        /// coordinates for windows whose origin the backend tracks.
+        /// Backends drop motion they cannot map, so this is always `Menu`
+        /// when present.
         source: InputSource,
     },
     /// Wheel movement. Positive `delta` scrolls down (towards later items),

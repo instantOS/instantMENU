@@ -312,8 +312,9 @@ impl Menu {
     /// Left button released: end the drag. (X11 implicit grabs and Wayland's
     /// button-held pointer focus keep the motion events coming until here.)
     /// A release that landed on the menu re-evaluates the hover cursor from
-    /// the release position; X11 releases under the pointer grab outside
-    /// the window carry root-relative coordinates and are skipped.
+    /// the release position; X11 releases the backend could not map back
+    /// (grab-delivered, exotic window modes) arrive as `External` and are
+    /// skipped.
     pub(super) fn slide_release(
         &mut self,
         button: MouseButton,
