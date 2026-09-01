@@ -7,7 +7,7 @@ use super::matcher::Item;
 use super::transition::Transition;
 use super::Menu;
 use crate::backend::stub::{TestBackend, TestHandle as StubHandle};
-use crate::backend::{BackendEvent, InputSource, Modifiers, MonitorInfo, MouseButton};
+use crate::backend::{BackendEvent, InputSource, MenuCursor, Modifiers, MonitorInfo, MouseButton};
 use crate::config::{Config, SlideSettings, Width};
 use crate::enums::{ExitStatus, Scheme};
 use crate::geom::{Point, Rect, Size};
@@ -1248,7 +1248,7 @@ fn slide_click_and_drag_set_the_value() {
 
     // release ends the drag; further motion does nothing
     assert_eq!(
-        menu.slide_release(MouseButton::Left, Point::new(0, 5)),
+        menu.slide_release(MouseButton::Left, Point::new(0, 5), InputSource::Menu),
         Transition::Nop
     );
     assert_eq!(menu.slide_motion(Point::new(590, 5)), Transition::Nop);
@@ -1261,6 +1261,81 @@ fn slide_motion_without_drag_is_ignored() {
     let (mut menu, _stub, _out) = slide_with(SlideSettings::default());
     assert_eq!(menu.slide_motion(Point::new(0, 5)), Transition::Nop);
     assert_eq!(slide_value(&menu), 50);
+}
+
+/// A left press asks for the dragging cursor, and a release that landed on
+/// the bar straight into the hover cursor. Middle reset and right-click
+/// exit never touch the cursor.
+#[test]
+fn slide_drag_switches_the_cursor() {
+    let (mut menu, stub, _out) = slide_with(SlideSettings::default());
+    assert_eq!(
+        menu.slide_button(MouseButton::Left, M_NONE, Point::new(450, 5)),
+        Transition::Redraw
+    );
+    assert_eq!(
+        menu.slide_release(MouseButton::Left, Point::new(450, 5), InputSource::Menu),
+        Transition::Nop
+    );
+    assert_eq!(
+        stub.state().cursors,
+        vec![MenuCursor::Drag, MenuCursor::ResizeHorizontal]
+    );
+
+    // middle reset and right-click exit never touch the cursor
+    let cursor_count = stub.state().cursors.len();
+    let _ = menu.slide_button(MouseButton::Middle, M_NONE, Point::new(0, 5));
+    assert_eq!(
+        menu.slide_button(MouseButton::Right, M_NONE, Point::new(0, 5)),
+        Transition::Exit(ExitStatus::Failure)
+    );
+    assert_eq!(stub.state().cursors.len(), cursor_count);
+}
+
+/// Hovering the bar shows the horizontal double arrow, the label box the
+/// default arrow. Every motion is forwarded — suppressing repeats is the
+/// backends' job, since only they know when their server-side cursor state
+/// was reset.
+#[test]
+fn slide_hover_cursor_tracks_the_bar() {
+    let (mut menu, stub, _out) = slide_with(SlideSettings::default());
+    // the bar starts after the reserved label box (same geometry the click
+    // mapping uses)
+    let label_for = |v: i32| format!("{v}/{}", 100);
+    let bar_x = menu
+        .cell_width(&label_for(0))
+        .max(menu.cell_width(&label_for(100)))
+        .min(menu.layout.menu_width);
+
+    menu.slide_motion(Point::new(bar_x + 10, 5));
+    menu.slide_motion(Point::new(bar_x + 11, 5)); // still on the bar
+    menu.slide_motion(Point::new(2, 5)); // over the label box
+    assert_eq!(
+        stub.state().cursors,
+        vec![
+            MenuCursor::ResizeHorizontal,
+            MenuCursor::ResizeHorizontal,
+            MenuCursor::Default,
+        ]
+    );
+
+    // a drag release off the menu (X11 root-relative coordinates) must not
+    // feed the hover mapping
+    assert_eq!(
+        menu.slide_button(MouseButton::Left, M_NONE, Point::new(bar_x + 5, 5)),
+        Transition::Redraw
+    );
+    assert_eq!(
+        menu.slide_release(
+            MouseButton::Left,
+            Point::new(4000, 5),
+            InputSource::External
+        ),
+        Transition::Nop
+    );
+    // the press switched to the dragging hand and the external release
+    // added no cursor request at all
+    assert_eq!(stub.state().cursors.last(), Some(&MenuCursor::Drag));
 }
 
 /// Middle click resets to the initial value, scroll steps, right click

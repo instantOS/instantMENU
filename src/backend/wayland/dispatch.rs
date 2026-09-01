@@ -10,6 +10,8 @@ use wayland_client::protocol::{
     wl_surface,
 };
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum};
+use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1;
+use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1;
 use wayland_protocols::wp::primary_selection::zv1::client::{
     zwp_primary_selection_device_manager_v1, zwp_primary_selection_device_v1,
     zwp_primary_selection_offer_v1,
@@ -61,6 +63,8 @@ noop_dispatch!(
     wl_shm_pool::WlShmPool,
     wl_region::WlRegion,
     wl_data_device_manager::WlDataDeviceManager,
+    wp_cursor_shape_device_v1::WpCursorShapeDeviceV1,
+    WpCursorShapeManagerV1,
     zwp_primary_selection_device_manager_v1::ZwpPrimarySelectionDeviceManagerV1,
     zwlr_layer_shell_v1::ZwlrLayerShellV1,
     zxdg_output_manager_v1::ZxdgOutputManagerV1,
@@ -120,6 +124,10 @@ impl Dispatch<wl_registry::WlRegistry, ()> for EventState {
                         state.xdg_output_manager = Some(registry.bind(name, version.min(3), qh, ()))
                     }
                     "wp_viewporter" => state.viewporter = Some(registry.bind(name, 1, qh, ())),
+                    "wp_cursor_shape_manager_v1" => {
+                        state.cursor_shape_manager =
+                            Some(registry.bind(name, version.min(1), qh, ()))
+                    }
                     "zwlr_foreign_toplevel_manager_v1" => {
                         /* Focus state and output_enter/output_leave are all
                          * present in v1; v2 only adds fullscreen controls. */
@@ -339,11 +347,15 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
         let mods = state.xkb.as_ref().map(|x| x.mods).unwrap_or_default();
         let focus = match event {
             wl_pointer::Event::Enter {
+                serial,
                 surface,
                 surface_x,
                 surface_y,
                 ..
             } => {
+                /* set_shape requests must carry the newest enter serial;
+                 * a stale serial makes the compositor ignore the request */
+                state.pointer_enter_serial = serial;
                 let f = if state.surface.as_ref() == Some(&surface) {
                     /* only menu coordinates are meaningful; shield coords
                      * (and unknown ones) are discarded */
@@ -371,6 +383,17 @@ impl Dispatch<wl_pointer::WlPointer, ()> for EventState {
                     PointerFocus::None
                 };
                 state.pointer_focus = f;
+                /* The cursor image is (re)asserted on every enter,
+                 * unconditionally: compositors may reset it between
+                 * surfaces, and set_shape needs the fresh serial anyway.
+                 * Off-menu surfaces show the plain arrow; the remembered
+                 * cursor survives so re-entering the menu restores it
+                 * without waiting for the next motion. */
+                match f {
+                    PointerFocus::Menu => state.reassert_cursor(),
+                    PointerFocus::Shield => state.shield_cursor(),
+                    PointerFocus::None => {}
+                }
                 return;
             }
             wl_pointer::Event::Leave { .. } => {

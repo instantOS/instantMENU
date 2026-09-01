@@ -7,8 +7,8 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xinerama;
 use x11rb::protocol::xproto::{
     AtomEnum, ChangeWindowAttributesAux, ConfigureWindowAux, ConnectionExt as _, CreateGCAux,
-    CreateWindowAux, EventMask, GrabMode, GrabStatus, InputFocus, NotifyMode, PropMode, Visibility,
-    Window, WindowClass,
+    CreateWindowAux, Cursor, EventMask, FontWrapper, GrabMode, GrabStatus, InputFocus, NotifyMode,
+    PropMode, Visibility, Window, WindowClass,
 };
 use x11rb::protocol::Event;
 use x11rb::xcb_ffi::XCBConnection;
@@ -17,8 +17,8 @@ use xkbcommon::xkb::{self, Keycode};
 
 use super::poll::{first_ready, poll_fds, poll_in, remaining_ms, PollOutcome};
 use super::{
-    scroll, translate_key, Backend, BackendEvent, EventPoll, InputSource, Modifiers, MonitorInfo,
-    MouseButton,
+    scroll, translate_key, Backend, BackendEvent, EventPoll, InputSource, MenuCursor, Modifiers,
+    MonitorInfo, MouseButton,
 };
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
@@ -34,6 +34,16 @@ pub struct X11Backend {
     created: bool,
     managed: bool,
     pointer_grabbed: bool,
+    /* cursor images for set_cursor; all NONE when loading failed, in
+     * which case the default arrow stays and calls become no-ops */
+    default_cursor: Cursor,
+    drag_cursor: Cursor,
+    resize_h_cursor: Cursor,
+    /// The cursor id most recently sent to the server, for dropping
+    /// repeats. The window attribute and the grab cursor both live exactly
+    /// as long as the menu, so the server never resets them behind our
+    /// back and this cannot go stale.
+    current_cursor: Cursor,
 
     /* keyboard (ctx/keymap keep the C-level keymap alive for the state; only
      * the state is read from) */
@@ -75,6 +85,11 @@ impl X11Backend {
         let (xkb_context, xkb_keymap, xkb_state) = xkb_setup(&connection)?;
         let atoms = intern_atoms(&connection)?;
         let monitors = query_monitors(&connection);
+        let (default_cursor, drag_cursor, resize_h_cursor) = load_cursors(
+            &connection,
+            screen_number,
+        )
+        .unwrap_or((x11rb::NONE, x11rb::NONE, x11rb::NONE));
         let (root_width, root_height) = (
             screen.width_in_pixels as i32,
             screen.height_in_pixels as i32,
@@ -91,6 +106,10 @@ impl X11Backend {
             created: false,
             managed: false,
             pointer_grabbed: false,
+            default_cursor,
+            drag_cursor,
+            resize_h_cursor,
+            current_cursor: x11rb::NONE,
             xkb_context,
             xkb_keymap,
             xkb_state,
@@ -225,17 +244,37 @@ impl X11Backend {
             }
             Event::ButtonRelease(b) => {
                 let button = MouseButton::from_x11(b.detail)?;
+                /* like presses: under the grab, releases outside our
+                 * window are reported against the grab window and carry
+                 * root-relative coordinates */
+                let source = if b.event == self.window || !self.pointer_grabbed {
+                    InputSource::Menu
+                } else {
+                    InputSource::External
+                };
                 Some(BackendEvent::ButtonRelease {
                     button,
                     pos: Point::new(b.event_x as i32, b.event_y as i32),
+                    source,
+                })
+            }
+            Event::MotionNotify(m) => {
+                /* while the pointer grab is active, motion outside our
+                 * window is reported against the grab window with
+                 * root-relative coordinates — nothing menu-local can be
+                 * derived from them, so the events are dropped (drags
+                 * pause while the pointer is outside and resume when it
+                 * re-enters; Wayland reports surface-local coordinates
+                 * there, so its drags keep tracking) */
+                if self.pointer_grabbed && m.event != self.window {
+                    return None;
+                }
+                Some(BackendEvent::Motion {
+                    time: m.time,
+                    pos: Point::new(m.event_x as i32, m.event_y as i32),
                     source: InputSource::Menu,
                 })
             }
-            Event::MotionNotify(m) => Some(BackendEvent::Motion {
-                time: m.time,
-                pos: Point::new(m.event_x as i32, m.event_y as i32),
-                source: InputSource::Menu,
-            }),
             Event::Expose(e) => {
                 if e.count == 0 {
                     Some(BackendEvent::Expose)
@@ -515,6 +554,36 @@ impl Backend for X11Backend {
         self.flush();
     }
 
+    /// Cursor switching on two levels: the window attribute covers the
+    /// ordinary pointer-over-the-window case, and an active outside-click
+    /// grab gets its own update because the grab cursor wins while it is
+    /// active (Time None leaves the grab's timing untouched). Repeats are
+    /// dropped against `current_cursor`; see the field comment for why
+    /// that cannot suppress a needed update.
+    fn set_cursor(&mut self, cursor: MenuCursor) {
+        let target = match cursor {
+            MenuCursor::Default => self.default_cursor,
+            MenuCursor::Drag => self.drag_cursor,
+            MenuCursor::ResizeHorizontal => self.resize_h_cursor,
+        };
+        if target == x11rb::NONE || target == self.current_cursor {
+            return; // loading failed at startup, or already in effect
+        }
+        self.current_cursor = target;
+        let _ = self.connection.change_window_attributes(
+            self.window,
+            &ChangeWindowAttributesAux::new().cursor(target),
+        );
+        if self.pointer_grabbed {
+            let _ = self.connection.change_active_pointer_grab(
+                target,
+                x11rb::CURRENT_TIME,
+                EventMask::BUTTON_PRESS,
+            );
+        }
+        self.flush();
+    }
+
     fn present(&mut self, canvas: &Canvas) {
         if !self.created {
             return;
@@ -706,6 +775,65 @@ fn query_monitors(connection: &XCBConnection) -> Vec<MonitorInfo> {
         }
     }
     monitors
+}
+
+/// Cursor images for [`Backend::set_cursor`]: the default arrow, the
+/// dragging hand, and the horizontal double arrow. Cursor themes are
+/// preferred; the core `cursor` font — the same glyphs dwm's own cursors
+/// come from — fills in when a theme lacks a name. `None` on any failure
+/// (switching then stays disabled).
+fn load_cursors(
+    connection: &XCBConnection,
+    screen_number: usize,
+) -> Option<(Cursor, Cursor, Cursor)> {
+    let database = x11rb::resource_manager::new_from_default(connection).ok()?;
+    let handle = x11rb::cursor::Handle::new(connection, screen_number, &database)
+        .ok()?
+        .reply()
+        .ok()?;
+    let from_theme = |name: &str| handle.load_cursor(connection, name).unwrap_or(x11rb::NONE);
+    let or_font = |cursor: Cursor, glyph: u16| -> Cursor {
+        if cursor != x11rb::NONE {
+            cursor
+        } else {
+            core_font_cursor(connection, glyph).unwrap_or(x11rb::NONE)
+        }
+    };
+    let default = or_font(from_theme("left_ptr"), GLYPH_LEFT_PTR);
+    let drag = or_font(from_theme("grabbing"), GLYPH_FLEUR);
+    let resize_h = or_font(from_theme("ew-resize"), GLYPH_SB_H_DOUBLE_ARROW);
+    (default != x11rb::NONE && drag != x11rb::NONE && resize_h != x11rb::NONE)
+        .then_some((default, drag, resize_h))
+}
+
+/// Glyph numbers in the core `cursor` font (`XC_*` in X11/cursorfont.h).
+const GLYPH_LEFT_PTR: u16 = 34;
+const GLYPH_FLEUR: u16 = 26;
+const GLYPH_SB_H_DOUBLE_ARROW: u16 = 54;
+
+/// A cursor straight from the core `cursor` font, black on white like
+/// XCreateFontCursor. `None` when the font is unavailable.
+fn core_font_cursor(connection: &XCBConnection, glyph: u16) -> Option<Cursor> {
+    let cursor = connection.generate_id().ok()?;
+    let font = FontWrapper::open_font(connection, b"cursor").ok()?;
+    connection
+        .create_glyph_cursor(
+            cursor,
+            font.font(),
+            font.font(),
+            glyph,
+            glyph + 1,
+            // foreground color
+            0,
+            0,
+            0,
+            // background color
+            u16::MAX,
+            u16::MAX,
+            u16::MAX,
+        )
+        .ok()?;
+    Some(cursor)
 }
 
 /// X11 key/button mask -> semantic modifiers. Named protocol flags instead

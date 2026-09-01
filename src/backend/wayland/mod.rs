@@ -24,7 +24,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_l
 use xkbcommon::xkb::Keycode;
 
 use super::poll::{first_ready, poll_fds, poll_in, remaining_ms, PollOutcome};
-use super::{lookup_key, Backend, BackendEvent, EventPoll, MonitorInfo};
+use super::{lookup_key, Backend, BackendEvent, EventPoll, MenuCursor, MonitorInfo};
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
 use probe::PROBE_TIMEOUT_MS;
@@ -451,6 +451,13 @@ impl Backend for WaylandBackend {
         if let Some(toplevel) = &self.state.xdg_toplevel {
             toplevel.set_title(title.to_string());
         }
+    }
+
+    /// Cursor changes through `wp_cursor_shape_v1`; the compositor picks the
+    /// themed image. Compositors without the protocol keep the default.
+    fn set_cursor(&mut self, cursor: MenuCursor) {
+        self.state.request_cursor(cursor);
+        let _ = self.connection.flush();
     }
 
     fn present(&mut self, canvas: &Canvas) {

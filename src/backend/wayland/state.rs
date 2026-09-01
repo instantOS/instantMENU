@@ -9,6 +9,8 @@ use wayland_client::protocol::{
     wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface,
 };
 use wayland_client::QueueHandle;
+use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::{self, Shape};
+use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1;
 use wayland_protocols::wp::primary_selection::zv1::client::{
     zwp_primary_selection_device_manager_v1, zwp_primary_selection_device_v1,
     zwp_primary_selection_offer_v1,
@@ -26,7 +28,7 @@ use super::probe::Probe;
 use super::selection::OfferTracker;
 use super::shield::Shield;
 use super::shm::{blit_frame, MemfdPool, ShmPool};
-use crate::backend::{BackendEvent, MonitorInfo};
+use crate::backend::{BackendEvent, MenuCursor, MonitorInfo};
 use crate::geom::Point;
 use crate::render::Color;
 
@@ -73,6 +75,17 @@ pub struct EventState {
     pub(super) pointer_focus: PointerFocus,
     pub(super) data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
     pub(super) data_device: Option<wl_data_device::WlDataDevice>,
+    /// Cursor-shape protocol: the manager arrives with the globals, the
+    /// device is derived from the pointer once both exist.
+    pub(super) cursor_shape_manager: Option<WpCursorShapeManagerV1>,
+    pub(super) cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
+    /// Serial of the latest `wl_pointer.enter`; `set_shape` requests carry
+    /// it and are ignored by the compositor when it is not the newest.
+    pub(super) pointer_enter_serial: u32,
+    /// The cursor the menu last asked to see on the menu surface. Sent on
+    /// request (repeats deduped) and re-asserted on every menu-surface
+    /// enter; kept across shield detours so re-entering restores it.
+    pub(super) desired_cursor: MenuCursor,
     pub(super) primary_manager:
         Option<zwp_primary_selection_device_manager_v1::ZwpPrimarySelectionDeviceManagerV1>,
     pub(super) primary_device: Option<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1>,
@@ -172,6 +185,10 @@ impl EventState {
             pointer_focus: PointerFocus::None,
             data_device_manager: None,
             data_device: None,
+            cursor_shape_manager: None,
+            cursor_shape_device: None,
+            pointer_enter_serial: 0,
+            desired_cursor: MenuCursor::Default,
             primary_manager: None,
             primary_device: None,
             layer_shell: None,
@@ -337,6 +354,75 @@ impl EventState {
             manager.destroy();
         }
     }
+
+    /// Remember the cursor the menu wants on the menu surface and apply it.
+    /// Repeat requests for the cursor already in effect are dropped here —
+    /// hover updates run at motion frequency — while the (re)enter paths
+    /// ([`EventState::reassert_cursor`]/[`EventState::shield_cursor`])
+    /// always send unconditionally, so the dedupe can never suppress a
+    /// request the compositor still needs after a focus change.
+    pub(super) fn request_cursor(&mut self, cursor: MenuCursor) {
+        if self.desired_cursor == cursor {
+            return;
+        }
+        self.desired_cursor = cursor;
+        self.send_cursor(shape_of(cursor));
+    }
+
+    /// Re-assert the remembered cursor after a `wl_pointer.enter` on the
+    /// menu surface. Unconditional by design: the request needs the fresh
+    /// enter serial regardless of what was sent before, and compositors
+    /// may reset the cursor image between surfaces.
+    pub(super) fn reassert_cursor(&mut self) {
+        self.send_cursor(shape_of(self.desired_cursor));
+    }
+
+    /// The pointer moved onto a shield (outside the menu): the plain arrow
+    /// shows there. `desired_cursor` is kept, so re-entering the menu
+    /// restores the hover/drag cursor without waiting for the next motion.
+    pub(super) fn shield_cursor(&mut self) {
+        self.send_cursor(Shape::Default);
+    }
+
+    /// Send one `set_shape` request. Safe to call any time: a compositor
+    /// without the protocol, a missing pointer, or a pointer that is not
+    /// on one of our surfaces skips the request, and a stale serial is
+    /// ignored by the compositor.
+    fn send_cursor(&mut self, shape: Shape) {
+        if self.pointer_focus == PointerFocus::None {
+            return;
+        }
+        let serial = self.pointer_enter_serial;
+        let Some(device) = self.cursor_device() else {
+            return;
+        };
+        device.set_shape(serial, shape);
+    }
+
+    /// The `wp_cursor_shape_device_v1` for the pointer, created on first
+    /// use from the manager bound at startup. The proxy is a cheap handle
+    /// and is cloned out.
+    fn cursor_device(&mut self) -> Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1> {
+        if let Some(device) = &self.cursor_shape_device {
+            return Some(device.clone());
+        }
+        let manager = self.cursor_shape_manager.as_ref()?;
+        let pointer = self.pointer.as_ref()?;
+        let qh = self.queue_handle.clone();
+        let device = manager.get_pointer(pointer, &qh, ());
+        Some(self.cursor_shape_device.insert(device).clone())
+    }
+}
+
+/// The protocol shape for a menu cursor. `Grabbing` is the closed hand
+/// instantWM itself shows while dragging windows; `EwResize` is the
+/// horizontal double arrow.
+fn shape_of(cursor: MenuCursor) -> Shape {
+    match cursor {
+        MenuCursor::Default => Shape::Default,
+        MenuCursor::Drag => Shape::Grabbing,
+        MenuCursor::ResizeHorizontal => Shape::EwResize,
+    }
 }
 
 impl Drop for EventState {
@@ -345,6 +431,12 @@ impl Drop for EventState {
         self.destroy_shields();
         self.destroy_probes();
         self.finish_xdg_outputs();
+        if let Some(device) = self.cursor_shape_device.take() {
+            device.destroy();
+        }
+        if let Some(manager) = self.cursor_shape_manager.take() {
+            manager.destroy();
+        }
         for toplevel in self.toplevels.drain(..) {
             toplevel.proxy.destroy();
         }

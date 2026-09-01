@@ -23,12 +23,13 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.9"
 
 # X11 backend (allow-unsafe-code enables xcb_ffi::XCBConnection, needed for
-# AsRawXcbConnection → xkbcommon-x11)
-x11rb = { version = "0.13", features = ["xinerama", "allow-unsafe-code"] }
+# AsRawXcbConnection → xkbcommon-x11); cursor loads themed font cursors
+x11rb = { version = "0.13", features = ["xinerama", "allow-unsafe-code", "cursor"] }
 
-# Wayland backend
+# Wayland backend (unstable is also required by the staged cursor-shape
+# protocol's tablet dependency)
 wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 
 # Keyboard state (both backends), links against system libxkbcommon[-x11]

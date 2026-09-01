@@ -197,6 +197,21 @@ pub enum EventPoll {
     Closed,
 }
 
+/// A pointer cursor the menu asks to see, normalized across backends.
+/// Wayland maps the shapes to `wp_cursor_shape_v1` (the compositor picks the
+/// themed image); X11 maps them to cursor-theme/font cursors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuCursor {
+    /// The ordinary arrow.
+    Default,
+    /// The closed-hand "grabbing" cursor shown while dragging (the one
+    /// instantWM itself uses when dragging windows around).
+    Drag,
+    /// The horizontal double-headed arrow (↔) shown while hovering the
+    /// slider's draggable bar.
+    ResizeHorizontal,
+}
+
 pub trait Backend {
     fn monitors(&self) -> &[MonitorInfo];
     /// Size of the root window / total output area (`drw->w/h`).
@@ -262,6 +277,15 @@ pub trait Backend {
     fn grab_focus(&mut self, title: &str) -> Result<(), String>;
     /// Set the window title (WM_NAME / _NET_WM_NAME).
     fn set_title(&mut self, title: &str);
+
+    /// Display the given pointer cursor while the menu owns the pointer
+    /// appearance (over the menu window / during an active drag). Hover
+    /// updates run at motion frequency, so implementations dedupe repeats
+    /// themselves — the core forwards every request because only the
+    /// backend knows when its server-side cursor state was reset and the
+    /// request must go through regardless. A default no-op: backends or
+    /// platforms without cursor control simply keep the default arrow.
+    fn set_cursor(&mut self, _cursor: MenuCursor) {}
 
     /// Blit the canvas to the window (`drw_map`).
     fn present(&mut self, canvas: &Canvas);

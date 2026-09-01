@@ -10,7 +10,7 @@ use std::os::fd::RawFd;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::{Backend, BackendEvent, EventPoll, Modifiers, MonitorInfo};
+use super::{Backend, BackendEvent, EventPoll, MenuCursor, Modifiers, MonitorInfo};
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
 
@@ -22,6 +22,8 @@ pub(crate) struct TestState {
     pub(crate) focus_titles: Vec<String>,
     pub(crate) selection_requests: Vec<bool>,
     pub(crate) resizes: Vec<Rect>,
+    /// Cursor shapes requested through `set_cursor`, in order.
+    pub(crate) cursors: Vec<MenuCursor>,
     /// `focused_monitor` probes.
     pub(crate) focus_calls: usize,
     /// `pointer_position` probes.
@@ -117,6 +119,10 @@ impl Backend for TestBackend {
     }
 
     fn set_title(&mut self, _title: &str) {}
+
+    fn set_cursor(&mut self, cursor: MenuCursor) {
+        self.state.lock().unwrap().cursors.push(cursor);
+    }
 
     fn present(&mut self, _canvas: &Canvas) {
         self.state.lock().unwrap().presents += 1;

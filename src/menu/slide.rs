@@ -11,7 +11,7 @@
 use super::animate::spawn_detached;
 use super::transition::Transition;
 use super::Menu;
-use crate::backend::{BackendEvent, InputSource, Modifiers, MouseButton};
+use crate::backend::{BackendEvent, InputSource, MenuCursor, Modifiers, MouseButton};
 use crate::config::SlideSettings;
 use crate::enums::{ExitStatus, Scheme};
 use crate::geom::{Point, Rect};
@@ -130,7 +130,12 @@ impl Menu {
                 BackendEvent::ButtonPress {
                     button, mods, pos, ..
                 } => self.slide_button(button, mods, pos),
-                BackendEvent::ButtonRelease { button, pos, .. } => self.slide_release(button, pos),
+                BackendEvent::ButtonRelease {
+                    button,
+                    pos,
+                    source,
+                    ..
+                } => self.slide_release(button, pos, source),
                 BackendEvent::Scroll { delta } => self.slide_scroll(delta),
                 BackendEvent::Motion { pos, .. } => self.slide_motion(pos),
                 BackendEvent::Destroyed => return ExitStatus::Failure,
@@ -195,28 +200,33 @@ impl Menu {
         }
     }
 
-    /// Snap the value to a pointer x position within the bar.
-    /// Clicks on the label box clamp to the minimum; the bar itself starts
-    /// after the reserved label width so visual fill and pointer mapping align.
+    /// Snap the value to a pointer x position within the bar. Clicks on the
+    /// label box clamp to the minimum; the bar itself starts after the
+    /// reserved label width so visual fill and pointer mapping align.
     fn slide_snap_to_x(&mut self, x: i32) -> Transition {
+        let bar_x = self.slide_label_box_width();
+        let bar_w = (self.layout.menu_width - bar_x).max(1);
+        let fraction = (x - bar_x) as f64 / bar_w as f64;
+        self.slide_edit(|s| s.snap_to_fraction(fraction))
+    }
+
+    /// Width of the reserved label box. The bar starts right after it, so
+    /// the visual fill, click mapping and the hover cursor all share this
+    /// geometry and stay aligned with each other.
+    fn slide_label_box_width(&mut self) -> i32 {
         let width = self.layout.menu_width;
         let Some(slider) = self.slider.as_ref() else {
-            return Transition::Nop;
+            return 0;
         };
         let prompt = self.prompt().map(|s| s.to_string());
         let prompt_ref = prompt.as_deref();
         let label_for_min = slider.label_for(slider.min, prompt_ref);
         let label_for_max = slider.label_for(slider.max, prompt_ref);
         let label_current = slider.label(prompt_ref);
-        let label_box_width = self
-            .cell_width(&label_for_min)
+        self.cell_width(&label_for_min)
             .max(self.cell_width(&label_for_max))
             .max(self.cell_width(&label_current))
-            .min(width);
-        let bar_x = label_box_width;
-        let bar_w = (width - bar_x).max(1);
-        let fraction = (x - bar_x) as f64 / bar_w as f64;
-        self.slide_edit(|s| s.snap_to_fraction(fraction))
+            .min(width)
     }
 
     /* ── keyboard ───────────────────────────────────────────────────────── */
@@ -282,6 +292,9 @@ impl Menu {
                 if let Some(slider) = self.slider.as_mut() {
                     slider.dragging = true;
                 }
+                /* dragging hand while the button is held, like dragging a
+                 * window around */
+                self.backend.set_cursor(MenuCursor::Drag);
                 self.slide_snap_to_x(pos.x)
             }
             // reset to the initial value, like islide's middle click
@@ -298,10 +311,21 @@ impl Menu {
 
     /// Left button released: end the drag. (X11 implicit grabs and Wayland's
     /// button-held pointer focus keep the motion events coming until here.)
-    pub(super) fn slide_release(&mut self, button: MouseButton, _pos: Point) -> Transition {
+    /// A release that landed on the menu re-evaluates the hover cursor from
+    /// the release position; X11 releases under the pointer grab outside
+    /// the window carry root-relative coordinates and are skipped.
+    pub(super) fn slide_release(
+        &mut self,
+        button: MouseButton,
+        pos: Point,
+        source: InputSource,
+    ) -> Transition {
         if button == MouseButton::Left {
             if let Some(slider) = self.slider.as_mut() {
                 slider.dragging = false;
+            }
+            if source == InputSource::Menu {
+                self.slide_hover(pos.x);
             }
         }
         Transition::Nop
@@ -312,8 +336,24 @@ impl Menu {
         if dragging {
             self.slide_snap_to_x(pos.x)
         } else {
+            self.slide_hover(pos.x);
             Transition::Nop
         }
+    }
+
+    /// Hover feedback: the horizontal double arrow while the pointer is
+    /// over the draggable bar, the default arrow over the label box. Every
+    /// motion event is forwarded; suppressing repeats is the backend's job
+    /// (only the backend knows when its server-side cursor state was reset
+    /// and a request must go through regardless).
+    fn slide_hover(&mut self, x: i32) {
+        let bar_x = self.slide_label_box_width();
+        let on_bar = x >= bar_x && bar_x < self.layout.menu_width;
+        self.backend.set_cursor(if on_bar {
+            MenuCursor::ResizeHorizontal
+        } else {
+            MenuCursor::Default
+        });
     }
 
     /* ── drawing ────────────────────────────────────────────────────────── */
@@ -322,26 +362,21 @@ impl Menu {
     /// and the "prompt  value/max" label in a normal-scheme box on top (the
     /// box keeps the label readable over the fill, islide's dark label strip).
     pub(in crate::menu) fn draw_slide(&mut self) {
+        let width = self.layout.menu_width;
+        let height = self.layout.menu_height;
+        // Reserve the widest possible label so the bar start stays stable
+        // as the value changes (avoids jitter and keeps click mapping and
+        // hover aligned with the drawn geometry).
+        let label_box_width = self.slide_label_box_width();
         let Some(slider) = self.slider.as_ref() else {
             return;
         };
-        let width = self.layout.menu_width;
-        let height = self.layout.menu_height;
         let ratio = slider.ratio();
 
         let prompt = self.prompt().map(|s| s.to_string());
         let prompt_ref = prompt.as_deref();
         let label = slider.label(prompt_ref);
         let lpad = self.renderer.cell_inset();
-        // Reserve the widest possible label so the bar start stays stable
-        // as the value changes (avoids jitter and keeps click mapping stable).
-        let label_for_min = slider.label_for(slider.min, prompt_ref);
-        let label_for_max = slider.label_for(slider.max, prompt_ref);
-        let label_box_width = self
-            .cell_width(&label_for_min)
-            .max(self.cell_width(&label_for_max))
-            .max(self.cell_width(&label))
-            .min(width);
         let bar_x = label_box_width;
         let bar_w = (width - bar_x).max(0);
         let fill_w = (ratio * bar_w as f64).round() as i32;
