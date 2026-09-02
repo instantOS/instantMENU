@@ -151,7 +151,7 @@ impl WaylandBackend {
             .layer_shell
             .as_ref()
             .ok_or("compositor has no wlr-layer-shell (use -wm for managed windows)")?;
-        let output_index = state.output_for_point(rect.origin());
+        let output_index = state.menu_output_index(rect.origin());
         let output = state.outputs.get(output_index).map(|o| o.proxy.clone());
         let layer_surface = shell.get_layer_surface(
             surface,
@@ -297,6 +297,13 @@ impl Backend for WaylandBackend {
             .position(|output| &output.proxy == focused)
     }
 
+    fn placed_monitor(&self) -> Option<usize> {
+        /* The output the menu surface entered. Set whenever the compositor
+         * resolved a NULL bootstrap binding (or reported the requested one
+         * back); geometry must agree with this pin. */
+        self.state.menu_output
+    }
+
     fn create_window(
         &mut self,
         rect: Rect,
@@ -316,7 +323,7 @@ impl Backend for WaylandBackend {
 
         if !managed && self.state.bootstrap {
             let full = bordered(rect, border_width);
-            let output_index = self.state.output_for_point(full.origin());
+            let output_index = self.state.menu_output_index(full.origin());
             let monitor = self
                 .state
                 .outputs
@@ -353,7 +360,7 @@ impl Backend for WaylandBackend {
         }
     }
 
-    fn acquire_keyboard(&mut self, output: usize, layer_menu: bool) -> Result<(), String> {
+    fn acquire_keyboard(&mut self, output: Option<usize>, layer_menu: bool) -> Result<(), String> {
         /* xdg-toplevel has no protocol mechanism equivalent to layer-shell's
          * exclusive keyboard interactivity. Do not create a second surface
          * that cannot be cleanly transformed into the requested window. */
@@ -371,7 +378,14 @@ impl Backend for WaylandBackend {
             .ok_or("compositor has no wlr-layer-shell")?;
         let shm = state.shm.as_ref().ok_or("compositor has no wl_shm")?;
         let surface = compositor.create_surface(&state.queue_handle, ());
-        let output = state.outputs.get(output).map(|entry| &entry.proxy);
+        /* None lets the compositor pick the output — the layer-shell
+         * convention is "the one the user most recently interacted with",
+         * which is exactly the focused-monitor question that protocol
+         * clients cannot otherwise ask. The actual choice is learned from
+         * `wl_surface.enter` and reported via `placed_monitor`. */
+        let output = output
+            .and_then(|index| state.outputs.get(index))
+            .map(|entry| &entry.proxy);
         let layer_surface = shell.get_layer_surface(
             &surface,
             output,
@@ -470,7 +484,7 @@ impl Backend for WaylandBackend {
         let full = bordered(rect, self.state.border_width);
         let w = full.w.max(1);
         let h = full.h.max(1);
-        let output_index = self.state.output_for_point(full.origin());
+        let output_index = self.state.menu_output_index(full.origin());
         let monitor = self
             .state
             .outputs

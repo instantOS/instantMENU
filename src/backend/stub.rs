@@ -40,6 +40,8 @@ pub(crate) struct TestBackend {
     pub(crate) root: Size,
     pub(crate) focused: Option<usize>,
     pub(crate) pointer: Option<Point>,
+    /// Output the backend pretends the menu surface was placed on.
+    pub(crate) placed: Option<usize>,
     /// The live event queue; tests may also reach it through a handle.
     pub(crate) feed: Arc<Mutex<VecDeque<BackendEvent>>>,
     pub(crate) state: Arc<Mutex<TestState>>,
@@ -52,6 +54,7 @@ impl Default for TestBackend {
             root: Size::new(1920, 1080),
             focused: None,
             pointer: None,
+            placed: None,
             feed: Arc::new(Mutex::new(VecDeque::new())),
             state: Arc::new(Mutex::new(TestState::default())),
         }
@@ -97,6 +100,10 @@ impl Backend for TestBackend {
     fn focused_monitor(&self) -> Option<usize> {
         self.state.lock().unwrap().focus_calls += 1;
         self.focused
+    }
+
+    fn placed_monitor(&self) -> Option<usize> {
+        self.placed
     }
 
     fn create_window(

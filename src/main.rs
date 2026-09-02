@@ -235,34 +235,25 @@ fn acquire_keyboard(backend: &mut Box<dyn backend::Backend>, cfg: &Config) {
         .iter()
         .map(|monitor| monitor.rect)
         .collect();
+    /* Auto follows keyboard focus. When no monitor could be identified that
+     * way (no activated window — e.g. an empty focused desktop — or one
+     * spanning several outputs), None asks the compositor to place the menu
+     * on its focused output rather than us guessing an index. */
     let output = match cfg.monitor {
-        MonitorChoice::Index(index) if (index as usize) < monitor_rects.len() => index as usize,
-        MonitorChoice::Index(_) => 0,
+        MonitorChoice::Index(index) if (index as usize) < monitor_rects.len() => {
+            Some(index as usize)
+        }
+        MonitorChoice::Index(_) => Some(0),
         MonitorChoice::Auto if cfg.follow_cursor => backend
             .pointer_position()
             .and_then(|point| {
                 monitor_rects
                     .iter()
                     .position(|rect| rect.contains_exclusive(point))
-            })
-            .unwrap_or(0),
-        /* Auto follows keyboard focus. When no monitor could be identified
-         * that way (no activated window — e.g. an empty focused desktop —
-         * or one spanning several outputs), the pointer is the next-best
-         * hint before deterministically falling back to the first output. */
+            }),
         MonitorChoice::Auto => backend
             .focused_monitor()
-            .filter(|index| *index < monitor_rects.len())
-            .or_else(|| {
-                backend
-                    .pointer_position()
-                    .and_then(|point| {
-                        monitor_rects
-                            .iter()
-                            .position(|rect| rect.contains_exclusive(point))
-                    })
-            })
-            .unwrap_or(0),
+            .filter(|index| *index < monitor_rects.len()),
     };
     /* --embed is X11-only and Wayland intentionally ignores it; only an
      * xdg-shell managed window prevents layer-surface reuse. */

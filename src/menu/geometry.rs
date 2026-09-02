@@ -509,9 +509,10 @@ fn clamp_origin_to_monitor(origin: Point, menu: Size, monitor: Rect, border: i32
     Point::new(x, y)
 }
 
-/// Pick the monitor from `--monitor`, the focused monitor, or the pointer.
-/// The pointer probe only runs when keyboard focus is unknowable: ordinary
-/// startup with working focus info never maps probe surfaces.
+/// Pick the monitor from `--monitor`, the output the menu was already
+/// placed on, or the focused monitor. Ordinary Auto never probes the
+/// pointer: the probe is a bounded but real Wayland roundtrip reserved for
+/// explicit follow-cursor placement.
 fn select_monitor(
     monitors: &[MonitorInfo],
     choice: MonitorChoice,
@@ -528,30 +529,34 @@ fn select_monitor(
          * back to zero and does not activate focus-tracking machinery. */
         return 0;
     }
-    /* Follow-cursor's already-fetched point takes priority over keyboard
-     * focus; otherwise the menu could be placed relative to a cursor on a
-     * different output than the selected monitor. */
+    /* Follow-cursor's already-fetched point takes priority over everything;
+     * otherwise the menu could be placed relative to a cursor on a
+     * different output than the selected monitor. Without a pointer answer
+     * the ordinary chain below applies. */
     if pointer_first {
-        return preferred_pointer
-            .and_then(|pointer| monitor_containing(monitors, pointer))
-            .unwrap_or(0);
+        if let Some(found) =
+            preferred_pointer.and_then(|pointer| monitor_containing(monitors, pointer))
+        {
+            return found;
+        }
     }
-    /* Ordinary Auto: follow keyboard focus, then the pointer, then the first
-     * output. A compositor can legitimately report no focus (no activated
-     * window at all, or one spanning several outputs) — the pointer is then
-     * the best remaining hint for the monitor the user is looking at, and
-     * beats a deterministic first output, which on a laptop is the built-in
-     * panel. The Wayland pointer lookup is a bounded probe, so it must stay
-     * behind the focus check to keep the happy path probe-free. */
+    /* The Wayland backend may already have committed the menu surface to an
+     * output (compositor-resolved NULL bootstrap binding, reported via
+     * `wl_surface.enter`). Geometry must agree with that pin — the margins
+     * are relative to the surface's own output. */
+    if let Some(placed) = backend.placed_monitor() {
+        if placed < n {
+            return placed;
+        }
+    }
+    /* Ordinary Auto: follow keyboard focus, then deterministically use the
+     * first output. */
     if let Some(focused) = backend.focused_monitor() {
         if focused < n {
             return focused;
         }
     }
-    backend
-        .pointer_position()
-        .and_then(|pointer| monitor_containing(monitors, pointer))
-        .unwrap_or(0)
+    0
 }
 
 fn monitor_containing(monitors: &[MonitorInfo], pointer: Point) -> Option<usize> {
@@ -622,8 +627,7 @@ mod tests {
     }
 
     #[test]
-    fn auto_uses_focus_then_pointer_then_first_output() {
-        /* Focus known: never probe the pointer. */
+    fn auto_uses_focus_then_falls_back_without_pointer_probe() {
         let mut focused = backend(Some(1), Some(Point::new(10, 10)));
         assert_eq!(
             select_monitor(&monitors(), MonitorChoice::Auto, &mut focused, false, None,),
@@ -631,22 +635,62 @@ mod tests {
         );
         assert_eq!(focused.pointer_calls(), 0);
 
-        /* Focus unknown: the pointer decides, even against output 0. */
-        let mut pointer = backend(None, Some(Point::new(150, 50)));
+        let mut fallback = backend(None, Some(Point::new(150, 50)));
+        fallback.placed = Some(1);
         assert_eq!(
-            select_monitor(&monitors(), MonitorChoice::Auto, &mut pointer, false, None,),
+            select_monitor(&monitors(), MonitorChoice::Auto, &mut fallback, false, None,),
             1
         );
-        assert_eq!(pointer.pointer_calls(), 1);
+        assert_eq!(fallback.pointer_calls(), 0);
 
-        /* Pointer unknown too (probe timeout, no pointer device): the
-         * deterministic first-output fallback. */
-        let mut neither = backend(None, None);
+        /* No placement pin and no focus info: deterministic first output,
+         * never a pointer probe on ordinary startup. */
+        let mut neither = backend(None, Some(Point::new(150, 50)));
         assert_eq!(
             select_monitor(&monitors(), MonitorChoice::Auto, &mut neither, false, None,),
             0
         );
-        assert_eq!(neither.pointer_calls(), 1);
+        assert_eq!(neither.pointer_calls(), 0);
+    }
+
+    #[test]
+    fn placement_pin_beats_focus_heuristics() {
+        /* The surface is committed to output 1; re-deriving monitor 0 from
+         * focus would clamp the margins to the wrong output's origin. */
+        let mut pinned = backend(Some(0), None);
+        pinned.placed = Some(1);
+        assert_eq!(
+            select_monitor(&monitors(), MonitorChoice::Auto, &mut pinned, false, None,),
+            1
+        );
+
+        /* Follow-cursor still wins over the pin when a pointer is known. */
+        let mut cursor = backend(None, Some(Point::new(10, 10)));
+        cursor.placed = Some(1);
+        assert_eq!(
+            select_monitor(
+                &monitors(),
+                MonitorChoice::Auto,
+                &mut cursor,
+                true,
+                Some(Point::new(10, 10)),
+            ),
+            0
+        );
+
+        /* Follow-cursor without a pointer answer falls through to the pin. */
+        let mut cursorless = backend(Some(0), None);
+        cursorless.placed = Some(1);
+        assert_eq!(
+            select_monitor(
+                &monitors(),
+                MonitorChoice::Auto,
+                &mut cursorless,
+                true,
+                None,
+            ),
+            1
+        );
     }
 
     /// Each anchor places the window's top-left corner at the matching
