@@ -84,7 +84,11 @@ impl Dispatch<wl_surface::WlSurface, ()> for EventState {
         /* Only the menu surface's placement matters. Probe and shield
          * surfaces also arrive as WlSurface with () userdata; their enters
          * are handled by their own layer-surface dispatchers. */
-        if !state.surface.as_ref().is_some_and(|surface| surface == proxy) {
+        if !state
+            .surface
+            .as_ref()
+            .is_some_and(|surface| surface == proxy)
+        {
             return;
         }
         if let wl_surface::Event::Enter { output } = event {

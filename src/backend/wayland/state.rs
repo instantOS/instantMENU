@@ -253,7 +253,8 @@ impl EventState {
     /// surface actually entered when the compositor chose it for us, else
     /// the monitor containing `pos`, else the first.
     pub(super) fn menu_output_index(&self, pos: Point) -> usize {
-        self.menu_output.unwrap_or_else(|| self.output_for_point(pos))
+        self.menu_output
+            .unwrap_or_else(|| self.output_for_point(pos))
     }
 
     /// Composite the canvas into a free SHM slot and commit it. Before the

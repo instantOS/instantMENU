@@ -241,10 +241,10 @@ Placeholder inside the input field
 \fB\-a\fR, \fB\-\-animation\-length\fR \fI<N>\fR
 Animation length in frames
 .TP
-\fB\-\-preselect\fR \fI<N>\fR
-Preselected item index.
+\fB\-\-preselect\fR \fI<VALUE>\fR
+Preselect the first item whose output value is VALUE.
 
-Starts from 0.
+An item\*(Aqs output is its `value=` markup when present, otherwise its label. Values are opaque identifiers compared exactly against the final list (after stdin is read); without a match the first item stays selected.
 .TP
 \fB\-\-initial\-text\fR \fI<TEXT>\fR
 Initial input text

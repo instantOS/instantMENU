@@ -274,7 +274,11 @@ pub trait Backend {
     /// the user most recently interacted with) and later reuses that same
     /// surface for the menu. Keeping the operation in the backend avoids
     /// pretending Wayland has an X11-style global grab.
-    fn acquire_keyboard(&mut self, _output: Option<usize>, _layer_menu: bool) -> Result<(), String> {
+    fn acquire_keyboard(
+        &mut self,
+        _output: Option<usize>,
+        _layer_menu: bool,
+    ) -> Result<(), String> {
         self.grab_keyboard()
     }
     /// Monitor the backend has actually committed the menu to, if any

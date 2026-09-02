@@ -11,77 +11,50 @@ use crate::enums::{EditOp, ExitStatus, Side};
 use crate::geom::Point;
 
 impl Menu {
-    /// set_selection — hover selection on motion.
+    /// set_selection — hover selection on motion. The position is kept in
+    /// the menu state: rematches re-apply the hover from it (see
+    /// `do_match`), so a keystroke cannot yank the highlight off the row
+    /// under the pointer and hand it back on the next jitter event.
     pub(super) fn set_selection(&mut self, pos: Point) -> Transition {
+        self.pointer = Some(pos);
+        if self.matcher.matches.is_empty() {
+            return Transition::Nop;
+        }
         let header = self.header();
-        if self.layout.lines > 0 {
-            if self.layout.columns > 0 {
-                self.hover_columns(pos, &header)
-            } else {
-                self.hover_vertical(pos)
+        match self.hovered_match(pos, &header) {
+            Some(item) if self.selection.selected != Some(item) => {
+                self.selection.selected = Some(item);
+                Transition::Redraw
             }
-        } else if !self.matcher.matches.is_empty() {
-            self.hover_horizontal(pos, &header)
+            _ => Transition::Nop,
+        }
+    }
+
+    /// The selectable match under `pos` within the visible page window, or
+    /// None. One hit-test shared by hover and the post-rematch
+    /// re-application; reads the same page window and geometry the
+    /// renderer drew.
+    pub(super) fn hovered_match(&mut self, pos: Point, header: &Header) -> Option<usize> {
+        let hit = if self.layout.lines > 0 {
+            let start = self.selection.page_start.unwrap_or(0);
+            let end = self.paging.next.unwrap_or(self.matcher.matches.len());
+            (start..end).enumerate().find_map(|(i, item)| {
+                let inside = if self.layout.columns > 0 {
+                    self.layout
+                        .grid_cell_rect(i, header.content_x)
+                        .contains(pos)
+                } else {
+                    let (top, bottom) = self.layout.row_band(i);
+                    pos.y >= top && pos.y <= bottom
+                };
+                inside.then_some(item)
+            })
         } else {
-            Transition::Nop
-        }
-    }
-
-    /// Column/grid hover selection: hit-test the same cell layout as draw_grid.
-    fn hover_columns(&mut self, pos: Point, header: &Header) -> Transition {
-        let start = self.selection.page_start.unwrap_or(0);
-        let end = self.paging.next.unwrap_or(self.matcher.matches.len());
-        for (i, item) in (start..end).enumerate() {
-            let cell = self.layout.grid_cell_rect(i, header.content_x);
-            if cell.contains(pos) {
-                if !self.matcher.match_is_selectable(item) {
-                    return Transition::Nop;
-                }
-                if self.selection.selected == Some(item) {
-                    return Transition::Nop;
-                }
-                self.selection.selected = Some(item);
-                return Transition::Redraw;
-            }
-        }
-        Transition::Nop
-    }
-
-    /// Vertical list hover selection: rows only, any x.
-    fn hover_vertical(&mut self, pos: Point) -> Transition {
-        let start = self.selection.page_start.unwrap_or(0);
-        let end = self.paging.next.unwrap_or(self.matcher.matches.len());
-        for (i, item) in (start..end).enumerate() {
-            let (top, bottom) = self.layout.row_band(i);
-            if pos.y >= top && pos.y <= bottom {
-                if !self.matcher.match_is_selectable(item) {
-                    return Transition::Nop;
-                }
-                if self.selection.selected == Some(item) {
-                    return Transition::Nop;
-                }
-                self.selection.selected = Some(item);
-                return Transition::Redraw;
-            }
-        }
-        Transition::Nop
-    }
-
-    /// Horizontal list hover selection.
-    fn hover_horizontal(&mut self, pos: Point, header: &Header) -> Transition {
-        for (item, rect) in self.horizontal_item_rects(header.content_x) {
-            if rect.contains(pos) {
-                if !self.matcher.match_is_selectable(item) {
-                    return Transition::Nop;
-                }
-                if self.selection.selected == Some(item) {
-                    return Transition::Nop;
-                }
-                self.selection.selected = Some(item);
-                return Transition::Redraw;
-            }
-        }
-        Transition::Nop
+            self.horizontal_item_rects(header.content_x)
+                .into_iter()
+                .find_map(|(item, rect)| rect.contains(pos).then_some(item))
+        };
+        hit.filter(|&item| self.matcher.match_is_selectable(item))
     }
 
     /// button_press

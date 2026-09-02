@@ -244,13 +244,11 @@ fn acquire_keyboard(backend: &mut Box<dyn backend::Backend>, cfg: &Config) {
             Some(index as usize)
         }
         MonitorChoice::Index(_) => Some(0),
-        MonitorChoice::Auto if cfg.follow_cursor => backend
-            .pointer_position()
-            .and_then(|point| {
-                monitor_rects
-                    .iter()
-                    .position(|rect| rect.contains_exclusive(point))
-            }),
+        MonitorChoice::Auto if cfg.follow_cursor => backend.pointer_position().and_then(|point| {
+            monitor_rects
+                .iter()
+                .position(|rect| rect.contains_exclusive(point))
+        }),
         MonitorChoice::Auto => backend
             .focused_monitor()
             .filter(|index| *index < monitor_rects.len()),
@@ -399,9 +397,7 @@ fn apply_values(args: &cli::Args, cfg: &mut Config) {
     if let Some(bw) = args.window.border_width {
         cfg.border_width = bw;
     }
-    if let Some(ps) = args.menu.preselect {
-        cfg.preselected = ps;
-    }
+    cfg.preselect = args.menu.preselect.clone();
     if let Some(h) = args.window.line_height {
         /* clamped to >= 8; full_height resolves the height anyway */
         cfg.line_height = match h {

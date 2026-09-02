@@ -32,7 +32,7 @@ use std::time::SystemTime;
 use crate::backend::{Backend, Modifiers};
 use crate::config::Config;
 use crate::enums::ExitStatus;
-use crate::geom::Rect;
+use crate::geom::{Point, Rect};
 use crate::render::{Canvas, Painter, Renderer};
 
 use frecency::Frecency;
@@ -83,6 +83,10 @@ pub struct Menu {
     pub(in crate::menu) matcher: Matcher,
     pub(in crate::menu) selection: Selection,
     pub(in crate::menu) paging: Paging,
+    /// Last known pointer position in menu coordinates, None before the
+    /// first motion event. Authoritative for the selection after every
+    /// rematch (see [`Menu::do_match`]).
+    pub(in crate::menu) pointer: Option<Point>,
     pub(in crate::menu) layout: Layout,
     /// The -l/-g grid as adjusted for the current item count, recomputed
     /// whenever items stream in (the C version computed it once after
@@ -145,6 +149,7 @@ impl Menu {
             editor: editor::Editor::new(),
             selection: Selection::default(),
             paging: Paging::default(),
+            pointer: None,
             layout: Layout::default(),
             stdin_grid: layout::GridShape {
                 lines: cfg.lines,
@@ -282,7 +287,12 @@ impl Menu {
     /// transitions here. While items stream in, pick conclusions are
     /// deferred (see [`Matcher::search`]) and an existing selection survives
     /// the rematch — a batch landing under a user's arrow keys must not yank
-    /// the highlight back to the top.
+    /// the highlight back to the top. Afterwards a resting pointer wins over
+    /// the reset: when it sits on a visible row, the hover re-applies there
+    /// instead of leaving the highlight on the top match. Without this, a
+    /// keystroke yanks the highlight off the row under the pointer and the
+    /// next motion event yanks it back — two full redraws per keystroke,
+    /// read on screen as flicker.
     pub(in crate::menu) fn do_match(&mut self) -> Transition {
         let complete = self.stream_complete();
         match self.matcher.search(&self.editor.text, complete) {
@@ -301,6 +311,12 @@ impl Menu {
                     }
                 }
                 self.recalc_paging();
+                if let Some(pos) = self.pointer {
+                    let header = self.header();
+                    if let Some(item) = self.hovered_match(pos, &header) {
+                        self.selection.selected = Some(item);
+                    }
+                }
                 Transition::Nop
             }
             MatchResult::AutoConfirm(idx) => {
@@ -385,6 +401,31 @@ impl Menu {
             &self.layout,
             &mut m,
         );
+    }
+
+    /// --preselect: highlight the first selectable match whose output value
+    /// equals the configured value, walking the selection there so paging
+    /// turns pages exactly like repeated Down presses. The comparison is
+    /// exact; without a match the selection stays where the match left it.
+    /// While stdin streams in this runs deferred at EOF (`finalize_stream`),
+    /// since the target may not have arrived yet.
+    pub(in crate::menu) fn apply_preselect(&mut self) {
+        let Some(target) = self.cfg.preselect.as_deref() else {
+            return;
+        };
+        let Some(found) = self.matcher.matches.iter().position(|&index| {
+            let item = &self.matcher.items[index];
+            item.is_selectable() && item.output() == target
+        }) else {
+            return;
+        };
+        self.selection = Selection {
+            selected: self.matcher.first_selectable_match(),
+            page_start: (!self.matcher.matches.is_empty()).then_some(0),
+        };
+        while self.selection.selected != Some(found) {
+            self.select_next();
+        }
     }
 
     /* ── selection helpers ─────────────────────────────────────────────── */

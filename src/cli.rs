@@ -226,15 +226,14 @@ pub struct MenuArgs {
     )]
     pub animation_length: Option<i32>,
 
-    /// Preselected item index.
+    /// Preselect the first item whose output value is VALUE.
     ///
-    /// Starts from 0.
-    #[arg(
-        long,
-        value_name = "N",
-        value_parser = clap::value_parser!(i32).range(0..)
-    )]
-    pub preselect: Option<i32>,
+    /// An item's output is its `value=` markup when present, otherwise its
+    /// label. Values are opaque identifiers compared exactly against the
+    /// final list (after stdin is read); without a match the first item
+    /// stays selected.
+    #[arg(long, value_name = "VALUE", allow_hyphen_values = true)]
+    pub preselect: Option<String>,
 
     /// Initial input text.
     #[arg(long, value_name = "TEXT")]
@@ -771,7 +770,6 @@ mod tests {
             &["instantmenu", "--line-height", "-1"][..],
             &["instantmenu", "--line-height", "0"][..],
             &["instantmenu", "--monitor", "-1"][..],
-            &["instantmenu", "--preselect", "-2"][..],
             &["instantmenu", "--columns", "0"][..],
         ] {
             assert!(
@@ -779,6 +777,20 @@ mod tests {
                 "{bad:?} should be rejected"
             );
         }
+    }
+
+    #[test]
+    fn preselect_takes_a_value_not_an_index() {
+        /* --preselect matches an item's output value now; the old numeric
+         * index grammar is gone */
+        let a = Args::try_parse_from(["instantmenu", "--preselect", "file:/tmp/a b"]).unwrap();
+        assert_eq!(a.menu.preselect.as_deref(), Some("file:/tmp/a b"));
+
+        /* unlike the old index parser, a leading hyphen is a valid value */
+        let a = Args::try_parse_from(["instantmenu", "--preselect", "-2"]).unwrap();
+        assert_eq!(a.menu.preselect.as_deref(), Some("-2"));
+
+        assert!(Args::try_parse_from(["instantmenu", "--preselect"]).is_err());
     }
 
     #[test]

@@ -770,6 +770,65 @@ fn vertical_hover_and_click() {
     );
 }
 
+/// Typing with the pointer resting on a lower row keeps the highlight
+/// there: the rematch re-applies the hover instead of resetting to the
+/// top. The reset used to fight the next motion event — every keystroke
+/// drew the highlight jumping between the rows, which reads as flicker
+/// under the pointer jitter a resting mouse still produces.
+#[test]
+fn typing_reapplies_the_hover_instead_of_resetting_to_the_top() {
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha", "beta", "gamma"]);
+    menu.layout.lines = 3;
+    let _ = menu.do_match();
+
+    // the pointer rests on the second result row (bar_height 30)
+    let rest = Point::new(10, 70);
+    assert_eq!(menu.set_selection(rest), Transition::Redraw);
+    assert_eq!(menu.selection.selected, Some(1));
+
+    // a keystroke rematches; the hover survives the row-0 reset ...
+    type_text(&mut menu, "a");
+    assert_eq!(menu.selection.selected, Some(1));
+    // ... and the identical motion afterwards is a Nop: no second frame
+    assert_eq!(menu.set_selection(rest), Transition::Nop);
+
+    // Enter confirms what is under the pointer, not the top match
+    assert_eq!(
+        key(&mut menu, ks::KEY_Return, M_NONE),
+        Transition::PrintAndExit("beta".into())
+    );
+}
+
+/// The re-applied hover only survives while the row still exists: typing
+/// past it collapses the list and the selection falls back to the top.
+#[test]
+fn typing_past_the_hovered_row_falls_back_to_the_top() {
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha", "beta", "gamma"]);
+    menu.layout.lines = 3;
+    let _ = menu.do_match();
+
+    assert_eq!(menu.set_selection(Point::new(10, 70)), Transition::Redraw);
+    assert_eq!(menu.selection.selected, Some(1));
+
+    // only "gamma" survives the query; the hovered row is gone
+    type_text(&mut menu, "g");
+    assert_eq!(menu.selection.selected, Some(0));
+}
+
+/// Without a known pointer position (no motion yet) the rematch still
+/// selects the top match.
+#[test]
+fn typing_without_a_pointer_still_selects_the_top() {
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha", "beta"]);
+    menu.layout.lines = 3;
+    let _ = menu.do_match();
+
+    key(&mut menu, ks::KEY_Down, M_NONE);
+    assert_eq!(menu.selection.selected, Some(1));
+    type_text(&mut menu, "a");
+    assert_eq!(menu.selection.selected, Some(0));
+}
+
 #[test]
 fn headings_are_structural_and_navigation_skips_them() {
     let items = [
@@ -1079,12 +1138,12 @@ fn run_motion_does_not_drop_the_final_position() {
     assert_eq!(menu.selection.selected, Some(0));
 }
 
-/// -Ps: the preselected-th item is selected and drawn before the first
-/// event is handled.
+/// --preselect: the item whose output value matches is selected and drawn
+/// before the first event is handled.
 #[test]
 fn run_preselects_before_the_first_event() {
     let cfg = Config {
-        preselected: 2,
+        preselect: Some("gamma".into()),
         ..Config::default()
     };
     let (mut menu, stub, out) = menu_with(cfg, &["alpha", "beta", "gamma"]);
@@ -1092,6 +1151,65 @@ fn run_preselects_before_the_first_event() {
     assert_eq!(menu.run(), ExitStatus::Success);
     assert_eq!(out.contents(), "gamma\n");
     assert!(stub.state().presents >= 1);
+}
+
+/// --preselect matches the hidden `value=` output, not the display label.
+#[test]
+fn run_preselect_matches_value_not_label() {
+    let cfg = Config {
+        preselect: Some("one".into()),
+        ..Config::default()
+    };
+    let (mut menu, stub, out) = menu_with(cfg, &["{value=one} same", "{value=two} same"]);
+    stub.key(ks::KEY_Return, M_NONE, "");
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert_eq!(menu.selection.selected, Some(0));
+    assert_eq!(out.contents(), "one\n");
+}
+
+/// Plain items output their label, so --preselect finds them by it.
+#[test]
+fn run_preselect_matches_plain_item_labels() {
+    let cfg = Config {
+        preselect: Some("beta".into()),
+        ..Config::default()
+    };
+    let (mut menu, stub, out) = menu_with(cfg, &["alpha", "beta"]);
+    stub.key(ks::KEY_Return, M_NONE, "");
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert_eq!(menu.selection.selected, Some(1));
+    assert_eq!(out.contents(), "beta\n");
+}
+
+/// --preselect compares exactly (no case folding, no substring match); a
+/// miss leaves the default first item selected.
+#[test]
+fn run_preselect_falls_back_to_the_first_item_without_a_match() {
+    for target in ["missing", "Alpha", "alphabet"] {
+        let cfg = Config {
+            preselect: Some(target.into()),
+            ..Config::default()
+        };
+        let (mut menu, stub, out) = menu_with(cfg, &["alpha", "beta"]);
+        stub.key(ks::KEY_Return, M_NONE, "");
+        assert_eq!(menu.run(), ExitStatus::Success, "{target}");
+        assert_eq!(menu.selection.selected, Some(0), "{target}");
+        assert_eq!(out.contents(), "alpha\n", "{target}");
+    }
+}
+
+/// Headings are never preselect targets, even when their label matches.
+#[test]
+fn run_preselect_skips_headings() {
+    let cfg = Config {
+        preselect: Some("alpha".into()),
+        ..Config::default()
+    };
+    let (mut menu, stub, out) = menu_with(cfg, &["{heading} alpha", "alpha"]);
+    stub.key(ks::KEY_Return, M_NONE, "");
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert_eq!(menu.selection.selected, Some(1));
+    assert_eq!(out.contents(), "alpha\n");
 }
 
 /// SelectionNotify inserts the first line of the selection into the input.
@@ -1885,7 +2003,7 @@ fn streamed_reflow_recalculates_visible_rows_and_hit_testing() {
 fn streamed_preselection_uses_the_final_layout() {
     let cfg = Config {
         lines: 10,
-        preselected: 9,
+        preselect: Some("item-9".into()),
         width: Width::Fixed(900),
         ..Config::default()
     };
@@ -1897,6 +2015,26 @@ fn streamed_preselection_uses_the_final_layout() {
     assert_eq!(menu.selection.selected, Some(9));
     assert_eq!(menu.selection.page_start, Some(0));
     assert_eq!(menu.paging.next, Some(10));
+}
+
+/// A preselect target beyond the first page turns pages on the way, exactly
+/// like repeated Down presses from the top.
+#[test]
+fn streamed_preselection_turns_pages_to_reach_the_target() {
+    let cfg = Config {
+        lines: 10,
+        preselect: Some("item-15".into()),
+        width: Width::Fixed(900),
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &[]);
+    assert!(menu.setup().is_none());
+    menu.add_items((0..25).map(|i| Item::new(format!("item-{i}"))).collect());
+
+    assert!(menu.finalize_stream().is_none());
+    assert_eq!(menu.selection.selected, Some(15));
+    assert_eq!(menu.selection.page_start, Some(10));
+    assert_eq!(menu.paging.next, Some(20));
 }
 
 /// A grid change that keeps the window rectangle identical (columns grow
