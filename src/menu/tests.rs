@@ -593,7 +593,9 @@ fn alt_space_cancels_alt_tab_mode() {
 
 /// Shift+Tab moves the selection back; before the first item it wraps to
 /// the last. The C branch ran this for every shifted key — typing capitals
-/// no longer moves the selection.
+/// no longer moves the selection. Real keyboards deliver ISO_Left_Tab for
+/// Shift+Tab (the Tab key's shifted level), so that is the keysym asserted
+/// here; a bare Tab with the shift bit set never arrives through xkb.
 #[test]
 fn shift_tab_wraps_backward_and_typing_does_not() {
     let cfg = Config {
@@ -607,11 +609,51 @@ fn shift_tab_wraps_backward_and_typing_does_not() {
     assert_eq!(menu.selection.selected, Some(0));
 
     // Shift+Tab from the first item wraps to the last
-    assert_eq!(key(&mut menu, ks::KEY_Tab, M_SHIFT), Transition::Redraw);
+    assert_eq!(
+        key(&mut menu, ks::KEY_ISO_Left_Tab, M_SHIFT),
+        Transition::Redraw
+    );
     assert_eq!(menu.selection.selected, Some(2));
     // and back
-    assert_eq!(key(&mut menu, ks::KEY_Tab, M_SHIFT), Transition::Redraw);
+    assert_eq!(
+        key(&mut menu, ks::KEY_ISO_Left_Tab, M_SHIFT),
+        Transition::Redraw
+    );
     assert_eq!(menu.selection.selected, Some(1));
+}
+
+/// The real cycle flow: Alt held throughout, Shift+Tab backs up inside the
+/// cycle, and the Alt release confirms the backed-up selection. The shift
+/// branch must win the modifier priority over the alt branch for the press
+/// to reach the wrap at all.
+#[test]
+fn shift_tab_backs_up_mid_cycle() {
+    let cfg = Config {
+        alt_tab: true,
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta", "gamma"]);
+    let m_alt_shift = Modifiers {
+        alt: true,
+        ..M_SHIFT
+    };
+
+    assert_eq!(key(&mut menu, ks::KEY_Tab, M_ALT), Transition::Redraw);
+    assert_eq!(menu.selection.selected, Some(1));
+
+    assert_eq!(
+        key(&mut menu, ks::KEY_ISO_Left_Tab, m_alt_shift),
+        Transition::Redraw
+    );
+    assert_eq!(menu.selection.selected, Some(0));
+    assert_eq!(
+        menu.key_release(ks::KEY_ISO_Left_Tab, m_alt_shift),
+        Transition::Nop
+    );
+    assert_eq!(
+        menu.key_release(ks::KEY_Alt_L, M_NONE),
+        Transition::PrintAndExit("alpha".into())
+    );
 }
 
 /// With nothing selected (no matches), the confirm falls back to the input
