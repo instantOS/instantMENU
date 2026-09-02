@@ -509,10 +509,9 @@ fn clamp_origin_to_monitor(origin: Point, menu: Size, monitor: Rect, border: i32
     Point::new(x, y)
 }
 
-/// Pick the monitor from `--monitor` or the focused monitor. Pointer probing
-/// is reserved for explicit follow-cursor placement: ordinary startup must
-/// not map temporary fullscreen surfaces and synchronously wait just to choose
-/// a fallback monitor.
+/// Pick the monitor from `--monitor`, the focused monitor, or the pointer.
+/// The pointer probe only runs when keyboard focus is unknowable: ordinary
+/// startup with working focus info never maps probe surfaces.
 fn select_monitor(
     monitors: &[MonitorInfo],
     choice: MonitorChoice,
@@ -537,15 +536,22 @@ fn select_monitor(
             .and_then(|pointer| monitor_containing(monitors, pointer))
             .unwrap_or(0);
     }
-    /* Ordinary Auto: follow keyboard focus, then deterministically use the
-     * first output. A pointer lookup on Wayland is an active, blocking probe,
-     * not a cheap fallback query. */
+    /* Ordinary Auto: follow keyboard focus, then the pointer, then the first
+     * output. A compositor can legitimately report no focus (no activated
+     * window at all, or one spanning several outputs) — the pointer is then
+     * the best remaining hint for the monitor the user is looking at, and
+     * beats a deterministic first output, which on a laptop is the built-in
+     * panel. The Wayland pointer lookup is a bounded probe, so it must stay
+     * behind the focus check to keep the happy path probe-free. */
     if let Some(focused) = backend.focused_monitor() {
         if focused < n {
             return focused;
         }
     }
-    0
+    backend
+        .pointer_position()
+        .and_then(|pointer| monitor_containing(monitors, pointer))
+        .unwrap_or(0)
 }
 
 fn monitor_containing(monitors: &[MonitorInfo], pointer: Point) -> Option<usize> {
@@ -616,7 +622,8 @@ mod tests {
     }
 
     #[test]
-    fn auto_uses_focus_then_falls_back_without_pointer_probe() {
+    fn auto_uses_focus_then_pointer_then_first_output() {
+        /* Focus known: never probe the pointer. */
         let mut focused = backend(Some(1), Some(Point::new(10, 10)));
         assert_eq!(
             select_monitor(&monitors(), MonitorChoice::Auto, &mut focused, false, None,),
@@ -624,12 +631,22 @@ mod tests {
         );
         assert_eq!(focused.pointer_calls(), 0);
 
-        let mut fallback = backend(None, Some(Point::new(150, 50)));
+        /* Focus unknown: the pointer decides, even against output 0. */
+        let mut pointer = backend(None, Some(Point::new(150, 50)));
         assert_eq!(
-            select_monitor(&monitors(), MonitorChoice::Auto, &mut fallback, false, None,),
+            select_monitor(&monitors(), MonitorChoice::Auto, &mut pointer, false, None,),
+            1
+        );
+        assert_eq!(pointer.pointer_calls(), 1);
+
+        /* Pointer unknown too (probe timeout, no pointer device): the
+         * deterministic first-output fallback. */
+        let mut neither = backend(None, None);
+        assert_eq!(
+            select_monitor(&monitors(), MonitorChoice::Auto, &mut neither, false, None,),
             0
         );
-        assert_eq!(fallback.pointer_calls(), 0);
+        assert_eq!(neither.pointer_calls(), 1);
     }
 
     /// Each anchor places the window's top-left corner at the matching

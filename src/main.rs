@@ -246,9 +246,22 @@ fn acquire_keyboard(backend: &mut Box<dyn backend::Backend>, cfg: &Config) {
                     .position(|rect| rect.contains_exclusive(point))
             })
             .unwrap_or(0),
+        /* Auto follows keyboard focus. When no monitor could be identified
+         * that way (no activated window — e.g. an empty focused desktop —
+         * or one spanning several outputs), the pointer is the next-best
+         * hint before deterministically falling back to the first output. */
         MonitorChoice::Auto => backend
             .focused_monitor()
             .filter(|index| *index < monitor_rects.len())
+            .or_else(|| {
+                backend
+                    .pointer_position()
+                    .and_then(|point| {
+                        monitor_rects
+                            .iter()
+                            .position(|rect| rect.contains_exclusive(point))
+                    })
+            })
             .unwrap_or(0),
     };
     /* --embed is X11-only and Wayland intentionally ignores it; only an
