@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.1.0](https://github.com/instantOS/instantMENU/compare/v5.0.1...v5.1.0) - 2026-09-03
+
+### Added
+
+- cursor changes on slider hover and drag
+
+### Fixed
+
+- instantWM spawning on wrong monitor
+- shift tab not working in alt-tab
+
+### Other
+
+- fix slider on X11 parity with wayland
+- fix spawn taking very long
+- bump stuff
+- new value preselect
+- fix flicker
+
 ## [5.0.1](https://github.com/instantOS/instantMENU/compare/v5.0.0...v5.0.1) - 2026-08-31
 
 ### Fixed
