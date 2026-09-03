@@ -1,6 +1,6 @@
 pkgbase = instantmenu-bin
 	pkgdesc = A dynamic menu for X11 and Wayland (prebuilt binary)
-	pkgver = 5.0.1
+	pkgver = 5.1.0
 	pkgrel = 1
 	url = https://github.com/instantOS/instantMENU
 	arch = x86_64
@@ -13,10 +13,10 @@ pkgbase = instantmenu-bin
 	depends = libxkbcommon-x11
 	depends = perl
 	optdepends = i3-wm: launch desktop entries with instantmenu_smartrun desktop
-	provides = instantmenu=5.0.1
+	provides = instantmenu=5.1.0
 	conflicts = instantmenu
-	source = instantMENU-5.0.1.tar.gz
-	source = instantmenu-x86_64-unknown-linux-gnu-v5.0.1.tgz
+	source = instantMENU-5.1.0.tar.gz
+	source = instantmenu-x86_64-unknown-linux-gnu-v5.1.0.tgz
 	sha256sums = SKIP
 	sha256sums = SKIP
 
