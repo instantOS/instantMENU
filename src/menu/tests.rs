@@ -770,13 +770,12 @@ fn vertical_hover_and_click() {
     );
 }
 
-/// Typing with the pointer resting on a lower row keeps the highlight
-/// there: the rematch re-applies the hover instead of resetting to the
-/// top. The reset used to fight the next motion event — every keystroke
-/// drew the highlight jumping between the rows, which reads as flicker
-/// under the pointer jitter a resting mouse still produces.
+/// Typing means "select the best match for the query": the rematch resets
+/// to the top even with the pointer resting on a lower row, and the reset
+/// is stable — the identical motion afterwards is a Nop, so a resting
+/// (jittering) pointer cannot fight it into alternating frames.
 #[test]
-fn typing_reapplies_the_hover_instead_of_resetting_to_the_top() {
+fn typing_selects_the_best_match_under_a_resting_pointer() {
     let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha", "beta", "gamma"]);
     menu.layout.lines = 3;
     let _ = menu.do_match();
@@ -786,33 +785,46 @@ fn typing_reapplies_the_hover_instead_of_resetting_to_the_top() {
     assert_eq!(menu.set_selection(rest), Transition::Redraw);
     assert_eq!(menu.selection.selected, Some(1));
 
-    // a keystroke rematches; the hover survives the row-0 reset ...
+    // a keystroke rematches: the best match wins, not the pointer's row
     type_text(&mut menu, "a");
-    assert_eq!(menu.selection.selected, Some(1));
-    // ... and the identical motion afterwards is a Nop: no second frame
-    assert_eq!(menu.set_selection(rest), Transition::Nop);
+    assert_eq!(menu.selection.selected, Some(0));
 
-    // Enter confirms what is under the pointer, not the top match
+    // the pointer still rests on the second row: no second frame
+    assert_eq!(menu.set_selection(rest), Transition::Nop);
+    assert_eq!(menu.selection.selected, Some(0));
+
     assert_eq!(
         key(&mut menu, ks::KEY_Return, M_NONE),
-        Transition::PrintAndExit("beta".into())
+        Transition::PrintAndExit("alpha".into())
     );
 }
 
-/// The re-applied hover only survives while the row still exists: typing
-/// past it collapses the list and the selection falls back to the top.
+/// Hover redraws only when the pointer enters a different row. Motion
+/// within a row — and over dead space — is a Nop.
 #[test]
-fn typing_past_the_hovered_row_falls_back_to_the_top() {
+fn motion_redraws_only_when_the_pointer_enters_a_different_row() {
     let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha", "beta", "gamma"]);
     menu.layout.lines = 3;
     let _ = menu.do_match();
 
+    // entering a row that is not selected highlights it
     assert_eq!(menu.set_selection(Point::new(10, 70)), Transition::Redraw);
     assert_eq!(menu.selection.selected, Some(1));
 
-    // only "gamma" survives the query; the hovered row is gone
-    type_text(&mut menu, "g");
-    assert_eq!(menu.selection.selected, Some(0));
+    // jitter within the row (rows span 60..90): no frame
+    assert_eq!(menu.set_selection(Point::new(200, 85)), Transition::Nop);
+
+    // the input row is dead space: tracked as "not hovering"
+    assert_eq!(menu.set_selection(Point::new(10, 10)), Transition::Nop);
+    assert_eq!(menu.selection.selected, Some(1));
+
+    // the keyboard moves the highlight while the pointer is away ...
+    assert_eq!(key(&mut menu, ks::KEY_Down, M_NONE), Transition::Redraw);
+    assert_eq!(menu.selection.selected, Some(2));
+
+    // ... re-entering the row applies the hover again
+    assert_eq!(menu.set_selection(Point::new(10, 70)), Transition::Redraw);
+    assert_eq!(menu.selection.selected, Some(1));
 }
 
 /// Without a known pointer position (no motion yet) the rematch still
@@ -827,6 +839,35 @@ fn typing_without_a_pointer_still_selects_the_top() {
     assert_eq!(menu.selection.selected, Some(1));
     type_text(&mut menu, "a");
     assert_eq!(menu.selection.selected, Some(0));
+}
+
+/// Keyboard navigation moves the highlight and a resting pointer cannot
+/// take it back: jitter within the pointer's row is a Nop. Only entering
+/// a different row applies the hover again.
+#[test]
+fn keyboard_navigation_survives_a_resting_pointer() {
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha", "beta", "gamma"]);
+    menu.layout.lines = 3;
+    let _ = menu.do_match();
+
+    // the pointer rests on the second result row
+    let rest = Point::new(10, 70);
+    assert_eq!(menu.set_selection(rest), Transition::Redraw);
+    assert_eq!(menu.selection.selected, Some(1));
+
+    // Up moves the highlight; typing resets to the best match
+    assert_eq!(key(&mut menu, ks::KEY_Up, M_NONE), Transition::Redraw);
+    assert_eq!(menu.selection.selected, Some(0));
+    type_text(&mut menu, "a");
+    assert_eq!(menu.selection.selected, Some(0));
+
+    // jitter at the old rest position: no frame, keyboard row survives
+    assert_eq!(menu.set_selection(rest), Transition::Nop);
+    assert_eq!(menu.selection.selected, Some(0));
+
+    // a real move re-engages the hover
+    assert_eq!(menu.set_selection(Point::new(10, 100)), Transition::Redraw);
+    assert_eq!(menu.selection.selected, Some(2));
 }
 
 #[test]

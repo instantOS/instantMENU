@@ -11,17 +11,20 @@ use crate::enums::{EditOp, ExitStatus, Side};
 use crate::geom::Point;
 
 impl Menu {
-    /// set_selection — hover selection on motion. The position is kept in
-    /// the menu state: rematches re-apply the hover from it (see
-    /// `do_match`), so a keystroke cannot yank the highlight off the row
-    /// under the pointer and hand it back on the next jitter event.
+    /// set_selection — hover selection on motion. A motion event redraws
+    /// only when the pointer enters a *different* row; jitter around a
+    /// resting pointer is a Nop, even right after a rematch moved the
+    /// highlight away from under it. That is what keeps hover and typing
+    /// from alternating frames: typing resets the selection to the best
+    /// match, and the pointer must genuinely change rows to take it back.
     pub(super) fn set_selection(&mut self, pos: Point) -> Transition {
-        self.pointer = Some(pos);
-        if self.matcher.matches.is_empty() {
+        let header = self.header();
+        let item = self.hovered_match(pos, &header);
+        if item == self.hovered {
             return Transition::Nop;
         }
-        let header = self.header();
-        match self.hovered_match(pos, &header) {
+        self.hovered = item;
+        match item {
             Some(item) if self.selection.selected != Some(item) => {
                 self.selection.selected = Some(item);
                 Transition::Redraw
@@ -31,10 +34,8 @@ impl Menu {
     }
 
     /// The selectable match under `pos` within the visible page window, or
-    /// None. One hit-test shared by hover and the post-rematch
-    /// re-application; reads the same page window and geometry the
-    /// renderer drew.
-    pub(super) fn hovered_match(&mut self, pos: Point, header: &Header) -> Option<usize> {
+    /// None. Hit-tests the same page window and geometry the renderer drew.
+    fn hovered_match(&mut self, pos: Point, header: &Header) -> Option<usize> {
         let hit = if self.layout.lines > 0 {
             let start = self.selection.page_start.unwrap_or(0);
             let end = self.paging.next.unwrap_or(self.matcher.matches.len());

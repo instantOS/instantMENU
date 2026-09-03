@@ -83,10 +83,12 @@ pub struct Menu {
     pub(in crate::menu) matcher: Matcher,
     pub(in crate::menu) selection: Selection,
     pub(in crate::menu) paging: Paging,
-    /// Last known pointer position in menu coordinates, None before the
-    /// first motion event. Authoritative for the selection after every
-    /// rematch (see [`Menu::do_match`]).
-    pub(in crate::menu) pointer: Option<Point>,
+    /// The match the pointer last rested over, per motion events. Pure
+    /// change-detection state: a motion event applies the hover only when
+    /// the pointer enters a different row, so a resting (jittering)
+    /// pointer is a Nop even right after a rematch reset the selection to
+    /// the best match — hover and typing cannot alternate frames.
+    pub(in crate::menu) hovered: Option<usize>,
     pub(in crate::menu) layout: Layout,
     /// The -l/-g grid as adjusted for the current item count, recomputed
     /// whenever items stream in (the C version computed it once after
@@ -149,7 +151,7 @@ impl Menu {
             editor: editor::Editor::new(),
             selection: Selection::default(),
             paging: Paging::default(),
-            pointer: None,
+            hovered: None,
             layout: Layout::default(),
             stdin_grid: layout::GridShape {
                 lines: cfg.lines,
@@ -282,17 +284,18 @@ impl Menu {
 
     /* ── re-matching and selection ─────────────────────────────────────── */
 
-    /// Run the matcher for the current text and reset selection/paging.
+    /// Run the matcher for the current text and select the best match.
     /// The C version printed and exited from inside match(); those cases are
     /// transitions here. While items stream in, pick conclusions are
     /// deferred (see [`Matcher::search`]) and an existing selection survives
     /// the rematch — a batch landing under a user's arrow keys must not yank
-    /// the highlight back to the top. Afterwards a resting pointer wins over
-    /// the reset: when it sits on a visible row, the hover re-applies there
-    /// instead of leaving the highlight on the top match. Without this, a
-    /// keystroke yanks the highlight off the row under the pointer and the
-    /// next motion event yanks it back — two full redraws per keystroke,
-    /// read on screen as flicker.
+    /// the highlight back to the top. Once the corpus is final, typing means
+    /// "select whatever matches my query best": the selection resets to the
+    /// top and a resting pointer does not override it. Hover is
+    /// change-detected on the pointer's row (see [`Menu::set_selection`]),
+    /// so jitter around a resting pointer cannot fight the reset into
+    /// alternating frames — the flicker an earlier pointer-authoritative
+    /// rematch suffered from.
     pub(in crate::menu) fn do_match(&mut self) -> Transition {
         let complete = self.stream_complete();
         match self.matcher.search(&self.editor.text, complete) {
@@ -311,12 +314,6 @@ impl Menu {
                     }
                 }
                 self.recalc_paging();
-                if let Some(pos) = self.pointer {
-                    let header = self.header();
-                    if let Some(item) = self.hovered_match(pos, &header) {
-                        self.selection.selected = Some(item);
-                    }
-                }
                 Transition::Nop
             }
             MatchResult::AutoConfirm(idx) => {
