@@ -278,7 +278,11 @@ impl X11Backend {
                             InputSource::External,
                         )
                     };
-                    return Some(BackendEvent::ButtonRelease { button, pos, source });
+                    return Some(BackendEvent::ButtonRelease {
+                        button,
+                        pos,
+                        source,
+                    });
                 }
                 Some(BackendEvent::ButtonRelease {
                     button,

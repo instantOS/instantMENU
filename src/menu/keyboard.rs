@@ -208,11 +208,16 @@ impl Menu {
     /// to the last. Any shifted key still falls through to the main switch.
     /// The C branch ran the wrap for *every* shifted key — typing a capital
     /// letter moved the selection too; only Tab is bound now.
+    ///
+    /// ISO_Left_Tab must be matched here: the standard xkb keymap defines
+    /// `key <TAB> { [ Tab, ISO_Left_Tab ] }`, so with Shift held the backends'
+    /// `key_get_one_sym` reports ISO_Left_Tab and KEY_Tab never arrives (the
+    /// bare-Tab arm only fires on exotic keymaps).
     fn shift_key(&mut self, sym: u32) {
         if self.alt_tab == AltTab::Off {
             return;
         }
-        if !matches!(sym, ks::KEY_Tab | ks::KEY_KP_Tab) {
+        if !matches!(sym, ks::KEY_ISO_Left_Tab | ks::KEY_Tab | ks::KEY_KP_Tab) {
             return;
         }
         if let Some(s) = self.selection.selected {

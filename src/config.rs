@@ -270,8 +270,8 @@ pub struct Config {
     /* Characters not considered part of a word while deleting words */
     pub word_delimiters: String,
 
-    /* --preselect option; preselected item starting from 0 */
-    pub preselected: i32,
+    /* --preselect option; preselect the item whose output value matches */
+    pub preselect: Option<String>,
 
     /* Size of the window border */
     pub border_width: i32,
@@ -341,7 +341,7 @@ impl Default for Config {
             lines: 0,
             columns: 1,
             word_delimiters: " ".to_string(),
-            preselected: 0,
+            preselect: None,
             border_width: 0,
             toast: None,
             input_only: false,

@@ -70,8 +70,39 @@ noop_dispatch!(
     zxdg_output_manager_v1::ZxdgOutputManagerV1,
     wp_viewporter::WpViewporter,
     wp_viewport::WpViewport,
-    wl_surface::WlSurface,
 );
+
+impl Dispatch<wl_surface::WlSurface, ()> for EventState {
+    fn event(
+        state: &mut Self,
+        proxy: &wl_surface::WlSurface,
+        event: wl_surface::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        /* Only the menu surface's placement matters. Probe and shield
+         * surfaces also arrive as WlSurface with () userdata; their enters
+         * are handled by their own layer-surface dispatchers. */
+        if !state
+            .surface
+            .as_ref()
+            .is_some_and(|surface| surface == proxy)
+        {
+            return;
+        }
+        if let wl_surface::Event::Enter { output } = event {
+            /* The first enter names the output the compositor placed the
+             * surface on (the decision when the bootstrap was bound without
+             * an output). Later enters cannot move an existing surface. */
+            if state.menu_output.is_none() {
+                if let Some(i) = state.outputs.iter().position(|entry| entry.proxy == output) {
+                    state.menu_output = Some(i);
+                }
+            }
+        }
+    }
+}
 
 impl Dispatch<wl_registry::WlRegistry, ()> for EventState {
     fn event(

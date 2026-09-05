@@ -31,9 +31,9 @@ impl Menu {
             self.drain_stdin();
         }
 
-        let mut preselected = self.cfg.preselected;
-        /* when streaming, --preselect applies at EOF against the full list */
-        let deferred_preselect = self.stream_fd >= 0;
+        /* with a complete (non-streamed) corpus, --preselect applies before
+         * the first event; streaming defers it to EOF against the full list */
+        let mut preselect_pending = self.cfg.preselect.is_some() && self.stream_fd < 0;
         loop {
             let now = Instant::now();
             if self.stream_settle_due(now) {
@@ -46,12 +46,10 @@ impl Menu {
                 }
             }
 
-            if preselected != 0 && !deferred_preselect {
-                for _ in 0..preselected {
-                    self.select_next();
-                }
+            if preselect_pending {
+                preselect_pending = false;
+                self.apply_preselect();
                 self.draw_menu();
-                preselected = 0;
             }
 
             let extra_fds = [self.stream_fd];

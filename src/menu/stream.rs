@@ -301,9 +301,7 @@ impl Menu {
     /// --preselect at EOF, when the first-event application ran before any
     /// items existed.
     fn apply_deferred_preselect(&mut self) {
-        for _ in 0..self.cfg.preselected.max(0) {
-            self.select_next();
-        }
+        self.apply_preselect();
     }
 }
 
