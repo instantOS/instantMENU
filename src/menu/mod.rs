@@ -93,6 +93,7 @@ pub struct Menu {
     pub(in crate::menu) slider: Option<Slider>,
     /// `--frecency-cache`: ranks items on load, records printed selections.
     pub(in crate::menu) frecency: Option<Frecency>,
+    frecency_dirty: bool,
 
     /* ── streaming stdin ──────────────────────────────────────────────── */
     /// fd of the streaming stdin pipe, -1 when items are not streamed (no
@@ -152,6 +153,7 @@ impl Menu {
             },
             slider: cfg.slide.as_ref().map(Slider::new),
             frecency,
+            frecency_dirty: false,
             stream_fd: -1,
             stream_eof: false,
             stream_finalized: false,
@@ -178,9 +180,8 @@ impl Menu {
     /// Append items to the candidate list. Used by both the blocking load
     /// (tty/toast startup) and every streamed-in batch. New characters are
     /// remembered for the next font-fallback pass — including the glyphs
-    /// icon entries *name*, which never occur in the raw text; frecency
-    /// ranks each appended slice immediately so arrival order stays
-    /// meaningful while the list grows.
+    /// icon entries *name*, which never occur in the raw text. Frecency
+    /// ranks the accumulated corpus at the next rematch.
     pub fn add_items(&mut self, items: Vec<Item>) {
         if items.is_empty() {
             return;
@@ -195,10 +196,13 @@ impl Menu {
             }
         }
         let start = self.matcher.items.len();
-        self.matcher.items.extend(items);
-        if let Some(f) = self.frecency.as_ref() {
-            f.rank(&mut self.matcher.items[start..], SystemTime::now());
-        }
+        self.matcher
+            .items
+            .extend(items.into_iter().enumerate().map(|(offset, mut item)| {
+                item.arrival_index = start + offset;
+                item
+            }));
+        self.frecency_dirty = true;
         self.stream_dirty = true;
     }
 
@@ -285,12 +289,25 @@ impl Menu {
     /// the highlight back to the top.
     pub(in crate::menu) fn do_match(&mut self) -> Transition {
         let complete = self.stream_complete();
+        let keep = (!complete)
+            .then_some(self.selection.selected)
+            .flatten()
+            .and_then(|pos| self.matcher.matches.get(pos))
+            .map(|&idx| self.matcher.items[idx].arrival_index);
+        if self.frecency_dirty {
+            if let Some(f) = self.frecency.as_ref() {
+                f.rank(&mut self.matcher.items, SystemTime::now());
+            }
+            self.frecency_dirty = false;
+        }
         match self.matcher.search(&self.editor.text, complete) {
             MatchResult::Listed => {
-                let keep = (!complete)
-                    .then_some(self.selection.selected)
-                    .flatten()
-                    .filter(|&pos| pos < self.matcher.matches.len());
+                let keep = keep.and_then(|id| {
+                    self.matcher
+                        .matches
+                        .iter()
+                        .position(|&idx| self.matcher.items[idx].arrival_index == id)
+                });
                 self.selection = Selection {
                     selected: self.matcher.first_selectable_match(),
                     page_start: (!self.matcher.matches.is_empty()).then_some(0),

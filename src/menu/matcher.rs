@@ -8,6 +8,8 @@ use crate::entry::ItemEntry;
 /// One parsed candidate line from stdin.
 #[derive(Debug, Clone, Default)]
 pub struct Item {
+    /// Stable identity within the menu, independent of ranking and labels.
+    pub(super) arrival_index: usize,
     /// Visible label and value printed when selected.
     pub text: String,
     /// Optional output value printed when selected.
@@ -33,6 +35,7 @@ impl Item {
         let text = parsed_label.unwrap_or(source);
         let search_text = match_text.map(|terms| format!("{text} {terms}"));
         Item {
+            arrival_index: 0,
             text,
             value,
             search_text,

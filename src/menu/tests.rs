@@ -327,6 +327,83 @@ fn frecency_ranks_items_on_load() {
     let _ = std::fs::remove_file(&path);
 }
 
+#[test]
+fn frecency_ranks_across_batches_and_preserves_item_identity() {
+    let path = frecency_path("stream-rank");
+    std::fs::write(&path, format!("10.000000 {} favorite\n", unix_now())).unwrap();
+    let cfg = Config {
+        frecency_cache: Some(path.clone()),
+        ..Config::default()
+    };
+    let (mut menu, _, _) = menu_with(cfg, &["duplicate", "duplicate"]);
+    let pipe = TestPipe::new();
+    menu.begin_stream(pipe.read_fd);
+    key(&mut menu, ks::KEY_Down, M_NONE);
+    menu.matcher.items[1].already_output = true;
+
+    menu.add_items(vec![Item::new("unseen"), Item::new("favorite")]);
+    menu.settle_stream();
+    let texts: Vec<_> = menu.matcher.items.iter().map(Item::label).collect();
+    assert_eq!(texts, ["favorite", "duplicate", "duplicate", "unseen"]);
+    assert_eq!(menu.selection.selected, Some(2));
+    let selected = menu.matcher.matches[menu.selection.selected.unwrap()];
+    assert!(menu.matcher.items[selected].already_output);
+
+    menu.stream_eof = true;
+    assert_eq!(menu.finalize_stream(), None);
+    assert_eq!(menu.selected_text_ref(), Some("favorite"));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn frecency_streaming_matches_single_load_across_heading_boundaries() {
+    let path = frecency_path("stream-headings");
+    let now = unix_now();
+    std::fs::write(
+        &path,
+        format!("10.000000 {now} favorite\n20.000000 {now} best\n"),
+    )
+    .unwrap();
+    let cfg = Config {
+        frecency_cache: Some(path.clone()),
+        ..Config::default()
+    };
+    let items = [
+        "{heading} First",
+        "unseen",
+        "favorite",
+        "{heading} Second",
+        "tie1",
+        "tie2",
+        "best",
+    ];
+    let (whole, _, _) = menu_with(cfg.clone(), &items);
+    let (mut streamed, _, _) = menu_with(cfg, &[]);
+    let pipe = TestPipe::new();
+    streamed.begin_stream(pipe.read_fd);
+    for item in &items[..items.len() - 1] {
+        streamed.add_items(vec![Item::new(*item)]);
+        streamed.settle_stream();
+    }
+    // The highest score arrives with EOF, without an intermediate settle.
+    streamed.add_items(vec![Item::new("best")]);
+    streamed.stream_eof = true;
+    assert_eq!(streamed.finalize_stream(), None);
+    let labels = |menu: &Menu| {
+        menu.matcher
+            .items
+            .iter()
+            .map(|item| item.text.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(labels(&streamed), labels(&whole));
+    assert_eq!(
+        labels(&streamed),
+        ["First", "favorite", "unseen", "Second", "best", "tie1", "tie2"]
+    );
+    let _ = std::fs::remove_file(path);
+}
+
 /// Confirming a selection records it into the cache.
 #[test]
 fn frecency_records_selections() {

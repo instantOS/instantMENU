@@ -247,8 +247,9 @@ pub struct MenuArgs {
     /// an absolute path is used as the cache file directly. Distinct IDs
     /// hold independent histories (e.g. one per launcher).
     ///
-    /// On startup items are reordered best-frecency first (stable — ties
-    /// keep stdin order). Every printed selection — a chosen item or
+    /// As items arrive, the accumulated list is reordered best-frecency first
+    /// within each heading section (stable — ties keep stdin order).
+    /// Every printed selection — a chosen item or
     /// free-typed text — is counted with a time decay and persisted.
     /// Not recorded: password input and slider values.
     #[arg(long, value_name = "ID")]

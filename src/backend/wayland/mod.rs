@@ -206,6 +206,7 @@ fn place_layer(
         .set_anchor(zwlr_layer_surface_v1::Anchor::Top | zwlr_layer_surface_v1::Anchor::Left);
     let (top, left) = layer_margins(rect, monitor);
     layer_surface.set_margin(top, 0, 0, left);
+    layer_surface.set_exclusive_zone(-1);
     layer_surface.set_size(rect.w.max(1) as u32, rect.h.max(1) as u32);
 }
 
@@ -382,6 +383,7 @@ impl Backend for WaylandBackend {
         );
         layer_surface
             .set_anchor(zwlr_layer_surface_v1::Anchor::Top | zwlr_layer_surface_v1::Anchor::Left);
+        layer_surface.set_exclusive_zone(-1);
         layer_surface.set_size(1, 1);
         layer_surface
             .set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive);
