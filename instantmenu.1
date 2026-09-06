@@ -4,7 +4,7 @@
 .SH NAME
 instantmenu \- A dynamic menu for X11 and Wayland (instantMENU, Rust port)
 .SH SYNOPSIS
-\fBinstantmenu\fR [\fB\-\-config\fR] [\fB\-\-no\-config\fR] [\fB\-\-backend\fR] [\fB\-\-position\fR] [\fB\-\-follow\-cursor\fR] [\fB\-\-monospace\fR] [\fB\-\-no\-grab\fR] [\fB\-\-no\-outside\-close\fR] [\fB\-\-managed\fR] [\fB\-x\fR|\fB\-\-x\-offset\fR] [\fB\-y\fR|\fB\-\-y\-offset\fR] [\fB\-w\fR|\fB\-\-width\fR] [\fB\-m\fR|\fB\-\-monitor\fR] [\fB\-p\fR|\fB\-\-prompt\fR] [\fB\-\-font\fR] [\fB\-\-line\-height\fR] [\fB\-\-theme\fR] [\fB\-\-normal\-bg\fR] [\fB\-\-normal\-fg\fR] [\fB\-\-selected\-bg\fR] [\fB\-\-selected\-fg\fR] [\fB\-\-embed\fR] [\fB\-\-border\-width\fR] [\fB\-r\fR|\fB\-\-reject\-no\-match\fR] [\fB\-\-toast\fR] [\fB\-\-single\-key\fR] [\fB\-\-input\-only\fR] [\fB\-s\fR|\fB\-\-smart\-case\fR] [\fB\-\-match\-mode\fR] [\fB\-\-pre\-match\fR] [\fB\-\-space\-confirm\fR] [\fB\-\-full\-height\fR] [\fB\-i\fR|\fB\-\-insensitive\fR] [\fB\-n\fR|\fB\-\-auto\-confirm\fR] [\fB\-\-password\fR] [\fB\-\-alt\-tab\fR] [\fB\-\-right\-command\fR] [\fB\-\-left\-command\fR] [\fB\-g\fR|\fB\-\-columns\fR] [\fB\-l\fR|\fB\-\-lines\fR] [\fB\-\-placeholder\fR] [\fB\-a\fR|\fB\-\-animation\-length\fR] [\fB\-\-preselect\fR] [\fB\-\-initial\-text\fR] [\fB\-\-frecency\-cache\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIsubcommands\fR]
+\fBinstantmenu\fR [\fB\-\-config\fR] [\fB\-\-no\-config\fR] [\fB\-\-backend\fR] [\fB\-\-position\fR] [\fB\-\-follow\-cursor\fR] [\fB\-\-monospace\fR] [\fB\-\-no\-grab\fR] [\fB\-\-no\-outside\-close\fR] [\fB\-\-managed\fR] [\fB\-x\fR|\fB\-\-x\-offset\fR] [\fB\-y\fR|\fB\-\-y\-offset\fR] [\fB\-w\fR|\fB\-\-width\fR] [\fB\-m\fR|\fB\-\-monitor\fR] [\fB\-p\fR|\fB\-\-prompt\fR] [\fB\-\-font\fR] [\fB\-\-line\-height\fR] [\fB\-\-theme\fR] [\fB\-\-normal\-bg\fR] [\fB\-\-normal\-fg\fR] [\fB\-\-selected\-bg\fR] [\fB\-\-selected\-fg\fR] [\fB\-\-embed\fR] [\fB\-\-border\-width\fR] [\fB\-\-bind\fR] [\fB\-r\fR|\fB\-\-reject\-no\-match\fR] [\fB\-\-toast\fR] [\fB\-\-single\-key\fR] [\fB\-\-input\-only\fR] [\fB\-s\fR|\fB\-\-smart\-case\fR] [\fB\-\-match\-mode\fR] [\fB\-\-pre\-match\fR] [\fB\-\-space\-confirm\fR] [\fB\-\-full\-height\fR] [\fB\-i\fR|\fB\-\-insensitive\fR] [\fB\-n\fR|\fB\-\-auto\-confirm\fR] [\fB\-\-password\fR] [\fB\-\-alt\-tab\fR] [\fB\-\-right\-command\fR] [\fB\-\-left\-command\fR] [\fB\-g\fR|\fB\-\-columns\fR] [\fB\-l\fR|\fB\-\-lines\fR] [\fB\-\-placeholder\fR] [\fB\-a\fR|\fB\-\-animation\-length\fR] [\fB\-\-preselect\fR] [\fB\-\-initial\-text\fR] [\fB\-\-frecency\-cache\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIsubcommands\fR]
 .SH DESCRIPTION
 instantmenu reads a newline\-separated list of items from stdin and displays them in a menu. Selecting an item and pressing Return prints it to stdout and exits; typing narrows the list to matching items.
 .PP
@@ -162,6 +162,9 @@ Border width.
 Adds a border around the menu.
 .SH "MENU MODE OPTIONS"
 .TP
+\fB\-\-bind\fR \fI<KEY:LABEL>\fR
+Global action with a visible hint (repeatable). Prints the key on the first output line, then selected values. Enter prints an empty first line
+.TP
 \fB\-r\fR, \fB\-\-reject\-no\-match\fR
 Reject input if it results in no matches
 .TP
@@ -254,7 +257,7 @@ Frecency cache: rank items by past selections and record new ones.
 
 The value is a cache ID resolved under the XDG cache directory ($XDG_CACHE_HOME/instantmenu/<ID>, or ~/.cache/instantmenu/<ID>); an absolute path is used as the cache file directly. Distinct IDs hold independent histories (e.g. one per launcher).
 
-On startup items are reordered best\-frecency first (stable — ties keep stdin order). Every printed selection — a chosen item or free\-typed text — is counted with a time decay and persisted. Not recorded: password input and slider values.
+As items arrive, the accumulated list is reordered best\-frecency first within each heading section (stable — ties keep stdin order). Every printed selection — a chosen item or free\-typed text — is counted with a time decay and persisted. Not recorded: password input and slider values.
 .SH SUBCOMMANDS
 .SS instantmenu slide
 Slide mode: show a value slider instead of a menu.
