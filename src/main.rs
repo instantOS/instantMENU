@@ -293,6 +293,15 @@ fn stdin_mode(cfg: &Config) -> StdinMode {
 
 /// Boolean flags: applied before the value options they gate.
 fn apply_flags(args: &cli::Args, cfg: &mut Config) {
+    cfg.bindings = args.menu.bindings.clone();
+    let mut keys = std::collections::HashSet::new();
+    for binding in &cfg.bindings {
+        if !keys.insert(&binding.key) {
+            eprintln!("instantmenu: duplicate binding: {}", binding.key);
+            std::process::exit(2);
+        }
+    }
+
     /* boolean flags, port of the argument loop in main() */
     if let Some(p) = args.window.position {
         cfg.position = p;

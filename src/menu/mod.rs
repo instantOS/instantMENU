@@ -32,7 +32,7 @@ use std::time::SystemTime;
 use crate::backend::{Backend, Modifiers};
 use crate::config::Config;
 use crate::enums::ExitStatus;
-use crate::geom::{Point, Rect};
+use crate::geom::Rect;
 use crate::render::{Canvas, Painter, Renderer};
 
 use frecency::Frecency;
@@ -100,6 +100,7 @@ pub struct Menu {
     /// `--frecency-cache`: ranks items on load, records printed selections.
     pub(in crate::menu) frecency: Option<Frecency>,
     frecency_dirty: bool,
+    pending_output: Vec<String>,
 
     /* ── streaming stdin ──────────────────────────────────────────────── */
     /// fd of the streaming stdin pipe, -1 when items are not streamed (no
@@ -161,6 +162,7 @@ impl Menu {
             slider: cfg.slide.as_ref().map(Slider::new),
             frecency,
             frecency_dirty: false,
+            pending_output: Vec::new(),
             stream_fd: -1,
             stream_eof: false,
             stream_finalized: false,
@@ -239,18 +241,26 @@ impl Menu {
     /// event loop with that status.
     pub(in crate::menu) fn perform(&mut self, t: Transition) -> Option<ExitStatus> {
         match t {
+            Transition::BoundAccept(key, value) => {
+                self.finish_selection(&key, value);
+                Some(ExitStatus::Success)
+            }
             Transition::Nop => None,
             Transition::Redraw => {
                 self.draw_menu();
                 None
             }
             Transition::Print(line) => {
-                self.println(&line);
+                if self.cfg.bindings.is_empty() {
+                    self.println(&line);
+                } else {
+                    self.pending_output.push(line);
+                }
                 self.draw_menu();
                 None
             }
             Transition::PrintAndExit(line) => {
-                self.println(&line);
+                self.finish_selection("", Some(line));
                 Some(ExitStatus::Success)
             }
             Transition::Spawn(cmd) => {
@@ -271,9 +281,13 @@ impl Menu {
     /// before any drawing); a drawing or spawning transition is a bug.
     pub(in crate::menu) fn settle(&mut self, t: Transition) -> Option<ExitStatus> {
         match t {
+            Transition::BoundAccept(key, value) => {
+                self.finish_selection(&key, value);
+                Some(ExitStatus::Success)
+            }
             Transition::Nop => None,
             Transition::PrintAndExit(line) => {
-                self.println(&line);
+                self.finish_selection("", Some(line));
                 Some(ExitStatus::Success)
             }
             Transition::Exit(status) => Some(status),
@@ -596,6 +610,20 @@ impl Menu {
     /// so cache I/O never delays the selection. Password input and slider
     /// values are never recorded (the CLI rejects --frecency-cache for
     /// slide; the slider guard covers library use).
+    fn finish_selection(&mut self, key: &str, value: Option<String>) {
+        if !self.cfg.bindings.is_empty() {
+            // Protocol metadata must not enter the frecency cache.
+            let _ = writeln!(self.out, "{key}");
+        }
+        for line in std::mem::take(&mut self.pending_output) {
+            self.println(&line);
+        }
+        if let Some(line) = value {
+            self.println(&line);
+        }
+        let _ = self.out.flush();
+    }
+
     pub(in crate::menu) fn println(&mut self, s: &str) {
         let _ = writeln!(self.out, "{s}");
         let _ = self.out.flush();

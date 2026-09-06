@@ -97,6 +97,14 @@ impl Menu {
     /// key_press — remap modifier prefixes, then run the unmodified key
     /// switch.
     pub(super) fn key_press(&mut self, sym: u32, mods: Modifiers, buf: &str) -> Transition {
+        if let Some(binding) = self
+            .cfg
+            .bindings
+            .iter()
+            .find(|binding| binding.matches(sym, mods))
+        {
+            return Transition::BoundAccept(binding.key.clone(), self.selected_output());
+        }
         let (sym, mods) = if mods.ctrl {
             match self.ctrl_key(sym, mods) {
                 KeyPath::Continue(sym, mods) => (sym, mods),

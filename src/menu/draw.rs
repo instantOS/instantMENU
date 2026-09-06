@@ -168,6 +168,20 @@ impl Menu {
         }
 
         self.draw_footer(&header);
+        for index in 0..self.layout.hint_lines.len() {
+            let text = self.layout.hint_lines[index].clone();
+            let rect = Rect::new(
+                0,
+                self.layout.menu_height
+                    - (self.layout.hint_rows - index as i32) * self.layout.bar_height,
+                self.layout.menu_width,
+                self.layout.bar_height,
+            );
+            let inset = self.renderer.cell_inset();
+            let mut painter = self.painter();
+            painter.set_scheme(Scheme::Fade);
+            painter.draw_text(rect, inset, &text);
+        }
         self.backend.present(&self.canvas);
     }
 

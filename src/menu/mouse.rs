@@ -36,6 +36,9 @@ impl Menu {
     /// The selectable match under `pos` within the visible page window, or
     /// None. Hit-tests the same page window and geometry the renderer drew.
     fn hovered_match(&mut self, pos: Point, header: &Header) -> Option<usize> {
+        if self.over_hint(pos) {
+            return None;
+        }
         let hit = if self.layout.lines > 0 {
             let start = self.selection.page_start.unwrap_or(0);
             let end = self.paging.next.unwrap_or(self.matcher.matches.len());
@@ -56,6 +59,11 @@ impl Menu {
                 .find_map(|(item, rect)| rect.contains(pos).then_some(item))
         };
         hit.filter(|&item| self.matcher.match_is_selectable(item))
+    }
+
+    fn over_hint(&self, pos: Point) -> bool {
+        self.layout.hint_rows > 0
+            && pos.y >= self.layout.menu_height - self.layout.hint_rows * self.layout.bar_height
     }
 
     /// button_press
@@ -98,6 +106,9 @@ impl Menu {
 
     /// left-click: clear the input, or click an item/arrow/command cell.
     fn left_click(&mut self, mods: Modifiers, pos: Point) -> Transition {
+        if self.over_hint(pos) {
+            return Transition::Nop;
+        }
         let header = self.header();
         let row_height = self.layout.bar_height;
 
@@ -136,6 +147,9 @@ impl Menu {
     /// Left-click a vertical/grid cell. Resolve the clicked item directly;
     /// motion events are not guaranteed to precede a button press.
     fn vertical_click(&mut self, mods: Modifiers, pos: Point, header: &Header) -> Transition {
+        if self.over_hint(pos) {
+            return Transition::Nop;
+        }
         let start = self.selection.page_start.unwrap_or(0);
         let end = self.paging.next.unwrap_or(self.matcher.matches.len());
         let clicked = (start..end).enumerate().find_map(|(i, item)| {

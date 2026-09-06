@@ -222,6 +222,7 @@ impl SlideSettings {
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    pub bindings: Vec<crate::keybind::Keybind>,
     /* --position option; anchor corner/edge/center on screen */
     pub position: Position,
     /* --follow-cursor option; place menu at mouse position */
@@ -351,6 +352,7 @@ impl Default for Config {
             alt_tab: false,
             managed: false,
             reject_no_match: false,
+            bindings: Vec::new(),
             single_key: false,
             monitor: MonitorChoice::Auto,
             x_offset: 0,

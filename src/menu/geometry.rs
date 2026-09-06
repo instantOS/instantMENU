@@ -42,6 +42,7 @@ impl Menu {
         let mut layout = Layout {
             lines: grid.lines.max(0),
             columns: grid.columns,
+            hint_rows: i32::from(!self.cfg.bindings.is_empty()),
             ..Layout::default()
         };
         let width = self.resolve_auto_width(layout.columns);
@@ -62,7 +63,7 @@ impl Menu {
         /* the command-cell width (C's `arrowwidth`), measured once here so
          * header geometry never re-measures it */
         layout.command_width = self.cell_width(super::RIGHT_GLYPH);
-        layout.menu_height = (layout.lines + 1) * layout.bar_height;
+        layout.menu_height = (layout.lines + 1 + layout.hint_rows) * layout.bar_height;
 
         let monitors: Vec<MonitorInfo> = self.backend.monitors().to_vec();
         let root = self.backend.root_size();
@@ -126,13 +127,28 @@ impl Menu {
             Some(p) => self.cell_width(p),
             None => 0,
         };
-        (self.max_cell_width() as f64 * 1.3 * columns.max(1) as f64 + prompt_width as f64) as i32
+        let item_width = (self.max_cell_width() as f64 * 1.3 * columns.max(1) as f64
+            + prompt_width as f64) as i32;
+        item_width.max(self.hint_min_width())
+    }
+
+    /// Auto-sized menus must fit at least one complete action hint.
+    fn hint_min_width(&mut self) -> i32 {
+        self.cfg
+            .bindings
+            .iter()
+            .map(|binding| {
+                self.renderer.text_width(&binding.hint()) + self.renderer.horizontal_padding
+            })
+            .max()
+            .unwrap_or(0)
     }
 
     /// Content-based width: widest item text plus the prompt, floored at
     /// [`Config::min_width`] and capped at `cap` (root or parent width).
     fn content_width(&mut self, prompt_width: i32, cap: i32) -> i32 {
         (self.max_cell_width() + prompt_width)
+            .max(self.hint_min_width())
             .max(self.cfg.min_width)
             .min(cap)
     }
@@ -160,6 +176,7 @@ impl Menu {
                 // including when that output has a non-zero global origin.
                 layout.menu_width = self.content_width(layout.prompt_width, monitor.w);
             }
+            self.layout_hints(layout, monitor.h - self.cfg.border_width * 2 - 10);
             if let Some(pointer) = follow_pointer {
                 let origin = follow_cursor_origin(
                     pointer,
@@ -191,10 +208,12 @@ impl Menu {
                     monitor.w - 100
                 };
             }
-            while (layout.lines + 1) * layout.bar_height > monitor.h {
+            while layout.lines > 0
+                && (layout.lines + 1 + layout.hint_rows) * layout.bar_height > monitor.h
+            {
                 layout.lines -= 1;
             }
-            layout.menu_height = (layout.lines + 1) * layout.bar_height;
+            layout.menu_height = (layout.lines + 1 + layout.hint_rows) * layout.bar_height;
         } else if self.cfg.width == Width::Auto {
             // --width auto with an empty corpus would have width==0 and fall
             // back to the full monitor width, flashing very wide before the
@@ -213,6 +232,7 @@ impl Menu {
             };
         }
 
+        self.layout_hints(layout, monitor.h - self.cfg.border_width * 2 - 10);
         let origin = anchor_origin(
             self.cfg.position,
             monitor,
@@ -270,6 +290,7 @@ impl Menu {
             };
         }
 
+        self.layout_hints(layout, area.h);
         let origin = anchor_origin(
             self.cfg.position,
             area,
@@ -281,18 +302,53 @@ impl Menu {
         Ok(())
     }
 
+    /// Measure hints only on reflow, wrapping whole actions where possible.
+    fn layout_hints(&mut self, layout: &mut Layout, available_height: i32) {
+        if self.cfg.bindings.is_empty() {
+            return;
+        }
+        let width = (layout.menu_width - self.renderer.horizontal_padding).max(1);
+        let limit = (available_height / layout.bar_height - 2).max(1) as usize;
+        let mut lines = Vec::new();
+        let mut line = String::new();
+        for binding in &self.cfg.bindings {
+            let hint = binding.hint();
+            let candidate = if line.is_empty() {
+                hint.clone()
+            } else {
+                format!("{line}   ·   {hint}")
+            };
+            if !line.is_empty() && self.renderer.text_width(&candidate) > width {
+                lines.push(std::mem::take(&mut line));
+                if lines.len() >= limit {
+                    if let Some(last) = lines.last_mut() {
+                        last.push_str("   …");
+                    }
+                    break;
+                }
+                line = hint;
+            } else {
+                line = candidate;
+            }
+        }
+        if !line.is_empty() {
+            lines.push(line);
+        }
+        layout.menu_height += (lines.len() as i32 - layout.hint_rows) * layout.bar_height;
+        layout.hint_rows = lines.len() as i32;
+        layout.hint_lines = lines;
+        let max_lines = (available_height / layout.bar_height - 1 - layout.hint_rows).max(0);
+        if layout.lines > max_lines {
+            layout.menu_height -= (layout.lines - max_lines) * layout.bar_height;
+            layout.lines = max_lines;
+        }
+    }
+
     /// Clamp the computed geometry to the selected monitor and apply full_height.
     fn adjust_geometry(&mut self, monitor: Rect, layout: &mut Layout) {
-        let line_height = self.cfg.line_height.pixels();
         if layout.menu_height > monitor.h - 10 {
             layout.menu_height = monitor.h - self.cfg.border_width * 2 - 10;
-            layout.lines = monitor.h
-                / (if line_height != 0 {
-                    line_height
-                } else {
-                    layout.bar_height
-                })
-                - 1;
+            layout.lines = (layout.menu_height / layout.bar_height - 1 - layout.hint_rows).max(0);
         }
 
         if layout.menu_width > monitor.w - 10 {
@@ -310,7 +366,7 @@ impl Menu {
         if self.cfg.full_height {
             layout.y = monitor.y + 32;
             layout.menu_height = monitor.h - self.cfg.border_width * 2 - 32;
-            layout.lines = monitor.h / line_height - 2;
+            layout.lines = (layout.menu_height / layout.bar_height - 1 - layout.hint_rows).max(0);
         }
     }
 

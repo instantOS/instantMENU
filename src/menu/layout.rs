@@ -17,6 +17,8 @@ pub(super) struct Layout {
     pub menu_width: i32,
     pub menu_height: i32,
     pub bar_height: i32,
+    pub hint_rows: i32,
+    pub hint_lines: Vec<String>,
     pub input_width: i32,
     pub prompt_width: i32,
     /// Width of a left/right command cell (the arrow glyph), measured once

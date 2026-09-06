@@ -2181,3 +2181,103 @@ fn reflow_adopts_grid_changes_that_keep_the_rect() {
     assert_eq!(menu.layout.columns, 3, "grid shape adopted");
     assert_eq!(stub.state().resizes.len(), 1, "no redundant resize");
 }
+
+fn bound_config() -> Config {
+    Config {
+        bindings: vec!["ctrl-e:Edit".parse().unwrap()],
+        ..Config::default()
+    }
+}
+
+#[test]
+fn global_binding_returns_key_and_hidden_value_before_default_editing() {
+    let (mut menu, _, out) = menu_with(bound_config(), &["{value=stable} Label"]);
+    let transition = menu.key_press(ks::KEY_e, M_CTRL, "");
+    assert_eq!(
+        transition,
+        Transition::BoundAccept("ctrl-e".into(), Some("stable".into()))
+    );
+    assert_eq!(menu.perform(transition), Some(ExitStatus::Success));
+    assert_eq!(out.contents(), "ctrl-e\nstable\n");
+}
+
+#[test]
+fn binding_without_matches_or_on_heading_returns_only_action() {
+    for items in [&[][..], &["{heading} Section"][..]] {
+        let (mut menu, _, out) = menu_with(bound_config(), items);
+        let transition = menu.key_press(ks::KEY_e, M_CTRL, "");
+        menu.perform(transition);
+        assert_eq!(out.contents(), "ctrl-e\n");
+    }
+    let (mut menu, _, out) = menu_with(bound_config(), &["alpha"]);
+    type_text(&mut menu, "no match");
+    let transition = menu.key_press(ks::KEY_e, M_CTRL, "");
+    menu.perform(transition);
+    assert_eq!(out.contents(), "ctrl-e\n");
+}
+
+#[test]
+fn bound_enter_and_accumulated_selections_keep_action_first() {
+    let (mut menu, _, out) = menu_with(bound_config(), &["alpha", "beta"]);
+    menu.perform(Transition::Print("alpha".into()));
+    assert_eq!(out.contents(), "");
+    menu.perform(Transition::BoundAccept(
+        "ctrl-e".into(),
+        Some("beta".into()),
+    ));
+    assert_eq!(out.contents(), "ctrl-e\nalpha\nbeta\n");
+    let (mut menu, _, out) = menu_with(bound_config(), &["alpha"]);
+    menu.perform(Transition::PrintAndExit("alpha".into()));
+    assert_eq!(out.contents(), "\nalpha\n");
+}
+
+#[test]
+fn binding_hints_wrap_and_leave_items_above_footer() {
+    let mut cfg = bound_config();
+    cfg.lines = 5;
+    cfg.width = Width::Fixed(240);
+    cfg.bindings
+        .push("alt-s:Save this selection".parse().unwrap());
+    let (mut menu, _, _) = menu_with(cfg, &["alpha", "beta"]);
+    assert_eq!(menu.setup(), None);
+    assert!(menu.layout.hint_rows >= 2);
+    assert!(
+        menu.layout.menu_height
+            >= (menu.layout.lines + 1 + menu.layout.hint_rows) * menu.layout.bar_height
+    );
+    assert!(menu
+        .layout
+        .hint_lines
+        .join(" ")
+        .contains("Save this selection"));
+}
+
+#[test]
+fn hint_footer_is_not_an_item_or_input_hit_target() {
+    for lines in [0, 5] {
+        let mut cfg = bound_config();
+        cfg.lines = lines;
+        let (mut menu, _, out) = menu_with(cfg, &["alpha", "beta"]);
+        assert_eq!(menu.setup(), None);
+        type_text(&mut menu, "a");
+        let point = Point::new(5, menu.layout.menu_height - 1);
+        assert_eq!(
+            menu.button_press(MouseButton::Left, M_NONE, point),
+            Transition::Nop
+        );
+        assert_eq!(menu.editor.text, "a");
+        assert!(out.contents().is_empty());
+    }
+}
+
+#[test]
+fn auto_width_fits_an_action_even_with_short_items() {
+    let mut cfg = bound_config();
+    cfg.width = Width::Auto;
+    cfg.bindings = vec!["ctrl-e:Edit this entry".parse().unwrap()];
+    let (mut menu, _, _) = menu_with(cfg, &["x"]);
+    assert_eq!(menu.setup(), None);
+    let hint_width =
+        menu.renderer.text_width("Ctrl+E  Edit this entry") + menu.renderer.horizontal_padding;
+    assert!(menu.layout.menu_width >= hint_width);
+}

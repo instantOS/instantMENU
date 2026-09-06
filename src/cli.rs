@@ -104,6 +104,11 @@ pub struct Args {
 #[derive(clap::Args, Debug, Default, Clone)]
 #[command(next_help_heading = "Menu mode options")]
 pub struct MenuArgs {
+    /// Global action with a visible hint (repeatable). Prints the key on the first
+    /// output line, then selected values. Enter prints an empty first line.
+    #[arg(long = "bind", value_name = "KEY:LABEL", conflicts_with_all = ["single_key", "toast", "input_only", "password", "auto_confirm", "alt_tab"])]
+    pub bindings: Vec<crate::keybind::Keybind>,
+
     /// Reject input if it results in no matches.
     #[arg(long, short = 'r')]
     pub reject_no_match: bool,
