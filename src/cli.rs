@@ -218,7 +218,7 @@ pub struct MenuArgs {
     )]
     pub lines: Option<i32>,
 
-    /// Placeholder inside the input field.
+    /// Placeholder inside the input field (shown while empty, including password mode).
     #[arg(long, value_name = "TEXT")]
     pub placeholder: Option<String>,
 

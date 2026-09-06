@@ -223,11 +223,15 @@ impl Menu {
 
         // Choose the field text before the painter is created: the painter
         // mutably borrows the whole menu, so cfg/editor cannot be read while
-        // it is alive. The placeholder is the only variant drawn faded.
-        let (field_text, faded) = if self.cfg.password {
-            (Some(".".repeat(self.editor.text.len())), false)
-        } else if !self.editor.text.is_empty() {
-            (Some(self.editor.text.clone()), false)
+        // it is alive. The placeholder is the only variant drawn faded. It
+        // shows while the field is empty, including password mode (dots only
+        // appear once typed).
+        let (field_text, faded) = if !self.editor.text.is_empty() {
+            if self.cfg.password {
+                (Some(".".repeat(self.editor.text.len())), false)
+            } else {
+                (Some(self.editor.text.clone()), false)
+            }
         } else {
             (self.cfg.placeholder.clone(), self.cfg.placeholder.is_some())
         };
