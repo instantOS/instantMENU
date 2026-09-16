@@ -350,6 +350,12 @@ fn grapheme_class(grapheme: &str) -> FontClass {
 }
 
 fn font_runs(text: &str) -> Vec<(&str, FontClass)> {
+    // Fast path: pure-ASCII text is a single normal run — every icon
+    // codepoint, emoji-presentation char, selector, joiner and keycap mark
+    // is non-ASCII. Empty text still falls through and yields no runs.
+    if !text.is_empty() && text.is_ascii() {
+        return vec![(text, FontClass::Normal)];
+    }
     let mut runs = Vec::new();
     let mut start = 0;
     let mut current = FontClass::Normal;
@@ -443,6 +449,15 @@ mod tests {
             assert_eq!(font_runs(text), vec![(text, FontClass::Icon)], "{text:?}");
         }
         assert!(font_runs("").is_empty());
+    }
+
+    /// Pure-ASCII text takes the fast path and comes out as one merged
+    /// normal run, so plain labels shape as a single whole-line span.
+    #[test]
+    fn ascii_labels_form_a_single_normal_run() {
+        for text in ["firefox", "plain ascii menu entry 42", "123#*"] {
+            assert_eq!(font_runs(text), vec![(text, FontClass::Normal)], "{text:?}");
+        }
     }
 
     fn run_classes(text: &str) -> Vec<(String, FontClass)> {
