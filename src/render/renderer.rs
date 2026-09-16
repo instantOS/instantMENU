@@ -7,6 +7,8 @@ use std::collections::{HashMap, HashSet};
 use cosmic_text::{
     Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics, Shaping, SwashCache, Wrap,
 };
+use unicode_properties::{EmojiStatus, UnicodeEmoji};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::enums::Scheme;
 use crate::geom::Rect;
@@ -121,7 +123,7 @@ impl Renderer {
             return layout.width;
         }
         let buffer = self.make_buffer(text, None);
-        let width = Self::buffer_width(&buffer);
+        let width = Renderer::buffer_width(&buffer);
         if self.layout_cache.len() >= 1024 {
             self.layout_cache.clear();
         }
@@ -165,41 +167,27 @@ impl Renderer {
         buffer
     }
 
-    /// Set text on a buffer, splitting runs by Unicode range so icon and emoji
-    /// ranges use the secondary fonts of the fontset (fontset fallback).
+    /// Assign a font to each extended grapheme, never separating a base from
+    /// its marks, selectors or joiners. Adjacent graphemes with the same font
+    /// role remain in one run so normal text can still shape across them.
     fn set_buffer_text(&self, buffer: &mut Buffer, text: &str) {
-        let primary = self.families.first().cloned().unwrap_or_default();
-        let secondary = self.families.get(1).cloned().unwrap_or(primary.clone());
-        let emoji = self.families.get(2).cloned().unwrap_or(secondary.clone());
+        let primary = self.families.first().map(String::as_str).unwrap_or("");
+        let secondary = self.families.get(1).map(String::as_str).unwrap_or(primary);
+        let emoji = self
+            .families
+            .get(2)
+            .map(String::as_str)
+            .unwrap_or(secondary);
 
-        let default_attrs = Attrs::new().family(Family::Name(&primary));
-        let mut spans: Vec<(&str, Attrs)> = Vec::new();
-        let mut start = 0usize;
-        let mut current = char_class(text.chars().next());
-        for (index, ch) in text.char_indices().skip(1) {
-            let class = char_class(Some(ch));
-            if class != current {
-                let family = match current {
-                    CharClass::Icon => &secondary,
-                    CharClass::Emoji => &emoji,
-                    CharClass::Normal => &primary,
-                };
-                spans.push((
-                    &text[start..index],
-                    Attrs::new().family(Family::Name(family)),
-                ));
-                start = index;
-                current = class;
-            }
-        }
-        if start < text.len() {
-            let family = match current {
-                CharClass::Icon => &secondary,
-                CharClass::Emoji => &emoji,
-                CharClass::Normal => &primary,
+        let default_attrs = Attrs::new().family(Family::Name(primary));
+        let spans = font_runs(text).into_iter().map(|(text, class)| {
+            let family = match class {
+                FontClass::Icon => secondary,
+                FontClass::Emoji => emoji,
+                FontClass::Normal => primary,
             };
-            spans.push((&text[start..], Attrs::new().family(Family::Name(family))));
-        }
+            (text, Attrs::new().family(Family::Name(family)))
+        });
         buffer.set_rich_text(spans, &default_attrs, Shaping::Advanced, None);
     }
 
@@ -211,10 +199,9 @@ impl Renderer {
             .ceil() as i32
     }
 
-    /// Longest UTF-8-boundary prefix of `text` whose glyph width is at most
-    /// `max_width`, together with that prefix's width. Returns the whole text
-    /// when it already fits, and an empty prefix when even the first glyph
-    /// does not.
+    /// Fit a prefix of whole extended graphemes within `max_width`, returning
+    /// the prefix and its measured width. Returns the whole text when it fits,
+    /// and an empty prefix when even the first grapheme does not.
     pub(super) fn fit_text<'a>(&mut self, text: &'a str, max_width: i32) -> (&'a str, i32) {
         let full = self.text_width(text);
         if full <= max_width {
@@ -224,10 +211,10 @@ impl Renderer {
             return ("", 0);
         }
 
-        // Byte offset of every char boundary, plus the end. Glyph width is
-        // monotonic in prefix length, so `partition_point` yields the longest
-        // prefix that fits — always cut on a UTF-8 boundary.
-        let mut boundaries: Vec<usize> = text.char_indices().map(|(i, _)| i).collect();
+        // Search extended-grapheme boundaries, never scalar boundaries inside
+        // emoji sequences or combining text. As before, binary search assumes
+        // nondecreasing prefix widths (contextual shaping can violate this).
+        let mut boundaries: Vec<usize> = text.grapheme_indices(true).map(|(i, _)| i).collect();
         boundaries.push(text.len());
         let fit = boundaries.partition_point(|&end| self.text_width(&text[..end]) <= max_width);
         let prefix = &text[..boundaries[fit - 1]];
@@ -255,7 +242,7 @@ impl Renderer {
         let mut layout = self.layout_cache.remove(text).unwrap_or_else(|| {
             let buffer = self.make_buffer(text, None);
             TextLayout {
-                width: Self::buffer_width(&buffer),
+                width: Renderer::buffer_width(&buffer),
                 buffer,
             }
         });
@@ -323,19 +310,63 @@ fn detect_locale() -> String {
         .unwrap_or_else(|| "en-US".to_string())
 }
 
-#[derive(PartialEq, Clone, Copy)]
-enum CharClass {
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum FontClass {
     Normal,
     Icon,
     Emoji,
 }
 
-fn char_class(ch: Option<char>) -> CharClass {
-    match ch {
-        Some(c) if crate::icons::is_icon_char(c) => CharClass::Icon,
-        Some(c) if crate::icons::is_emoji_char(c) => CharClass::Emoji,
-        _ => CharClass::Normal,
+/// Font roles follow Unicode emoji presentation, not broad symbol ranges.
+/// Text-default symbols stay in the primary font unless a selector or an
+/// emoji sequence requests otherwise. Private-use icons retain their role.
+fn grapheme_class(grapheme: &str) -> FontClass {
+    let Some(base) = grapheme.chars().next() else {
+        return FontClass::Normal;
+    };
+    if crate::icons::is_icon_char(base) {
+        return FontClass::Icon;
     }
+    if grapheme.contains('\u{fe0e}') {
+        return FontClass::Normal;
+    }
+    let keycap = matches!(base, '#' | '*' | '0'..='9') && grapheme.ends_with('\u{20e3}');
+    let emoji_sequence =
+        base.is_emoji_char() && (grapheme.contains('\u{fe0f}') || grapheme.contains('\u{200d}'));
+    let emoji_presentation = grapheme.chars().any(|ch| {
+        matches!(
+            ch.emoji_status(),
+            EmojiStatus::EmojiPresentation
+                | EmojiStatus::EmojiPresentationAndModifierBase
+                | EmojiStatus::EmojiPresentationAndEmojiComponent
+                | EmojiStatus::EmojiPresentationAndModifierAndEmojiComponent
+        )
+    });
+    if keycap || emoji_sequence || emoji_presentation {
+        FontClass::Emoji
+    } else {
+        FontClass::Normal
+    }
+}
+
+fn font_runs(text: &str) -> Vec<(&str, FontClass)> {
+    let mut runs = Vec::new();
+    let mut start = 0;
+    let mut current = FontClass::Normal;
+    for (index, grapheme) in text.grapheme_indices(true) {
+        let class = grapheme_class(grapheme);
+        if index == 0 {
+            current = class;
+        } else if class != current {
+            runs.push((&text[start..index], current));
+            start = index;
+            current = class;
+        }
+    }
+    if start < text.len() {
+        runs.push((&text[start..], current));
+    }
+    runs
 }
 
 #[cfg(test)]
@@ -381,5 +412,210 @@ mod tests {
         assert_eq!(r.fit_text("abc", 1), ("", 0));
         assert_eq!(r.fit_text("abc", 0), ("", 0));
         assert_eq!(r.fit_text("abc", -5), ("", 0));
+    }
+
+    #[test]
+    fn font_roles_follow_unicode_presentation_and_preserve_icons() {
+        for text in [
+            "👨‍👩‍👧‍👦",
+            "👩🏽‍⚕️",
+            "🇩🇪",
+            "👍🏽",
+            "1️⃣",
+            "#⃣",
+            "*️⃣",
+            "❤️",
+            "❤‍🔥",
+            "©️",
+            "™️",
+            // England: tag characters also belong to the flag's font run.
+            "\u{1f3f4}\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}",
+        ] {
+            assert_eq!(text.graphemes(true).count(), 1, "{text:?}");
+            assert_eq!(font_runs(text), vec![(text, FontClass::Emoji)], "{text:?}");
+        }
+        // VS15 explicitly requests text; unrelated supplementary characters
+        // must not be swept into the emoji font by a broad codepoint range.
+        for text in ["❤", "❤︎", "☀︎", "©", "™", "123#*", "𠀀", "a\u{fe0f}"] {
+            assert_eq!(font_runs(text), vec![(text, FontClass::Normal)], "{text:?}");
+        }
+        for text in ["\u{f011}\u{301}", "\u{f0425}", "\u{23fb}"] {
+            assert_eq!(font_runs(text), vec![(text, FontClass::Icon)], "{text:?}");
+        }
+        assert!(font_runs("").is_empty());
+    }
+
+    fn run_classes(text: &str) -> Vec<(String, FontClass)> {
+        font_runs(text)
+            .into_iter()
+            .map(|(text, class)| (text.to_string(), class))
+            .collect()
+    }
+
+    /// Profession ZWJ sequences hold together as one emoji run; the ASCII
+    /// characters around them stay in their own runs.
+    #[test]
+    fn font_runs_keep_zwj_sequences_whole() {
+        // woman + ZWJ + laptop (U+1F469 U+200D U+1F4BB)
+        let text = "a\u{1f469}\u{200d}\u{1f4bb}b";
+        assert_eq!(
+            run_classes(text),
+            vec![
+                ("a".to_string(), FontClass::Normal),
+                ("\u{1f469}\u{200d}\u{1f4bb}".to_string(), FontClass::Emoji),
+                ("b".to_string(), FontClass::Normal),
+            ]
+        );
+
+        // health worker: woman + ZWJ + ⚕ (a text-default symbol)
+        let text = "\u{1f469}\u{200d}\u{2695}";
+        assert_eq!(
+            run_classes(text),
+            vec![(text.to_string(), FontClass::Emoji)]
+        );
+    }
+
+    /// A flag is one grapheme and one run; regional indicators never split.
+    #[test]
+    fn font_runs_keep_flags_whole() {
+        let text = "\u{1f1e9}\u{1f1ea}";
+        assert_eq!(
+            run_classes(text),
+            vec![(text.to_string(), FontClass::Emoji)]
+        );
+    }
+
+    /// Skin tones and VS16 stick to their base as one emoji run.
+    #[test]
+    fn font_runs_keep_tones_and_selectors_whole() {
+        let text = "\u{1f466}\u{1f3fd}"; // boy + medium skin tone
+        assert_eq!(
+            run_classes(text),
+            vec![(text.to_string(), FontClass::Emoji)]
+        );
+
+        let text = "\u{2764}\u{fe0f}"; // heavy black heart + VS16
+        assert_eq!(
+            run_classes(text),
+            vec![(text.to_string(), FontClass::Emoji)]
+        );
+
+        let text = "\u{2764}"; // bare heart stays in the primary font
+        assert_eq!(
+            run_classes(text),
+            vec![(text.to_string(), FontClass::Normal)]
+        );
+    }
+
+    /// Keycap sequences are single emoji runs; bare digits stay normal.
+    #[test]
+    fn font_runs_keep_keycaps_whole() {
+        let text = "1\u{fe0f}\u{20e3}";
+        assert_eq!(
+            run_classes(text),
+            vec![(text.to_string(), FontClass::Emoji)]
+        );
+
+        let text = "10\u{20e3}"; // plain 1 followed by a zero keycap
+        assert_eq!(
+            run_classes(text),
+            vec![
+                ("1".to_string(), FontClass::Normal),
+                ("0\u{20e3}".to_string(), FontClass::Emoji),
+            ]
+        );
+
+        assert_eq!(
+            run_classes("42"),
+            vec![("42".to_string(), FontClass::Normal)]
+        );
+    }
+
+    /// VS16 requests emoji presentation even for a character that would
+    /// otherwise be plain text.
+    #[test]
+    fn font_runs_honor_vs16_on_text_default_bases() {
+        let text = "\u{2764}\u{fe0f}"; // heart + VS16 → emoji font
+        assert_eq!(
+            run_classes(text),
+            vec![(text.to_string(), FontClass::Emoji)]
+        );
+    }
+
+    /// Combining marks stay with their base even outside emoji sequences.
+    #[test]
+    fn font_runs_keep_combining_marks_with_their_base() {
+        let text = "e\u{301}x"; // é via combining acute
+        assert_eq!(
+            run_classes(text),
+            vec![(text.to_string(), FontClass::Normal)]
+        );
+    }
+
+    /// Adjacent graphemes of one class stay in a single run so shaping can
+    /// work across them.
+    #[test]
+    fn font_runs_merge_adjacent_same_class_graphemes() {
+        let text = "ab\u{1f600}\u{1f601}cd";
+        assert_eq!(
+            run_classes(text),
+            vec![
+                ("ab".to_string(), FontClass::Normal),
+                ("\u{1f600}\u{1f601}".to_string(), FontClass::Emoji),
+                ("cd".to_string(), FontClass::Normal),
+            ]
+        );
+    }
+
+    /// Test every available width, not just one font-dependent cut point.
+    #[test]
+    fn fit_text_never_cuts_inside_a_grapheme() {
+        let mut r = make_test_renderer();
+        for grapheme in [
+            "👨‍👩‍👧‍👦",
+            "👩‍💻",
+            "👩🏽‍⚕️",
+            "🇩🇪",
+            "👍🏽",
+            "1️⃣",
+            "#⃣",
+            "❤️",
+            "❤︎",
+            "e\u{301}",
+        ] {
+            assert_eq!(grapheme.graphemes(true).count(), 1);
+            let text = format!("a{grapheme}b");
+            let full = r.text_width(&text);
+            for max in 0..=full {
+                let (prefix, width) = r.fit_text(&text, max);
+                assert!(
+                    prefix.len() == text.len()
+                        || text.grapheme_indices(true).any(|(i, _)| i == prefix.len()),
+                    "split {grapheme:?} at {max}px: {prefix:?}"
+                );
+                assert!(width <= max);
+                assert_eq!(width, r.text_width(prefix));
+            }
+        }
+    }
+
+    /// Everything drawn must also measure: shaped-buffer width equals the
+    /// cached width used by measurement and truncation.
+    #[test]
+    fn shaped_buffer_width_matches_measured_width() {
+        let mut r = make_test_renderer();
+        for text in [
+            "plain ascii",
+            "\u{1f469}\u{200d}\u{1f4bb}", // ZWJ profession
+            "\u{1f1e9}\u{1f1ea}",         // flag
+            "\u{1f466}\u{1f3fd}",         // skin tone
+            "1\u{fe0f}\u{20e3}",          // keycap
+            "\u{2764}\u{fe0f}",           // heart + VS16
+            "mixed \u{1f9d1}\u{200d}\u{1f4bb} text",
+        ] {
+            let w = r.text_width(text);
+            let buffer = r.make_buffer(text, None);
+            assert_eq!(Renderer::buffer_width(&buffer), w, "{text:?}");
+        }
     }
 }

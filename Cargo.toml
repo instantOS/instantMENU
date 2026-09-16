@@ -43,6 +43,8 @@ csscolorparser = "0.7"
 cosmic-text = "0.19"
 fontdb = "0.23"
 ttf-parser = "0.25"
+unicode-segmentation = "1.13.3"
+unicode-properties = { version = "0.1.4", features = ["emoji"], default-features = false }
 
 [profile.release]
 opt-level = 3

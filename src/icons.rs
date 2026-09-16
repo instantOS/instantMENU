@@ -25,7 +25,9 @@ pub fn is_icon_char(c: char) -> bool {
     )
 }
 
-/// Whether `c` is in the emoji/symbol ranges (routed to the emoji font).
+/// Whether `c` is in the emoji/symbol ranges accepted by icon lookup.
+/// Rendering chooses fonts separately, using whole graphemes and Unicode
+/// emoji presentation properties.
 pub fn is_emoji_char(c: char) -> bool {
     (c as u32) >= 0x1F000 || matches!(c as u32, 0x2600..=0x27BF | 0x2190..=0x21FF | 0x2B00..=0x2BFF)
 }
