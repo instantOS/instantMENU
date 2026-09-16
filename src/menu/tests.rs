@@ -905,6 +905,35 @@ fn vertical_hover_and_click() {
     );
 }
 
+#[test]
+fn mouse_clicks_return_hidden_emoji_values() {
+    for vertical in [false, true] {
+        for mods in [M_NONE, M_CTRL] {
+            let (mut menu, _stub, _out) =
+                menu_with(Config::default(), &["{value=👩‍💻} 👩‍💻 woman technologist"]);
+            let pos = if vertical {
+                menu.layout.lines = 3;
+                let _ = menu.do_match();
+                Point::new(10, 45)
+            } else {
+                let (_, rect) = menu
+                    .horizontal_item_rects(0)
+                    .into_iter()
+                    .next_back()
+                    .unwrap();
+                Point::new(rect.x + rect.w / 2, rect.y + rect.h / 2)
+            };
+            // Click without a preceding hover; select the clicked item itself.
+            let expected = if mods.ctrl {
+                Transition::Print("👩‍💻".into())
+            } else {
+                Transition::PrintAndExit("👩‍💻".into())
+            };
+            assert_eq!(menu.button_press(MouseButton::Left, mods, pos), expected);
+        }
+    }
+}
+
 /// Typing means "select the best match for the query": the rematch resets
 /// to the top even with the pointer resting on a lower row, and the reset
 /// is stable — the identical motion afterwards is a Nop, so a resting

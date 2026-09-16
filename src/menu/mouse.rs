@@ -170,7 +170,7 @@ impl Menu {
             return Transition::Nop;
         }
         self.selection.selected = Some(clicked);
-        let out = self.matcher.text_of_match(clicked).to_string();
+        let out = self.matcher.output_of_match(clicked).to_string();
         self.confirm(&out, mods).at_least_redraw()
     }
 
@@ -189,7 +189,7 @@ impl Menu {
                 if !self.matcher.match_is_selectable(item) {
                     return Transition::Nop;
                 }
-                let item_text = self.matcher.text_of_match(item).to_string();
+                let item_text = self.matcher.output_of_match(item).to_string();
                 self.selection.selected = Some(item);
                 return self.confirm(&item_text, mods).at_least_redraw();
             }
