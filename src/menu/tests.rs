@@ -494,6 +494,64 @@ fn single_key_mode_picks_by_explicit_key() {
     );
 }
 
+#[test]
+fn single_key_prompt_fits_selectable_labels_and_stays_stable() {
+    let cfg = Config {
+        single_key: true,
+        width: Width::Fixed(900),
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(
+        cfg,
+        &[
+            "{key=y} Yes",
+            "{key=n} No thanks",
+            "An unkeyed description that should not affect the width",
+            "{heading} A heading that should not affect the width",
+        ],
+    );
+    assert!(menu.setup().is_none());
+    let expected = menu.renderer.text_width("No thanks") + menu.renderer.horizontal_padding;
+    assert_eq!(menu.layout.prompt_width, expected);
+    assert!(expected < menu.layout.bar_height * 15);
+    let initial_x = menu.header().content_x;
+    menu.selection.selected = Some(1);
+    menu.draw_menu();
+    assert_eq!(menu.prompt(), Some("No thanks"));
+    assert_eq!(menu.header().content_x, initial_x);
+}
+
+#[test]
+fn single_key_prompt_caps_long_descriptions() {
+    let cfg = Config {
+        single_key: true,
+        ..Config::default()
+    };
+    let label = format!("{{key=w}} {}", "W".repeat(200));
+    let (mut menu, _stub, _out) = menu_with(cfg, &[&label]);
+    assert!(menu.setup().is_none());
+    assert_eq!(menu.layout.prompt_width, menu.layout.bar_height * 15);
+}
+
+#[test]
+fn single_key_prompt_reflows_without_window_resize() {
+    let cfg = Config {
+        single_key: true,
+        width: Width::Fixed(900),
+        ..Config::default()
+    };
+    let (mut menu, stub, _out) = menu_with(cfg, &["{key=y} Yes"]);
+    assert!(menu.setup().is_none());
+    let initial_width = menu.layout.prompt_width;
+    menu.add_items(vec![Item::new("{key=n} No thanks")]);
+    assert!(menu.finalize_stream().is_none());
+    let expected = menu.renderer.text_width("No thanks") + menu.renderer.horizontal_padding;
+    assert!(expected > initial_width);
+    assert_eq!(menu.layout.prompt_width, expected);
+    assert_eq!(menu.header().content_x, expected);
+    assert!(stub.state().resizes.is_empty());
+}
+
 /* ── exit paths ────────────────────────────────────────────────────────── */
 
 #[test]

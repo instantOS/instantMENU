@@ -51,7 +51,27 @@ impl Menu {
         layout.bar_height = (self.renderer.font_height + 12).max(self.cfg.line_height.pixels());
         let prompt = self.cfg.prompt.clone();
         layout.prompt_width = if self.cfg.single_key {
-            layout.bar_height * 15
+            // Measure descriptions, not the square activation-key cells. Use
+            // the whole selectable corpus so changing selection never shifts
+            // the keys; streamed batches can grow this width during reflow.
+            let widest = self
+                .matcher
+                .items
+                .iter()
+                .filter(|item| item.is_selectable() && item.entry.key.is_some())
+                .map(|item| self.renderer.text_width(item.label()))
+                .max()
+                .unwrap_or_else(|| {
+                    prompt
+                        .as_deref()
+                        .map(|p| self.renderer.text_width(p))
+                        .unwrap_or(0)
+                });
+            if widest > 0 {
+                (widest + self.renderer.horizontal_padding).min(layout.bar_height * 15)
+            } else {
+                0
+            }
         } else {
             match prompt.as_deref() {
                 Some(p) if !p.is_empty() => {
@@ -494,13 +514,14 @@ impl Menu {
         );
         /* input_width derives from menu_width; bar_height from the font.
          * Anything that moves the drawn pixels means: adopt the layout,
-         * resize canvas + window and let the caller redraw. The grid shape
-         * is compared too: in multi-column mode columns can shrink/grow
-         * while the window rectangle stays the same. */
+         * resize canvas + window when needed and let the caller redraw.
+         * Grid shape and prompt width can change while the window rectangle
+         * stays the same (new columns or longer single-key descriptions). */
         let rect_moved = rect != old_rect;
         let shape_changed = rect_moved
             || new_layout.lines != self.layout.lines
-            || new_layout.columns != self.layout.columns;
+            || new_layout.columns != self.layout.columns
+            || new_layout.prompt_width != self.layout.prompt_width;
         if shape_changed {
             self.layout = new_layout;
             if rect_moved {
