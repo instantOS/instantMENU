@@ -168,6 +168,20 @@ impl Menu {
         }
 
         self.draw_footer(&header);
+        for index in 0..self.layout.hint_lines.len() {
+            let text = self.layout.hint_lines[index].clone();
+            let rect = Rect::new(
+                0,
+                self.layout.menu_height
+                    - (self.layout.hint_rows - index as i32) * self.layout.bar_height,
+                self.layout.menu_width,
+                self.layout.bar_height,
+            );
+            let inset = self.renderer.cell_inset();
+            let mut painter = self.painter();
+            painter.set_scheme(Scheme::Fade);
+            painter.draw_text(rect, inset, &text);
+        }
         self.backend.present(&self.canvas);
     }
 
@@ -209,11 +223,15 @@ impl Menu {
 
         // Choose the field text before the painter is created: the painter
         // mutably borrows the whole menu, so cfg/editor cannot be read while
-        // it is alive. The placeholder is the only variant drawn faded.
-        let (field_text, faded) = if self.cfg.password {
-            (Some(".".repeat(self.editor.text.len())), false)
-        } else if !self.editor.text.is_empty() {
-            (Some(self.editor.text.clone()), false)
+        // it is alive. The placeholder is the only variant drawn faded. It
+        // shows while the field is empty, including password mode (dots only
+        // appear once typed).
+        let (field_text, faded) = if !self.editor.text.is_empty() {
+            if self.cfg.password {
+                (Some(".".repeat(self.editor.text.len())), false)
+            } else {
+                (Some(self.editor.text.clone()), false)
+            }
         } else {
             (self.cfg.placeholder.clone(), self.cfg.placeholder.is_some())
         };

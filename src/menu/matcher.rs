@@ -8,6 +8,8 @@ use crate::entry::ItemEntry;
 /// One parsed candidate line from stdin.
 #[derive(Debug, Clone, Default)]
 pub struct Item {
+    /// Stable identity within the menu, independent of ranking and labels.
+    pub(super) arrival_index: usize,
     /// Visible label and value printed when selected.
     pub text: String,
     /// Optional output value printed when selected.
@@ -33,6 +35,7 @@ impl Item {
         let text = parsed_label.unwrap_or(source);
         let search_text = match_text.map(|terms| format!("{text} {terms}"));
         Item {
+            arrival_index: 0,
             text,
             value,
             search_text,
@@ -117,10 +120,6 @@ impl Matcher {
 
     pub fn text_of_match(&self, pos: usize) -> &str {
         self.items[self.matches[pos]].label()
-    }
-
-    pub fn output_of_match(&self, pos: usize) -> &str {
-        self.items[self.matches[pos]].output()
     }
 
     pub fn match_is_selectable(&self, pos: usize) -> bool {
@@ -400,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    fn single_key_mode_uses_explicit_unicode_keys_and_returns_labels() {
+    fn single_key_mode_uses_explicit_unicode_keys_and_returns_item_indices() {
         let mut m = matcher(
             |c| c.single_key = true,
             &["{key=d} Display", "No key", "{key=λ} Lambda"],
@@ -546,7 +545,7 @@ mod tests {
         m.search("same", true);
         assert_eq!(m.matches, vec![0, 1]);
         assert_eq!(m.text_of_match(0), "same");
-        assert_eq!(m.output_of_match(0), "one");
-        assert_eq!(m.output_of_match(1), "two");
+        assert_eq!(m.items[m.matches[0]].output(), "one");
+        assert_eq!(m.items[m.matches[1]].output(), "two");
     }
 }

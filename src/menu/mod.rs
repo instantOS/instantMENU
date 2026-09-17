@@ -7,6 +7,7 @@
 //! Behaviour intentionally deviates from the C original in places; those
 //! are noted in the code and pinned by the test suite.
 
+mod accept;
 mod animate;
 mod draw;
 mod editor;
@@ -32,9 +33,10 @@ use std::time::SystemTime;
 use crate::backend::{Backend, Modifiers};
 use crate::config::Config;
 use crate::enums::ExitStatus;
-use crate::geom::{Point, Rect};
+use crate::geom::Rect;
 use crate::render::{Canvas, Painter, Renderer};
 
+use accept::{AcceptMode, AcceptTarget};
 use frecency::Frecency;
 use layout::{Header, Layout};
 use matcher::{Item, MatchResult, Matcher};
@@ -99,6 +101,8 @@ pub struct Menu {
     pub(in crate::menu) slider: Option<Slider>,
     /// `--frecency-cache`: ranks items on load, records printed selections.
     pub(in crate::menu) frecency: Option<Frecency>,
+    frecency_dirty: bool,
+    pending_output: Vec<String>,
 
     /* ── streaming stdin ──────────────────────────────────────────────── */
     /// fd of the streaming stdin pipe, -1 when items are not streamed (no
@@ -159,6 +163,8 @@ impl Menu {
             },
             slider: cfg.slide.as_ref().map(Slider::new),
             frecency,
+            frecency_dirty: false,
+            pending_output: Vec::new(),
             stream_fd: -1,
             stream_eof: false,
             stream_finalized: false,
@@ -185,9 +191,8 @@ impl Menu {
     /// Append items to the candidate list. Used by both the blocking load
     /// (tty/toast startup) and every streamed-in batch. New characters are
     /// remembered for the next font-fallback pass — including the glyphs
-    /// icon entries *name*, which never occur in the raw text; frecency
-    /// ranks each appended slice immediately so arrival order stays
-    /// meaningful while the list grows.
+    /// icon entries *name*, which never occur in the raw text. Frecency
+    /// ranks the accumulated corpus at the next rematch.
     pub fn add_items(&mut self, items: Vec<Item>) {
         if items.is_empty() {
             return;
@@ -202,10 +207,13 @@ impl Menu {
             }
         }
         let start = self.matcher.items.len();
-        self.matcher.items.extend(items);
-        if let Some(f) = self.frecency.as_ref() {
-            f.rank(&mut self.matcher.items[start..], SystemTime::now());
-        }
+        self.matcher
+            .items
+            .extend(items.into_iter().enumerate().map(|(offset, mut item)| {
+                item.arrival_index = start + offset;
+                item
+            }));
+        self.frecency_dirty = true;
         self.stream_dirty = true;
     }
 
@@ -235,18 +243,26 @@ impl Menu {
     /// event loop with that status.
     pub(in crate::menu) fn perform(&mut self, t: Transition) -> Option<ExitStatus> {
         match t {
+            Transition::BoundAccept(key, value) => {
+                self.finish_selection(&key, value);
+                Some(ExitStatus::Success)
+            }
             Transition::Nop => None,
             Transition::Redraw => {
                 self.draw_menu();
                 None
             }
             Transition::Print(line) => {
-                self.println(&line);
+                if self.cfg.bindings.is_empty() {
+                    self.println(&line);
+                } else {
+                    self.pending_output.push(line);
+                }
                 self.draw_menu();
                 None
             }
             Transition::PrintAndExit(line) => {
-                self.println(&line);
+                self.finish_selection("", Some(line));
                 Some(ExitStatus::Success)
             }
             Transition::Spawn(cmd) => {
@@ -267,9 +283,13 @@ impl Menu {
     /// before any drawing); a drawing or spawning transition is a bug.
     pub(in crate::menu) fn settle(&mut self, t: Transition) -> Option<ExitStatus> {
         match t {
+            Transition::BoundAccept(key, value) => {
+                self.finish_selection(&key, value);
+                Some(ExitStatus::Success)
+            }
             Transition::Nop => None,
             Transition::PrintAndExit(line) => {
-                self.println(&line);
+                self.finish_selection("", Some(line));
                 Some(ExitStatus::Success)
             }
             Transition::Exit(status) => Some(status),
@@ -298,12 +318,25 @@ impl Menu {
     /// rematch suffered from.
     pub(in crate::menu) fn do_match(&mut self) -> Transition {
         let complete = self.stream_complete();
+        let keep = (!complete)
+            .then_some(self.selection.selected)
+            .flatten()
+            .and_then(|pos| self.matcher.matches.get(pos))
+            .map(|&idx| self.matcher.items[idx].arrival_index);
+        if self.frecency_dirty {
+            if let Some(f) = self.frecency.as_ref() {
+                f.rank(&mut self.matcher.items, SystemTime::now());
+            }
+            self.frecency_dirty = false;
+        }
         match self.matcher.search(&self.editor.text, complete) {
             MatchResult::Listed => {
-                let keep = (!complete)
-                    .then_some(self.selection.selected)
-                    .flatten()
-                    .filter(|&pos| pos < self.matcher.matches.len());
+                let keep = keep.and_then(|id| {
+                    self.matcher
+                        .matches
+                        .iter()
+                        .position(|&idx| self.matcher.items[idx].arrival_index == id)
+                });
                 self.selection = Selection {
                     selected: self.matcher.first_selectable_match(),
                     page_start: (!self.matcher.matches.is_empty()).then_some(0),
@@ -316,11 +349,9 @@ impl Menu {
                 self.recalc_paging();
                 Transition::Nop
             }
-            MatchResult::AutoConfirm(idx) => {
-                Transition::PrintAndExit(self.matcher.items[idx].output().to_owned())
-            }
+            MatchResult::AutoConfirm(idx) => self.accept(AcceptTarget::Item(idx), AcceptMode::Exit),
             MatchResult::SingleKeyPick(pick) => match pick {
-                Some(idx) => Transition::PrintAndExit(self.matcher.items[idx].output().to_owned()),
+                Some(idx) => self.accept(AcceptTarget::Item(idx), AcceptMode::Exit),
                 None => Transition::Exit(ExitStatus::Success),
             },
         }
@@ -437,36 +468,10 @@ impl Menu {
         self.selected_text_ref().map(str::to_owned)
     }
 
-    pub(in crate::menu) fn selected_output_ref(&self) -> Option<&str> {
-        self.selection
-            .selected
-            .map(|pos| self.matcher.output_of_match(pos))
-    }
-
-    fn selected_output(&self) -> Option<String> {
-        self.selected_output_ref().map(str::to_owned)
-    }
-
     pub(in crate::menu) fn selected_is_heading(&self) -> bool {
         self.selection
             .selected
             .is_some_and(|pos| !self.matcher.match_is_selectable(pos))
-    }
-
-    /// Confirm the selection: animate, print, exit unless Ctrl is held, and
-    /// mark the item as already output. Returns the transition for run() to
-    /// perform.
-    pub(in crate::menu) fn confirm(&mut self, out: &str, mods: Modifiers) -> Transition {
-        self.animate_selection();
-        if let Some(pos) = self.selection.selected {
-            let item = &mut self.matcher.items[self.matcher.matches[pos]];
-            item.already_output = true;
-        }
-        if !mods.ctrl {
-            Transition::PrintAndExit(out.to_string())
-        } else {
-            Transition::Print(out.to_string())
-        }
     }
 
     /// Ask the backend for the primary selection (clipboard when Shift is
@@ -579,6 +584,20 @@ impl Menu {
     /// so cache I/O never delays the selection. Password input and slider
     /// values are never recorded (the CLI rejects --frecency-cache for
     /// slide; the slider guard covers library use).
+    fn finish_selection(&mut self, key: &str, value: Option<String>) {
+        if !self.cfg.bindings.is_empty() {
+            // Protocol metadata must not enter the frecency cache.
+            let _ = writeln!(self.out, "{key}");
+        }
+        for line in std::mem::take(&mut self.pending_output) {
+            self.println(&line);
+        }
+        if let Some(line) = value {
+            self.println(&line);
+        }
+        let _ = self.out.flush();
+    }
+
     pub(in crate::menu) fn println(&mut self, s: &str) {
         let _ = writeln!(self.out, "{s}");
         let _ = self.out.flush();

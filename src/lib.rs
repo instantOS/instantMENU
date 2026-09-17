@@ -9,5 +9,6 @@ pub mod entry;
 pub mod enums;
 pub mod geom;
 pub mod icons;
+pub mod keybind;
 pub mod menu;
 pub mod render;

@@ -104,6 +104,11 @@ pub struct Args {
 #[derive(clap::Args, Debug, Default, Clone)]
 #[command(next_help_heading = "Menu mode options")]
 pub struct MenuArgs {
+    /// Global action with a visible hint (repeatable). Prints the key on the first
+    /// output line, then selected values. Enter prints an empty first line.
+    #[arg(long = "bind", value_name = "KEY:LABEL", conflicts_with_all = ["single_key", "toast", "input_only", "password", "auto_confirm", "alt_tab"])]
+    pub bindings: Vec<crate::keybind::Keybind>,
+
     /// Reject input if it results in no matches.
     #[arg(long, short = 'r')]
     pub reject_no_match: bool,
@@ -122,7 +127,7 @@ pub struct MenuArgs {
     /// Activate items by their explicit `key=` metadata.
     ///
     /// Only keyed items are shown. Typing one key immediately prints that
-    /// item's label; matching is otherwise disabled.
+    /// item's value= metadata (or its label if absent); matching is otherwise disabled.
     #[arg(
         long,
         conflicts_with_all = [
@@ -213,7 +218,7 @@ pub struct MenuArgs {
     )]
     pub lines: Option<i32>,
 
-    /// Placeholder inside the input field.
+    /// Placeholder inside the input field (shown while empty, including password mode).
     #[arg(long, value_name = "TEXT")]
     pub placeholder: Option<String>,
 
@@ -246,8 +251,9 @@ pub struct MenuArgs {
     /// an absolute path is used as the cache file directly. Distinct IDs
     /// hold independent histories (e.g. one per launcher).
     ///
-    /// On startup items are reordered best-frecency first (stable — ties
-    /// keep stdin order). Every printed selection — a chosen item or
+    /// As items arrive, the accumulated list is reordered best-frecency first
+    /// within each heading section (stable — ties keep stdin order).
+    /// Every printed selection — a chosen item or
     /// free-typed text — is counted with a time decay and persisted.
     /// Not recorded: password input and slider values.
     #[arg(long, value_name = "ID")]

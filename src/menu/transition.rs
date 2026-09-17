@@ -12,6 +12,7 @@ use crate::enums::ExitStatus;
 pub(super) enum Transition {
     /// Keep running; nothing changed on screen.
     Nop,
+    BoundAccept(String, Option<String>),
     /// State changed; redraw the menu.
     Redraw,
     /// Print a line and keep the menu running (confirm with Ctrl held).

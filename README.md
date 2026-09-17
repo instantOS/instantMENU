@@ -94,5 +94,13 @@ brace: `{{red} literal` displays `{red} literal`. Use `value` to set a
 different output from the display label: `{value="file:/tmp/a b"} My File` displays
 `My File` but prints `file:/tmp/a b`.
 
+All item activation paths use that same output value: Enter, mouse clicks,
+numbered shortcuts, Alt release, single-key activation, auto-confirm, and bound
+commands. For example, `{key=h value=sh} Help` displays `Help` in a single-key
+menu but outputs `sh`. Ctrl-Enter/Ctrl-click accept without closing. Shift-Return
+explicitly submits the input text instead (unless `--reject-no-match` is set);
+Shift-click still accepts the clicked item. Tab completion and hover prompts
+continue to use display labels.
+
 --------
 ### instantOS is still in early beta, contributions always welcome

@@ -2,6 +2,7 @@
 //! read their geometry from [`Header`] (`Menu::header`), the same rects the
 //! renderer drew.
 
+use super::accept::AcceptMode;
 use super::layout::Header;
 use super::paging;
 use super::transition::Transition;
@@ -36,6 +37,9 @@ impl Menu {
     /// The selectable match under `pos` within the visible page window, or
     /// None. Hit-tests the same page window and geometry the renderer drew.
     fn hovered_match(&mut self, pos: Point, header: &Header) -> Option<usize> {
+        if self.over_hint(pos) {
+            return None;
+        }
         let hit = if self.layout.lines > 0 {
             let start = self.selection.page_start.unwrap_or(0);
             let end = self.paging.next.unwrap_or(self.matcher.matches.len());
@@ -56,6 +60,11 @@ impl Menu {
                 .find_map(|(item, rect)| rect.contains(pos).then_some(item))
         };
         hit.filter(|&item| self.matcher.match_is_selectable(item))
+    }
+
+    fn over_hint(&self, pos: Point) -> bool {
+        self.layout.hint_rows > 0
+            && pos.y >= self.layout.menu_height - self.layout.hint_rows * self.layout.bar_height
     }
 
     /// button_press
@@ -98,6 +107,9 @@ impl Menu {
 
     /// left-click: clear the input, or click an item/arrow/command cell.
     fn left_click(&mut self, mods: Modifiers, pos: Point) -> Transition {
+        if self.over_hint(pos) {
+            return Transition::Nop;
+        }
         let header = self.header();
         let row_height = self.layout.bar_height;
 
@@ -136,6 +148,9 @@ impl Menu {
     /// Left-click a vertical/grid cell. Resolve the clicked item directly;
     /// motion events are not guaranteed to precede a button press.
     fn vertical_click(&mut self, mods: Modifiers, pos: Point, header: &Header) -> Transition {
+        if self.over_hint(pos) {
+            return Transition::Nop;
+        }
         let start = self.selection.page_start.unwrap_or(0);
         let end = self.paging.next.unwrap_or(self.matcher.matches.len());
         let clicked = (start..end).enumerate().find_map(|(i, item)| {
@@ -152,12 +167,7 @@ impl Menu {
         let Some(clicked) = clicked else {
             return Transition::Nop;
         };
-        if !self.matcher.match_is_selectable(clicked) {
-            return Transition::Nop;
-        }
-        self.selection.selected = Some(clicked);
-        let out = self.matcher.text_of_match(clicked).to_string();
-        self.confirm(&out, mods).at_least_redraw()
+        self.confirm_match(clicked, AcceptMode::from_ctrl(mods.ctrl))
     }
 
     /// left-click on the horizontal list: arrows and items.
@@ -172,12 +182,7 @@ impl Menu {
         }
         for (item, rect) in self.horizontal_item_rects(header.content_x) {
             if rect.contains(pos) {
-                if !self.matcher.match_is_selectable(item) {
-                    return Transition::Nop;
-                }
-                let item_text = self.matcher.text_of_match(item).to_string();
-                self.selection.selected = Some(item);
-                return self.confirm(&item_text, mods).at_least_redraw();
+                return self.confirm_match(item, AcceptMode::from_ctrl(mods.ctrl));
             }
         }
         /* right arrow: turn forward one page, selecting the page top */
