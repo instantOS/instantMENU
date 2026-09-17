@@ -2,6 +2,7 @@
 //! read their geometry from [`Header`] (`Menu::header`), the same rects the
 //! renderer drew.
 
+use super::accept::AcceptMode;
 use super::layout::Header;
 use super::paging;
 use super::transition::Transition;
@@ -166,12 +167,7 @@ impl Menu {
         let Some(clicked) = clicked else {
             return Transition::Nop;
         };
-        if !self.matcher.match_is_selectable(clicked) {
-            return Transition::Nop;
-        }
-        self.selection.selected = Some(clicked);
-        let out = self.matcher.output_of_match(clicked).to_string();
-        self.confirm(&out, mods).at_least_redraw()
+        self.confirm_match(clicked, AcceptMode::from_ctrl(mods.ctrl))
     }
 
     /// left-click on the horizontal list: arrows and items.
@@ -186,12 +182,7 @@ impl Menu {
         }
         for (item, rect) in self.horizontal_item_rects(header.content_x) {
             if rect.contains(pos) {
-                if !self.matcher.match_is_selectable(item) {
-                    return Transition::Nop;
-                }
-                let item_text = self.matcher.output_of_match(item).to_string();
-                self.selection.selected = Some(item);
-                return self.confirm(&item_text, mods).at_least_redraw();
+                return self.confirm_match(item, AcceptMode::from_ctrl(mods.ctrl));
             }
         }
         /* right arrow: turn forward one page, selecting the page top */

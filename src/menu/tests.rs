@@ -172,6 +172,125 @@ fn ctrl_number_selects_and_confirms() {
     );
 }
 
+/// All item-acceptance gestures obey the same value/label contract, including
+/// duplicate display labels, filtered corpus indices, and keep-open gestures.
+#[test]
+fn acceptance_paths_share_item_output_contract() {
+    for explicit_value in [false, true] {
+        for path in [
+            "return",
+            "ctrl-return",
+            "number",
+            "alt-release",
+            "horizontal",
+            "vertical",
+            "grid",
+            "ctrl-click",
+            "shift-click",
+            "single-key",
+            "auto-confirm",
+            "bound",
+        ] {
+            let mut cfg = Config::default();
+            cfg.single_key = path == "single-key";
+            cfg.auto_confirm = path == "auto-confirm";
+            cfg.alt_tab = path == "alt-release";
+            if path == "bound" {
+                cfg.bindings = bound_config().bindings;
+            }
+            let target = if explicit_value {
+                "{key=b value=👩‍💻 match=target} Same"
+            } else {
+                "{key=b match=target} Same"
+            };
+            let (mut menu, _, out) = menu_with(cfg, &["{key=a value=other} Same", target]);
+            let expected = if explicit_value {
+                "👩‍💻"
+            } else {
+                "Same"
+            };
+            let transition = match path {
+                "single-key" => menu.key_press(0, M_NONE, "b"),
+                "auto-confirm" => menu.key_press(0, M_NONE, "target"),
+                "number" => key(&mut menu, ks::KEY_2, M_CTRL),
+                _ => {
+                    // Filtering makes match position zero refer to corpus item one.
+                    type_text(&mut menu, "target");
+                    match path {
+                        "return" => key(&mut menu, ks::KEY_Return, M_NONE),
+                        "ctrl-return" => key(&mut menu, ks::KEY_Return, M_CTRL),
+                        "alt-release" => menu.key_release(ks::KEY_Alt_L, M_NONE),
+                        "bound" => key(&mut menu, ks::KEY_e, M_CTRL),
+                        _ => {
+                            let pos = if path == "horizontal" {
+                                let (_, rect) = menu.horizontal_item_rects(0)[0];
+                                Point::new(rect.x + rect.w / 2, rect.y + rect.h / 2)
+                            } else {
+                                menu.layout.lines = 3;
+                                menu.layout.columns = if path == "grid" { 2 } else { 1 };
+                                menu.recalc_paging();
+                                Point::new(10, 45)
+                            };
+                            let mods = match path {
+                                "ctrl-click" => M_CTRL,
+                                "shift-click" => M_SHIFT,
+                                _ => M_NONE,
+                            };
+                            menu.button_press(MouseButton::Left, mods, pos)
+                        }
+                    }
+                }
+            };
+            let keep_open = matches!(path, "ctrl-return" | "ctrl-click");
+            let expected_transition = if path == "bound" {
+                Transition::BoundAccept("ctrl-e".into(), Some(expected.into()))
+            } else if keep_open {
+                Transition::Print(expected.into())
+            } else {
+                Transition::PrintAndExit(expected.into())
+            };
+            assert_eq!(
+                transition, expected_transition,
+                "path={path}, value={explicit_value}"
+            );
+            assert!(menu.matcher.items[1].already_output, "{path}");
+            assert!(!menu.matcher.items[0].already_output, "{path}");
+            menu.perform(transition);
+            let prefix = if path == "bound" { "ctrl-e\n" } else { "" };
+            assert_eq!(out.contents(), format!("{prefix}{expected}\n"), "{path}");
+        }
+    }
+}
+
+#[test]
+fn raw_input_acceptance_does_not_mark_a_highlighted_item_as_output() {
+    for mods in [M_SHIFT, M_CTRL_SHIFT] {
+        let (mut menu, _, _) = menu_with(Config::default(), &["{value=machine} Label"]);
+        type_text(&mut menu, "Lab");
+        let result = key(&mut menu, ks::KEY_Return, mods);
+        assert_eq!(
+            result,
+            if mods.ctrl {
+                Transition::Print("Lab".into())
+            } else {
+                Transition::PrintAndExit("Lab".into())
+            }
+        );
+        assert!(!menu.matcher.items[0].already_output);
+    }
+    let (mut menu, _, _) = menu_with(
+        Config {
+            reject_no_match: true,
+            ..Config::default()
+        },
+        &["{value=machine} Label"],
+    );
+    assert_eq!(
+        key(&mut menu, ks::KEY_Return, M_SHIFT),
+        Transition::PrintAndExit("machine".into())
+    );
+}
+
 /* ── editing ───────────────────────────────────────────────────────────── */
 
 #[test]

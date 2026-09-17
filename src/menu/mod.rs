@@ -7,6 +7,7 @@
 //! Behaviour intentionally deviates from the C original in places; those
 //! are noted in the code and pinned by the test suite.
 
+mod accept;
 mod animate;
 mod draw;
 mod editor;
@@ -35,6 +36,7 @@ use crate::enums::ExitStatus;
 use crate::geom::Rect;
 use crate::render::{Canvas, Painter, Renderer};
 
+use accept::{AcceptMode, AcceptTarget};
 use frecency::Frecency;
 use layout::{Header, Layout};
 use matcher::{Item, MatchResult, Matcher};
@@ -347,11 +349,9 @@ impl Menu {
                 self.recalc_paging();
                 Transition::Nop
             }
-            MatchResult::AutoConfirm(idx) => {
-                Transition::PrintAndExit(self.matcher.items[idx].output().to_owned())
-            }
+            MatchResult::AutoConfirm(idx) => self.accept(AcceptTarget::Item(idx), AcceptMode::Exit),
             MatchResult::SingleKeyPick(pick) => match pick {
-                Some(idx) => Transition::PrintAndExit(self.matcher.items[idx].output().to_owned()),
+                Some(idx) => self.accept(AcceptTarget::Item(idx), AcceptMode::Exit),
                 None => Transition::Exit(ExitStatus::Success),
             },
         }
@@ -468,36 +468,10 @@ impl Menu {
         self.selected_text_ref().map(str::to_owned)
     }
 
-    pub(in crate::menu) fn selected_output_ref(&self) -> Option<&str> {
-        self.selection
-            .selected
-            .map(|pos| self.matcher.output_of_match(pos))
-    }
-
-    fn selected_output(&self) -> Option<String> {
-        self.selected_output_ref().map(str::to_owned)
-    }
-
     pub(in crate::menu) fn selected_is_heading(&self) -> bool {
         self.selection
             .selected
             .is_some_and(|pos| !self.matcher.match_is_selectable(pos))
-    }
-
-    /// Confirm the selection: animate, print, exit unless Ctrl is held, and
-    /// mark the item as already output. Returns the transition for run() to
-    /// perform.
-    pub(in crate::menu) fn confirm(&mut self, out: &str, mods: Modifiers) -> Transition {
-        self.animate_selection();
-        if let Some(pos) = self.selection.selected {
-            let item = &mut self.matcher.items[self.matcher.matches[pos]];
-            item.already_output = true;
-        }
-        if !mods.ctrl {
-            Transition::PrintAndExit(out.to_string())
-        } else {
-            Transition::Print(out.to_string())
-        }
     }
 
     /// Ask the backend for the primary selection (clipboard when Shift is

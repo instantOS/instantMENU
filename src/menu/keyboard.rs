@@ -23,6 +23,8 @@ enum KeyPath {
     Done(Transition),
 }
 
+use super::accept::{AcceptMode, AcceptTarget};
+
 impl Menu {
     /// select_number — Ctrl-1..9 select the n-th item and hit Return.
     fn select_number(&mut self, number: usize, mut mods: Modifiers) -> Transition {
@@ -41,16 +43,14 @@ impl Menu {
             return Transition::Nop;
         }
 
-        // puts((sel && !(state & ShiftMask & (!reject_no_match))) ? sel->text : text):
-        // with reject_no_match off, shift+return prints the raw input instead
-        // of the selection.
-        let shift_suppresses = mods.shift && !self.cfg.reject_no_match;
-        let out = if self.selected_output().is_some() && !shift_suppresses {
-            self.selected_output().unwrap_or_default()
+        let mode = AcceptMode::from_ctrl(mods.ctrl);
+        // Raw input is an explicit keyboard action, never inferred by the
+        // shared item acceptance code (in particular, not by Shift-click).
+        if mods.shift && !self.cfg.reject_no_match {
+            self.accept(AcceptTarget::Input, mode)
         } else {
-            self.editor.text.clone()
-        };
-        self.confirm(&out, mods)
+            self.confirm_selection(mode)
+        }
     }
 
     /// key_release — alt-tab release handling. Unlike every other confirm
@@ -77,10 +77,7 @@ impl Menu {
                 if !is_alt_key(sym) || mods.shift || self.selected_is_heading() {
                     return Transition::Nop;
                 }
-                let out = self
-                    .selected_output()
-                    .unwrap_or_else(|| self.editor.text.clone());
-                self.confirm(&out, mods)
+                self.confirm_selection(AcceptMode::from_ctrl(mods.ctrl))
             }
         }
     }
@@ -103,7 +100,8 @@ impl Menu {
             .iter()
             .find(|binding| binding.matches(sym, mods))
         {
-            return Transition::BoundAccept(binding.key.clone(), self.selected_output());
+            let mode = AcceptMode::Bound(binding.key.clone());
+            return self.accept(self.selected_target(), mode);
         }
         let (sym, mods) = if mods.ctrl {
             match self.ctrl_key(sym, mods) {

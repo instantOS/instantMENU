@@ -127,7 +127,7 @@ pub struct MenuArgs {
     /// Activate items by their explicit `key=` metadata.
     ///
     /// Only keyed items are shown. Typing one key immediately prints that
-    /// item's label; matching is otherwise disabled.
+    /// item's value= metadata (or its label if absent); matching is otherwise disabled.
     #[arg(
         long,
         conflicts_with_all = [

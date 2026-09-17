@@ -122,10 +122,6 @@ impl Matcher {
         self.items[self.matches[pos]].label()
     }
 
-    pub fn output_of_match(&self, pos: usize) -> &str {
-        self.items[self.matches[pos]].output()
-    }
-
     pub fn match_is_selectable(&self, pos: usize) -> bool {
         self.matches
             .get(pos)
@@ -403,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    fn single_key_mode_uses_explicit_unicode_keys_and_returns_labels() {
+    fn single_key_mode_uses_explicit_unicode_keys_and_returns_item_indices() {
         let mut m = matcher(
             |c| c.single_key = true,
             &["{key=d} Display", "No key", "{key=λ} Lambda"],
@@ -549,7 +545,7 @@ mod tests {
         m.search("same", true);
         assert_eq!(m.matches, vec![0, 1]);
         assert_eq!(m.text_of_match(0), "same");
-        assert_eq!(m.output_of_match(0), "one");
-        assert_eq!(m.output_of_match(1), "two");
+        assert_eq!(m.items[m.matches[0]].output(), "one");
+        assert_eq!(m.items[m.matches[1]].output(), "two");
     }
 }
