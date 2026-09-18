@@ -126,9 +126,30 @@ impl X11Backend {
     }
 
     /// keysym + utf8 text for a raw X11 keycode, keeping the xkb state fresh.
-    fn lookup_key(&mut self, keycode: u8, pressed: bool) -> (u32, String) {
+    ///
+    /// The xkb state machine only advances on the key events this client
+    /// sees, but its startup state was synced from the server and every key
+    /// event elsewhere is invisible to it. instantWM's keybind grab, for
+    /// example, swallows the release of the very combo that opened the menu
+    /// (or delivers it while the state was seeded through a state mask,
+    /// which `xkb_state_update_key` releases never clear — the two update
+    /// functions must not be mixed, says libxkbcommon). With Control stuck
+    /// depressed, libxkbcommon reports the control character instead of the
+    /// text of every letter press, and typing goes dead while keysym-based
+    /// navigation keeps working.
+    ///
+    /// Every key event, however, carries the server's effective modifier
+    /// mask. Imposing it before the lookup makes each lookup independent of
+    /// whatever was missed before: whatever mask-seeded state the machine
+    /// carries is overwritten with the truth of this very event. The
+    /// effective layout (group) is the one thing the mask cannot carry; it
+    /// is carried through from the state itself.
+    fn lookup_key(&mut self, keycode: u8, state_mask: u16, pressed: bool) -> (u32, String) {
         /* X11 keycodes are already xkb keycodes (the 8-key offset over raw
          * evdev is included); only Wayland's raw evdev codes need a shift. */
+        let group = self.xkb_state.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE);
+        self.xkb_state
+            .update_mask(u32::from(state_mask), 0, 0, 0, 0, group);
         translate_key(&mut self.xkb_state, Keycode::new(keycode as u32), pressed)
     }
 
@@ -216,7 +237,7 @@ impl X11Backend {
     fn handle_event(&mut self, ev: Event) -> Option<BackendEvent> {
         match ev {
             Event::KeyPress(k) => {
-                let (sym, text) = self.lookup_key(k.detail, true);
+                let (sym, text) = self.lookup_key(k.detail, k.state.bits(), true);
                 Some(BackendEvent::KeyPress {
                     sym,
                     mods: x11_mods(k.state),
@@ -224,7 +245,7 @@ impl X11Backend {
                 })
             }
             Event::KeyRelease(k) => {
-                let (sym, _) = self.lookup_key(k.detail, false);
+                let (sym, _) = self.lookup_key(k.detail, k.state.bits(), false);
                 Some(BackendEvent::KeyRelease {
                     sym,
                     mods: x11_mods(k.state),
