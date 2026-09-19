@@ -1,5 +1,4 @@
 name: Release
-
 on:
   push:
     branches:
@@ -11,11 +10,10 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
-
 jobs:
   metadata:
     name: Prepare release metadata
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     container:
       image: ubuntu:24.04
     if: ${{ github.repository_owner == 'instantOS' }}
@@ -42,10 +40,9 @@ jobs:
       - name: Determine release tag
         id: metadata
         run: bash scripts/ci/determine-release.sh
-
   build:
     name: Build release artifacts
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     container:
       image: archlinux:latest
     needs: metadata
@@ -57,8 +54,8 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: Install build dependencies
-        run: bash scripts/ci/install-deps-arch.sh
+      - name: Setup Arch container
+        uses: ./.github/actions/setup-arch
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
       - name: Create build user
@@ -71,10 +68,12 @@ jobs:
       - name: Extract version
         id: vars
         run: bash scripts/ci/extract-version.sh "$GITHUB_REF_NAME"
-      - name: Test and build
+      # No cargo test here: ci.yml already runs the test suite for every
+      # commit on main/PRs, so the release path only builds (same trade-off
+      # as instantCLI's and instantWM's release pipelines).
+      - name: Build release binaries
         run: |
           workspace="$PWD"
-          su builder -c "cd '$workspace' && cargo test --locked --all-targets"
           su builder -c "cd '$workspace' && cargo build --release --locked --bin instantmenu --bin itest"
       - name: Strip binaries
         run: strip target/release/instantmenu target/release/itest
@@ -87,10 +86,92 @@ jobs:
           path: |
             artifacts/*.tgz
             artifacts/*.sha256
-
+  cross-compile:
+    # Cross-compile for ARM (aarch64 + armv7), one job per target.
+    # instantMENU links against system libxkbcommon(-x11), so each leg needs
+    # the :arm64/:armhf copies of those dev libraries (see
+    # scripts/ci/install-deps-ubuntu.sh); the rest of the dependency tree is
+    # pure Rust. A musl target is not planned: Ubuntu doesn't ship musl
+    # variants of those libraries (same blocker that dropped musl from
+    # instantWM's cross-compile matrix).
+    name: Cross-compile ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:24.04
+    needs: metadata
+    if: ${{ needs.metadata.outputs.should_release == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            target: aarch64-unknown-linux-gnu
+            linker: aarch64-linux-gnu-gcc
+            artifact: aarch64-unknown-linux-gnu
+          - arch: armhf
+            target: armv7-unknown-linux-gnueabihf
+            linker: arm-linux-gnueabihf-gcc
+            artifact: armv7-unknown-linux-gnueabihf
+    env:
+      CARGO_TERM_COLOR: always
+      DEBIAN_FRONTEND: noninteractive
+      CARGO_HOME: /opt/cargo
+      RUSTUP_HOME: /opt/rustup
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install build dependencies
+        # Installs the cross toolchain and :arm64/:armhf dev libs for this
+        # matrix leg only (see scripts/ci/install-deps-ubuntu.sh).
+        run: bash scripts/ci/install-deps-ubuntu.sh --cross ${{ matrix.arch }}
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+      - name: Add Rust cross-compilation target
+        run: rustup target add ${{ matrix.target }}
+      - name: Extract version
+        id: vars
+        run: bash scripts/ci/extract-version.sh "$GITHUB_REF_NAME"
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cross-deps
+          key: cross-${{ matrix.target }}
+      - name: Cross compile
+        env:
+          LINKER: ${{ matrix.linker }}
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          triple="${LINKER%-gcc}"
+          # Derive cargo's per-target env vars from the triple, e.g.
+          # CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER and
+          # PKG_CONFIG_aarch64_unknown_linux_gnu.
+          target_env="$(printf '%s' "$target" | tr -- '-a-z' '_A-Z')"
+          export "CARGO_TARGET_${target_env}_LINKER=${LINKER}"
+          export "PKG_CONFIG_${target//-/_}=${triple}-pkg-config"
+          cargo build --locked --release --bin instantmenu --bin itest --target "$target"
+      - name: Strip binaries
+        env:
+          LINKER: ${{ matrix.linker }}
+        run: |
+          strip="${LINKER%-gcc}-strip"
+          "$strip" "target/${{ matrix.target }}/release/instantmenu" "target/${{ matrix.target }}/release/itest"
+      - name: Collect artifact
+        run: bash scripts/ci/package-binary.sh "${{ matrix.target }}" "${{ steps.vars.outputs.version }}" "target/${{ matrix.target }}/release"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: instantmenu-${{ steps.vars.outputs.version }}-${{ matrix.artifact }}
+          path: |
+            artifacts/instantmenu-${{ matrix.target }}-v${{ steps.vars.outputs.version }}.tgz
+            artifacts/instantmenu-${{ matrix.target }}-v${{ steps.vars.outputs.version }}.tgz.sha256
   pkgbuild:
     name: Build Arch package
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     container:
       image: archlinux:latest
     needs:
@@ -98,14 +179,13 @@ jobs:
       - build
     if: ${{ needs.metadata.outputs.should_release == 'true' }}
     steps:
-      - name: Install packaging tools
-        run: |
-          pacman-key --init
-          pacman-key --populate archlinux
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm --needed base-devel git
       - name: Checkout
         uses: actions/checkout@v7
+      - name: Setup Arch container
+        uses: ./.github/actions/setup-arch
+        with:
+          packages: base-devel git
+          include-test-base: "false"
       - name: Extract version
         id: vars
         run: bash scripts/ci/extract-version.sh "$GITHUB_REF_NAME"
@@ -138,10 +218,9 @@ jobs:
         with:
           name: instantmenu-${{ steps.vars.outputs.version }}-arch-package
           path: artifacts/
-
   deb:
     name: Build Debian package
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     container:
       image: ubuntu:24.04
     needs:
@@ -186,15 +265,15 @@ jobs:
         with:
           name: instantmenu-${{ steps.vars.outputs.version }}-deb
           path: artifacts/
-
   release:
     name: Publish GitHub release
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     container:
       image: ubuntu:24.04
     needs:
       - metadata
       - build
+      - cross-compile
       - pkgbuild
       - deb
     if: ${{ needs.metadata.outputs.should_release == 'true' }}
