@@ -188,6 +188,39 @@ fn pattern_file(pattern: *mut FcPattern) -> Option<PathBuf> {
     Some(PathBuf::from(path.as_ref()))
 }
 
+/// Codepoints that must not count as "needing font coverage": the Unicode
+/// Default_Ignorable_Code_Point set plus other shaper-consumed format
+/// controls. The shaper consumes them without ever looking up a glyph — the
+/// emoji font implements variation selectors (U+FE0F and friends) through
+/// variation-sequence tables instead of the base cmap, so almost no font
+/// "maps" them. Requiring coverage anyway made the fallback machinery sort
+/// every installed font to cover one invisible codepoint.
+fn needs_coverage(ch: char) -> bool {
+    if ch.is_control() || ch.is_whitespace() {
+        return false;
+    }
+    !matches!(
+        ch,
+        '\u{00AD}'                      // soft hyphen
+            | '\u{034F}'                // combining grapheme joiner
+            | '\u{061C}'                // arabic letter mark
+            | '\u{115F}'..='\u{1160}'   // hangul choseong/jungseong filler
+            | '\u{17B4}'..='\u{17B5}'   // khmer vowel inherent
+            | '\u{180B}'..='\u{180F}'   // mongolian free variation selectors
+            | '\u{200B}'..='\u{200F}'   // zero-width spaces, joiners, dir marks
+            | '\u{202A}'..='\u{202E}'   // bidi embedding controls
+            | '\u{2060}'..='\u{206F}'   // invisible operators, bidi isolates
+            | '\u{3164}'                // hangul filler
+            | '\u{FE00}'..='\u{FE0F}'   // variation selectors
+            | '\u{FEFF}'                // zero width no-break space
+            | '\u{FFA0}'                // halfwidth hangul filler
+            | '\u{FFF0}'..='\u{FFF8}'   // interlinear annotation
+            | '\u{1BCA0}'..='\u{1BCA3}' // shorthand format controls
+            | '\u{1D173}'..='\u{1D17A}' // musical format controls
+            | '\u{E0000}'..='\u{E0FFF}' // tags, variation selectors supplement
+    )
+}
+
 /// Build a small database containing configured fonts plus enough fontconfig
 /// fallbacks to cover every renderable character in the current corpus.
 pub(super) fn database_for(
@@ -209,7 +242,7 @@ pub(super) fn database_for(
     let mut uncovered: HashSet<char> = required_chars
         .iter()
         .copied()
-        .filter(|ch| !ch.is_control() && !ch.is_whitespace())
+        .filter(|ch| needs_coverage(*ch))
         .collect();
     remove_covered(&db, &mut uncovered);
     for path in cache.fallbacks.clone() {
@@ -260,7 +293,7 @@ pub(super) fn add_fallbacks(db: &mut fontdb::Database, required_chars: &HashSet<
     let mut uncovered: HashSet<char> = required_chars
         .iter()
         .copied()
-        .filter(|ch| !ch.is_control() && !ch.is_whitespace())
+        .filter(|ch| needs_coverage(*ch))
         .collect();
     remove_covered(db, &mut uncovered);
     if uncovered.is_empty() {
@@ -449,4 +482,46 @@ fn fontconfig_stamp() -> u128 {
         .map(|duration| duration.as_nanos())
         .max()
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::needs_coverage;
+
+    /// Emoji selectors and joiners are consumed by the shaper and must not
+    /// trigger the font-fallback machinery (the U+FE0F regression: the emoji
+    /// picker paid a full-system fontconfig sort for one invisible selector).
+    #[test]
+    fn shaper_consumed_codepoints_need_no_coverage() {
+        for ch in [
+            '\u{FE0F}',  // emoji presentation selector (❤️)
+            '\u{FE0E}',  // text presentation selector
+            '\u{200D}',  // zero width joiner (👨‍👩‍👧‍👦)
+            '\u{200C}',  // zero width non-joiner
+            '\u{200E}',  // left-to-right mark
+            '\u{E0067}', // England flag tag character
+            '\u{180B}',  // mongolian variation selector
+            '\u{00AD}',  // soft hyphen
+            '\u{2060}',  // word joiner
+        ] {
+            assert!(!needs_coverage(ch), "U+{:04X} needs no coverage", ch as u32);
+        }
+    }
+
+    /// Visible characters keep requiring coverage — including combining
+    /// marks, which are shaper-attached but still need their glyph.
+    #[test]
+    fn visible_codepoints_still_need_coverage() {
+        for ch in ['a', 'ß', '😀', '\u{0301}', '\u{20E3}', '#'] {
+            assert!(needs_coverage(ch), "U+{:04X} needs coverage", ch as u32);
+        }
+    }
+
+    /// Control characters and whitespace are excluded as before.
+    #[test]
+    fn control_and_whitespace_need_no_coverage() {
+        for ch in ['\n', '\t', '\u{0}', ' '] {
+            assert!(!needs_coverage(ch), "U+{:04X} needs no coverage", ch as u32);
+        }
+    }
 }
