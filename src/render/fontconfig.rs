@@ -127,6 +127,11 @@ impl Config {
         let mut coverage = std::ptr::null_mut();
         let set = unsafe { FcFontSort(self.0, pattern, 0, &mut coverage, &mut result) };
         let mut paths = Vec::new();
+        // FcFontSort can return a face for every installed font (thousands),
+        // so dedupe their file paths through a set: the previous linear
+        // `paths.contains` made this O(n^2) and dominated menu startup on
+        // systems with large font collections.
+        let mut seen: HashSet<PathBuf> = HashSet::new();
         // Fontconfig returns the union of the sorted fonts' character sets.
         // Discard codepoints unavailable anywhere on the system; walking every
         // font file cannot make those render and turns one absent glyph into a
@@ -139,7 +144,7 @@ impl Config {
             for index in 0..set_ref.nfont.max(0) as usize {
                 let font = unsafe { *set_ref.fonts.add(index) };
                 if let Some(path) = pattern_file(font) {
-                    if !paths.contains(&path) {
+                    if seen.insert(path.clone()) {
                         paths.push(path);
                     }
                 }
