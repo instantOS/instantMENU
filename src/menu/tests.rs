@@ -2037,6 +2037,23 @@ fn icon_item_measurement_uses_label_plus_gutter() {
     assert!(rect.w < menu.cell_width(source));
 }
 
+/// Single-key mode keeps square cells and ignores items without a key.
+#[test]
+fn single_key_max_cell_width_is_the_bar_height() {
+    let cfg = Config {
+        single_key: true,
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(
+        cfg.clone(),
+        &["{key=a} Alpha", "a very long item without a key"],
+    );
+    assert_eq!(menu.max_cell_width(), menu.layout.bar_height);
+
+    let (mut menu, _stub, _out) = menu_with(cfg, &["no key here at all"]);
+    assert_eq!(menu.max_cell_width(), 0);
+}
+
 /// Slide mode does not read items from stdin even when some are provided.
 #[test]
 fn slide_ignores_stdin_items() {

@@ -36,16 +36,14 @@ pub struct Renderer {
     /// Currently active color scheme.
     pub scheme: SchemeColors,
 
-    // Shaped text is reusable for both measurement and drawing.
-    layout_cache: HashMap<String, TextLayout>,
+    // Shaped text, measured and then reused for drawing. Bounded (it holds
+    // whole buffers), so it is cleared when full.
+    layout_cache: HashMap<String, Buffer>,
+    // Exact shaped widths, kept separately from the larger buffer cache.
+    widths: HashMap<String, i32>,
     // Characters whose fallback coverage has already been checked. This lets
     // pasted text extend the small startup database without repeated queries.
     checked_chars: HashSet<char>,
-}
-
-struct TextLayout {
-    width: i32,
-    buffer: Buffer,
 }
 
 impl Renderer {
@@ -80,6 +78,7 @@ impl Renderer {
             horizontal_padding: font_height,
             scheme: palette.normal,
             layout_cache: HashMap::new(),
+            widths: HashMap::new(),
             checked_chars,
         }
     }
@@ -119,17 +118,29 @@ impl Renderer {
         if text.is_empty() {
             return 0;
         }
-        if let Some(layout) = self.layout_cache.get(text) {
-            return layout.width;
+        if let Some(&width) = self.widths.get(text) {
+            return width;
         }
-        let buffer = self.make_buffer(text, None);
-        let width = Renderer::buffer_width(&buffer);
-        if self.layout_cache.len() >= 1024 {
-            self.layout_cache.clear();
-        }
-        self.layout_cache
-            .insert(text.to_owned(), TextLayout { width, buffer });
+        let width = if let Some(buffer) = self.layout_cache.get(text) {
+            Renderer::buffer_width(buffer)
+        } else {
+            let buffer = self.make_buffer(text, None);
+            let width = Renderer::buffer_width(&buffer);
+            if self.layout_cache.len() >= 1024 {
+                self.layout_cache.clear();
+            }
+            self.layout_cache.insert(text.to_owned(), buffer);
+            width
+        };
+        self.remember_width(text, width);
         width
+    }
+
+    fn remember_width(&mut self, text: &str, width: i32) {
+        if self.widths.len() >= 4096 {
+            self.widths.clear();
+        }
+        self.widths.insert(text.to_owned(), width);
     }
 
     /// Load fallback fonts covering `chars` into the live font database.
@@ -237,14 +248,12 @@ impl Renderer {
         }
 
         // Remove-then-reinsert: the miss path (`make_buffer`) needs `&mut
-        // self`, so we can't hold a cache entry across it. Take the layout
+        // self`, so we can't hold a cache entry across it. Take the buffer
         // out, draw from it, then put it back.
-        let mut layout = self.layout_cache.remove(text).unwrap_or_else(|| {
+        let mut buffer = self.layout_cache.remove(text).unwrap_or_else(|| {
             let buffer = self.make_buffer(text, None);
-            TextLayout {
-                width: Renderer::buffer_width(&buffer),
-                buffer,
-            }
+            self.remember_width(text, Renderer::buffer_width(&buffer));
+            buffer
         });
 
         let width = canvas.width;
@@ -257,7 +266,7 @@ impl Renderer {
         let y = band.y + (band.h - self.font_height) / 2;
         let cosmic_color = CosmicColor::rgba(color.r(), color.g(), color.b(), color.a());
 
-        layout.buffer.draw(
+        buffer.draw(
             &mut self.font_system,
             &mut self.swash_cache,
             cosmic_color,
@@ -274,7 +283,7 @@ impl Renderer {
         if self.layout_cache.len() >= 1024 {
             self.layout_cache.clear();
         }
-        self.layout_cache.insert(text.to_owned(), layout);
+        self.layout_cache.insert(text.to_owned(), buffer);
     }
 }
 
@@ -632,5 +641,30 @@ mod tests {
             let buffer = r.make_buffer(text, None);
             assert_eq!(Renderer::buffer_width(&buffer), w, "{text:?}");
         }
+    }
+
+    /// Exact widths outlive the bounded buffer cache, so clearing it never
+    /// forces text to be reshaped just to be measured.
+    #[test]
+    fn widths_survive_layout_cache_clearing() {
+        let mut r = make_test_renderer();
+        let w = r.text_width("measured once");
+        for i in 0..1100 {
+            r.text_width(&format!("filler {i}"));
+        }
+        assert!(!r.layout_cache.contains_key("measured once"));
+        assert_eq!(r.widths.get("measured once"), Some(&w));
+        assert_eq!(r.text_width("measured once"), w);
+    }
+
+    #[test]
+    fn measured_widths_are_bounded() {
+        let mut r = make_test_renderer();
+        let first = r.text_width("label 0");
+        for i in 1..5000 {
+            r.text_width(&format!("label {i}"));
+        }
+        assert!(r.widths.len() <= 4096);
+        assert_eq!(r.text_width("label 0"), first);
     }
 }
