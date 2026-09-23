@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.1.2](https://github.com/instantOS/instantMENU/compare/v5.1.1...v5.1.2) - 2026-09-23
+
+### Fixed
+
+- starting up while holding keys discards some input
+- optimize font latency further
+
+### Other
+
+- add ARM releases
+- Merge branch 'main' of github.com:instantOS/instantMENU
+- fix font load latency
+- Merge branch 'main' into dev
+- Load X11 cursors lazily on first use
+
 ## [5.1.1](https://github.com/instantOS/instantMENU/compare/v5.1.0...v5.1.1) - 2026-09-17
 
 ### Changed
