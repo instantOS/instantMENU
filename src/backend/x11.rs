@@ -1,5 +1,6 @@
 //! X11 backend — x11rb (XCB) + libxkbcommon-x11 for keysym/text lookup.
 
+use std::cell::OnceCell;
 use std::os::fd::{AsRawFd, RawFd};
 use std::time::Duration;
 
@@ -34,11 +35,13 @@ pub struct X11Backend {
     created: bool,
     managed: bool,
     pointer_grabbed: bool,
-    /* cursor images for set_cursor; all NONE when loading failed, in
-     * which case the default arrow stays and calls become no-ops */
-    default_cursor: Cursor,
-    drag_cursor: Cursor,
-    resize_h_cursor: Cursor,
+    screen_number: usize,
+    /// (default, drag, resize-h) cursor images for set_cursor, loaded on
+    /// first use: only the slider switches cursors, so ordinary menus skip
+    /// the theme lookup and image decoding that would otherwise delay
+    /// their first window. `None` once loading failed, in which case the
+    /// default arrow stays and calls become no-ops.
+    cursors: OnceCell<Option<(Cursor, Cursor, Cursor)>>,
     /// The cursor id most recently sent to the server, for dropping
     /// repeats. The window attribute and the grab cursor both live exactly
     /// as long as the menu, so the server never resets them behind our
@@ -89,11 +92,6 @@ impl X11Backend {
         let (xkb_context, xkb_keymap, xkb_state) = xkb_setup(&connection)?;
         let atoms = intern_atoms(&connection)?;
         let monitors = query_monitors(&connection);
-        let (default_cursor, drag_cursor, resize_h_cursor) = load_cursors(
-            &connection,
-            screen_number,
-        )
-        .unwrap_or((x11rb::NONE, x11rb::NONE, x11rb::NONE));
         let (root_width, root_height) = (
             screen.width_in_pixels as i32,
             screen.height_in_pixels as i32,
@@ -110,9 +108,8 @@ impl X11Backend {
             created: false,
             managed: false,
             pointer_grabbed: false,
-            default_cursor,
-            drag_cursor,
-            resize_h_cursor,
+            screen_number,
+            cursors: OnceCell::new(),
             current_cursor: x11rb::NONE,
             window_rect: Rect::default(),
             xkb_context,
@@ -624,13 +621,19 @@ impl Backend for X11Backend {
     /// dropped against `current_cursor`; see the field comment for why
     /// that cannot suppress a needed update.
     fn set_cursor(&mut self, cursor: MenuCursor) {
-        let target = match cursor {
-            MenuCursor::Default => self.default_cursor,
-            MenuCursor::Drag => self.drag_cursor,
-            MenuCursor::ResizeHorizontal => self.resize_h_cursor,
+        let Some((default, drag, resize_h)) = *self
+            .cursors
+            .get_or_init(|| load_cursors(&self.connection, self.screen_number))
+        else {
+            return; // loading failed
         };
-        if target == x11rb::NONE || target == self.current_cursor {
-            return; // loading failed at startup, or already in effect
+        let target = match cursor {
+            MenuCursor::Default => default,
+            MenuCursor::Drag => drag,
+            MenuCursor::ResizeHorizontal => resize_h,
+        };
+        if target == self.current_cursor {
+            return; // already in effect
         }
         self.current_cursor = target;
         let _ = self.connection.change_window_attributes(
@@ -845,7 +848,9 @@ fn query_monitors(connection: &XCBConnection) -> Vec<MonitorInfo> {
 /// dragging hand, and the horizontal double arrow. Cursor themes are
 /// preferred; the core `cursor` font — the same glyphs dwm's own cursors
 /// come from — fills in when a theme lacks a name. `None` on any failure
-/// (switching then stays disabled).
+/// (switching then stays disabled). Blocking round-trips, so only called
+/// lazily from [`Backend::set_cursor`]; events that arrive meanwhile stay
+/// queued for the next `poll_event`.
 fn load_cursors(
     connection: &XCBConnection,
     screen_number: usize,
