@@ -1,5 +1,4 @@
 name: Version bump PR
-
 on:
   push:
     branches:
@@ -27,11 +26,10 @@ on:
           - patch
           - minor
           - major
-
 jobs:
   version-bump:
     name: Prepare release PR
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     container:
       image: archlinux:latest
     if: ${{ github.repository_owner == 'instantOS' }}
