@@ -7,7 +7,9 @@ use super::matcher::Item;
 use super::transition::Transition;
 use super::Menu;
 use crate::backend::stub::{TestBackend, TestHandle as StubHandle};
-use crate::backend::{BackendEvent, InputSource, MenuCursor, Modifiers, MonitorInfo, MouseButton};
+use crate::backend::{
+    Backend, BackendEvent, InputSource, MenuCursor, Modifiers, MonitorInfo, MouseButton,
+};
 use crate::config::{Config, SlideSettings, Width};
 use crate::enums::{ExitStatus, Scheme};
 use crate::geom::{Point, Rect, Size};
@@ -1312,16 +1314,125 @@ fn scroll_turns_pages() {
     menu.paging.next = Some(1);
     menu.paging.prev = 0;
 
-    assert_eq!(menu.scroll(1), Transition::Redraw);
+    assert_eq!(menu.scroll_burst(&[1]), Transition::Redraw);
     assert_eq!(menu.selection.selected, Some(1));
     assert_eq!(menu.selection.page_start, Some(1));
 
     // scrolling back up moves the page, the selection follows the page top
-    assert_eq!(menu.scroll(-1), Transition::Redraw);
+    assert_eq!(menu.scroll_burst(&[-1]), Transition::Redraw);
     assert_eq!(menu.selection.page_start, Some(0));
 }
 
 /* ── the event loop ────────────────────────────────────────────────────── */
+
+/// A vertical list one row taller than the page budget, so every wheel detent
+/// turns exactly one page and `page_start` is a plain count of detents.
+/// `menu_with` has already matched and paginated against the default
+/// horizontal layout, so the paging has to be recomputed after the override.
+fn one_item_per_page(menu: &mut Menu) {
+    menu.layout.lines = 1;
+    menu.layout.columns = 1;
+    menu.recalc_paging();
+}
+
+/// A fast flick: the detents queued behind the first one are absorbed into a
+/// single redraw, so the menu lands on the final page in one frame instead of
+/// grinding through every intermediate one.
+#[test]
+fn a_scroll_burst_presents_one_frame_and_lands_on_the_last_page() {
+    let items: Vec<String> = (0..40).map(|i| format!("item {i}")).collect();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, stub, _out) = menu_with(Config::default(), &refs);
+    one_item_per_page(&mut menu);
+    let presents = stub.state().presents;
+
+    for _ in 0..5 {
+        stub.push(BackendEvent::Scroll { delta: 1 });
+    }
+    // the run loop must not spin forever: a click ends it
+    stub.push(BackendEvent::ButtonPress {
+        button: MouseButton::Left,
+        mods: M_NONE,
+        pos: Point::new(0, 0),
+        source: InputSource::External,
+    });
+
+    assert_eq!(menu.run(), ExitStatus::Failure);
+    // five detents turn five pages…
+    assert_eq!(menu.selection.page_start, Some(5));
+    // …but they were presented as a single frame
+    assert_eq!(stub.state().presents - presents, 1);
+}
+
+/// A burst is only a redraw-coalescing shortcut: it has to leave the list in
+/// exactly the state the same detents would have produced one frame at a time.
+#[test]
+fn a_scroll_burst_lands_where_one_detent_at_a_time_would() {
+    let items: Vec<String> = (0..40).map(|i| format!("item {i}")).collect();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let deltas = [1, 1, 1, -1, 1, 1, 1, 1];
+
+    let (mut stepped, _stub, _out) = menu_with(Config::default(), &refs);
+    one_item_per_page(&mut stepped);
+    for &delta in &deltas {
+        stepped.scroll_burst(&[delta]);
+    }
+
+    let (mut burst, _stub, _out) = menu_with(Config::default(), &refs);
+    one_item_per_page(&mut burst);
+    assert_eq!(burst.scroll_burst(&deltas), Transition::Redraw);
+
+    assert_eq!(burst.selection, stepped.selection);
+    assert_eq!(burst.paging, stepped.paging);
+}
+
+/// A burst whose steps are absorbed still clamps at the list ends, exactly as
+/// one redraw per detent would.
+#[test]
+fn a_scroll_burst_clamps_at_the_list_ends() {
+    let items: Vec<String> = (0..3).map(|i| format!("item {i}")).collect();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+    one_item_per_page(&mut menu);
+
+    // more detents down than there are pages
+    assert_eq!(menu.scroll_burst(&[1; 8]), Transition::Redraw);
+    let last = menu.selection.page_start;
+    // and a burst that overshoots the top stops there
+    assert_eq!(menu.scroll_burst(&[-1; 8]), Transition::Redraw);
+    assert_eq!(menu.selection.page_start, Some(0));
+    // already at the top: a further burst changes nothing and does not redraw
+    assert_eq!(menu.scroll_burst(&[-1; 8]), Transition::Nop);
+    assert!(last.unwrap_or(0) > 0);
+}
+
+/// Only the leading run of wheel events is absorbed. A detent that sits behind
+/// an event of another kind must keep its place, or a click would be applied
+/// before the scrolling the user did before it.
+#[test]
+fn drain_scroll_stops_at_the_first_event_of_another_kind() {
+    let mut backend = TestBackend::new();
+    let handle = backend.handle();
+    for delta in [1, 1] {
+        handle.push(BackendEvent::Scroll { delta });
+    }
+    handle.push(BackendEvent::Motion {
+        time: 0,
+        pos: Point::new(0, 0),
+        source: InputSource::Menu,
+    });
+    handle.push(BackendEvent::Scroll { delta: 1 });
+
+    assert_eq!(backend.drain_scroll(), vec![1, 1]);
+    // the motion and the detent behind it are still queued, in order
+    let rest = handle.feed.lock().unwrap();
+    assert!(matches!(rest.front(), Some(BackendEvent::Motion { .. })));
+    assert!(matches!(
+        rest.get(1),
+        Some(BackendEvent::Scroll { delta: 1 })
+    ));
+    assert_eq!(rest.len(), 2);
+}
 
 #[test]
 fn run_returns_failure_when_the_connection_dies() {
@@ -2486,4 +2597,215 @@ fn auto_width_fits_an_action_even_with_short_items() {
     let hint_width =
         menu.renderer.text_width("Ctrl+E  Edit this entry") + menu.renderer.horizontal_padding;
     assert!(menu.layout.menu_width >= hint_width);
+}
+
+/* ── frame-cost benchmarks ───────────────────────────────────────────────
+ *
+ * Ignored by default; run with
+ *   cargo test --release -- --ignored --nocapture bench_scroll
+ * They drive the real Menu (real renderer, real canvas, real paging) so the
+ * numbers are the ones the event loop actually pays per frame. */
+
+/// The `ins assist` emoji picker's exact invocation, as a Config.
+fn emoji_picker_cfg() -> Config {
+    Config {
+        prompt: Some("Emoji".into()),
+        placeholder: Some("Search emoji names".into()),
+        insensitive: true,
+        lines: 12,
+        columns: 1,
+        width: Width::Fixed(700),
+        position: crate::config::Position::Center,
+        line_height: crate::config::LineHeight::Pixels(32),
+        ..Config::default()
+    }
+}
+
+/// The picker's stdin: one line per catalog entry, `emoji name`. The catalog
+/// lives in the instantCLI checkout; without it there is nothing emoji-shaped
+/// to measure, so the benchmark reports and returns instead of failing.
+fn emoji_picker_items() -> Option<Vec<String>> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()?
+        .join("instantCLI/src/assist/actions/emoji/catalog.tsv");
+    let text = std::fs::read_to_string(&path).ok()?;
+    Some(
+        text.lines()
+            .filter(|l| !l.starts_with("# "))
+            .filter_map(|l| l.split_once('\t'))
+            .map(|(emoji, name)| format!("{emoji} {name}"))
+            .collect(),
+    )
+}
+
+fn ms(d: std::time::Duration) -> f64 {
+    d.as_secs_f64() * 1000.0
+}
+
+fn report(name: &str, times: &mut [f64]) {
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let n = times.len();
+    println!(
+        "{name:<40} n={n:<4} first {:7.2}ms  p50 {:7.2}ms  p95 {:7.2}ms  p99 {:7.2}ms  max {:7.2}ms  mean {:7.2}ms",
+        times[0],
+        times[n / 2],
+        times[(n * 95 / 100).min(n - 1)],
+        times[(n * 99 / 100).min(n - 1)],
+        times[n - 1],
+        times.iter().sum::<f64>() / n as f64,
+    );
+}
+
+/// One full scroll frame: the handler plus the redraw the event loop performs.
+/// A single detent on purpose — this measures the per-frame cost the burst
+/// path still pays for the page it lands on.
+fn scroll_frame(menu: &mut Menu, delta: i32) -> Option<std::time::Duration> {
+    let start = std::time::Instant::now();
+    let t = menu.scroll_burst(&[delta]);
+    if matches!(t, Transition::Nop) {
+        return None;
+    }
+    menu.perform(t);
+    Some(start.elapsed())
+}
+
+/// Drive `count` frames in one scroll direction, stopping at the list ends.
+fn sweep(menu: &mut Menu, delta: i32, count: usize) -> Vec<f64> {
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count * 4 {
+        if out.len() == count {
+            break;
+        }
+        if let Some(d) = scroll_frame(menu, delta) {
+            out.push(ms(d));
+        }
+    }
+    out
+}
+
+#[test]
+#[ignore = "benchmark"]
+fn bench_scroll() {
+    let mut cfg = emoji_picker_cfg();
+    cfg.fonts = vec![
+        std::env::var("BENCH_FONT_PRIMARY").unwrap_or_else(|_| "DejaVu Sans:size=12".into()),
+        std::env::var("BENCH_FONT_ICON").unwrap_or_else(|_| "DejaVu Sans:size=14".into()),
+        std::env::var("BENCH_FONT_EMOJI")
+            .unwrap_or_else(|_| "Noto Color Emoji:pixelsize=20".into()),
+    ];
+    let items = match emoji_picker_items() {
+        Some(items) if !items.is_empty() => items,
+        _ => {
+            println!("bench_scroll: instantCLI emoji catalog not found, skipping");
+            return;
+        }
+    };
+    let required: HashSet<char> = items.iter().flat_map(|i| i.chars()).collect();
+    let t0 = std::time::Instant::now();
+    let renderer = Renderer::new(&cfg.fonts, cfg.palette, &required);
+    println!(
+        "renderer startup (all {} chars): {:.1}ms",
+        required.len(),
+        ms(t0.elapsed())
+    );
+
+    let backend = TestBackend {
+        monitors: vec![MonitorInfo {
+            rect: Rect::new(0, 0, 1920, 1080),
+            name: "stub".into(),
+        }],
+        ..TestBackend::new()
+    };
+    let mut menu = Menu::new(cfg, renderer, Box::new(backend));
+    let t0 = std::time::Instant::now();
+    menu.add_items(items.iter().map(Item::new).collect());
+    println!("add_items: {:.1}ms", ms(t0.elapsed()));
+    menu.stream_dirty = false;
+    // The geometry setup() would install.
+    menu.layout = super::layout::Layout {
+        lines: 12,
+        columns: 1,
+        hint_rows: 0,
+        bar_height: 32,
+        menu_width: 700,
+        menu_height: 13 * 32,
+        input_width: 700 / 3,
+        ..Default::default()
+    };
+    menu.canvas.resize(Size::new(700, 13 * 32));
+    let t0 = std::time::Instant::now();
+    let _ = menu.do_match();
+    println!(
+        "do_match over {} matches: {:.1}ms",
+        menu.matcher.matches.len(),
+        ms(t0.elapsed())
+    );
+    menu.draw_menu();
+
+    // Scroll down through fresh content (the reported slow direction)...
+    let mut down = sweep(&mut menu, 1, 200);
+    report("scroll down (fresh content)", &mut down);
+
+    // ...and back up over the same, now-cached pages.
+    let mut up = sweep(&mut menu, -1, 200);
+    report("scroll up (revisited content)", &mut up);
+
+    // And down again, now that everything is cached: pure redraw cost.
+    let mut again = sweep(&mut menu, 1, 200);
+    report("scroll down (all cached)", &mut again);
+
+    /* The reported symptom: a fast flick. Queue a whole burst of detents on
+     * the stub backend — what a mouse wheel actually delivers — and run the
+     * real event loop over them. */
+    for burst in [1, 5, 15] {
+        let (mut flick, stub, _out) = emoji_picker_menu(&items);
+        let start_page = flick.selection.page_start.unwrap_or(0);
+        let start_presents = stub.state().presents;
+        for _ in 0..burst {
+            stub.push(BackendEvent::Scroll { delta: 1 });
+        }
+        stub.push(BackendEvent::ButtonPress {
+            button: MouseButton::Left,
+            mods: M_NONE,
+            pos: Point::new(0, 0),
+            source: InputSource::External,
+        });
+        let t = std::time::Instant::now();
+        let status = flick.run();
+        let elapsed = ms(t.elapsed());
+        assert_eq!(status, ExitStatus::Failure);
+        let frames = stub.state().presents - start_presents;
+        let moved = flick.selection.page_start.unwrap_or(0) - start_page;
+        println!(
+            "flick of {burst:>2} detents: {moved:>2} pages in {elapsed:7.2}ms across {frames:>2} frame(s)",
+        );
+    }
+}
+
+/// The emoji picker as the run loop builds it: real renderer, real canvas,
+/// real geometry, stub backend so detents can be queued by hand.
+fn emoji_picker_menu(items: &[String]) -> (Menu, StubHandle, SharedOutput) {
+    let mut cfg = emoji_picker_cfg();
+    cfg.fonts = vec![
+        std::env::var("BENCH_FONT_PRIMARY").unwrap_or_else(|_| "DejaVu Sans:size=12".into()),
+        std::env::var("BENCH_FONT_ICON").unwrap_or_else(|_| "DejaVu Sans:size=14".into()),
+        std::env::var("BENCH_FONT_EMOJI")
+            .unwrap_or_else(|_| "Noto Color Emoji:pixelsize=20".into()),
+    ];
+    let required: HashSet<char> = items.iter().flat_map(|i| i.chars()).collect();
+    let renderer = Renderer::new(&cfg.fonts, cfg.palette, &required);
+    let backend = TestBackend {
+        monitors: vec![MonitorInfo {
+            rect: Rect::new(0, 0, 1920, 1080),
+            name: "stub".into(),
+        }],
+        ..TestBackend::new()
+    };
+    let stub = backend.handle();
+    let mut menu = Menu::new(cfg, renderer, Box::new(backend));
+    menu.add_items(items.iter().map(Item::new).collect());
+    menu.stream_dirty = false;
+    menu.canvas.resize(Size::new(700, 13 * 32));
+    let _ = menu.setup();
+    (menu, stub, SharedOutput::default())
 }

@@ -91,7 +91,16 @@ impl Menu {
                     button, mods, pos, ..
                 } => self.button_press(button, mods, pos),
                 BackendEvent::ButtonRelease { .. } => continue,
-                BackendEvent::Scroll { delta } => self.scroll(delta),
+                /* One wheel detent redraws once — unless more are already
+                 * queued behind it, which is what a fast flick looks like.
+                 * Absorb the burst and present only the page it lands on:
+                 * the same end state, without making the user watch the
+                 * menu grind through every intermediate page. */
+                BackendEvent::Scroll { delta } => {
+                    let mut burst = self.backend.drain_scroll();
+                    burst.insert(0, delta);
+                    self.scroll_burst(&burst)
+                }
                 BackendEvent::Expose => {
                     self.backend.present(&self.canvas);
                     continue;

@@ -1,6 +1,7 @@
 //! X11 backend — x11rb (XCB) + libxkbcommon-x11 for keysym/text lookup.
 
 use std::cell::OnceCell;
+use std::collections::VecDeque;
 use std::os::fd::{AsRawFd, RawFd};
 use std::time::Duration;
 
@@ -64,6 +65,10 @@ pub struct X11Backend {
     root_width: i32,
     root_height: i32,
 
+    /// Events pulled off the connection by `drain_scroll` that were not wheel
+    /// movement, kept in arrival order so `poll_event` still sees them next.
+    pending: VecDeque<BackendEvent>,
+
     atoms: Atoms,
 }
 
@@ -118,6 +123,7 @@ impl X11Backend {
             monitors,
             root_width,
             root_height,
+            pending: VecDeque::new(),
             atoms,
         })
     }
@@ -717,6 +723,11 @@ impl Backend for X11Backend {
     fn poll_event(&mut self, timeout: Option<Duration>, extra: &[RawFd]) -> EventPoll {
         let start = std::time::Instant::now();
         loop {
+            /* Events a `drain_scroll` sweep pulled off the connection but did
+             * not consume come first, still in arrival order. */
+            if let Some(ev) = self.pending.pop_front() {
+                return EventPoll::Event(ev);
+            }
             match self.connection.poll_for_event() {
                 Ok(Some(ev)) => {
                     if let Some(event) = self.handle_event(ev) {
@@ -766,6 +777,24 @@ impl Backend for X11Backend {
             x11rb::CURRENT_TIME,
         );
         self.flush();
+    }
+
+    /// Drain every event the connection already holds, keeping the leading run
+    /// of wheel detents and parking the rest in `pending`. A fast flick
+    /// arrives as a run of button 4/5 presses in the server's queue, so
+    /// without this each one costs the core a full redraw.
+    fn drain_scroll(&mut self) -> Vec<i32> {
+        let mut deltas = Vec::new();
+        while let Ok(Some(raw)) = self.connection.poll_for_event() {
+            match self.handle_event(raw) {
+                Some(BackendEvent::Scroll { delta }) => deltas.push(delta),
+                Some(other) => self.pending.push_back(other),
+                /* Not for us (a wheel press outside the menu, an unmapped
+                 * button): discarding it is what the single-event path did. */
+                None => {}
+            }
+        }
+        deltas
     }
 }
 

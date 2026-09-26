@@ -86,8 +86,10 @@ impl Menu {
         }
     }
 
-    /// Wheel movement pages through the list (positive scrolls down).
-    pub(super) fn scroll(&mut self, delta: i32) -> Transition {
+    /// One wheel step, mutating the page window. Returns whether the page
+    /// actually turned, so a burst can be applied without redrawing between
+    /// steps (see [`Menu::scroll_burst`]).
+    pub(super) fn scroll_one(&mut self, delta: i32) -> bool {
         if delta < 0 {
             if self.paging.prev != 0 || self.selection.page_start.map(|c| c > 0).unwrap_or(false) {
                 let page = paging::scroll_up(&self.selection, &self.paging)
@@ -95,14 +97,34 @@ impl Menu {
                     .unwrap_or(0);
                 self.select_page(page);
                 self.recalc_paging();
-                return Transition::Redraw;
+                return true;
             }
         } else if let Some(next) = self.paging.next {
             self.select_page(next);
             self.recalc_paging();
-            return Transition::Redraw;
+            return true;
         }
-        Transition::Nop
+        false
+    }
+
+    /// Apply a whole burst of wheel steps and redraw once.
+    ///
+    /// Every detent is applied in order — so the end state is exactly what
+    /// one redraw per detent would have produced, clamping at the list ends
+    /// included — but only the final page is painted. A fast flick otherwise
+    /// queues one full redraw per detent, and each one has to be drawn before
+    /// the next detent is even read, so the menu falls behind the wheel
+    /// instead of landing on the page the user flicked to.
+    pub(super) fn scroll_burst(&mut self, deltas: &[i32]) -> Transition {
+        let mut moved = false;
+        for &delta in deltas {
+            moved |= self.scroll_one(delta);
+        }
+        if moved {
+            Transition::Redraw
+        } else {
+            Transition::Nop
+        }
     }
 
     /// left-click: clear the input, or click an item/arrow/command cell.

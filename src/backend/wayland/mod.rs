@@ -633,6 +633,18 @@ impl Backend for WaylandBackend {
          * to the pipe (next_event() polls it only after this) */
         let _ = self.connection.flush();
     }
+
+    /// Take the leading run of queued wheel events. The dispatcher already
+    /// appended a whole axis burst to `state.events` before `poll_event`
+    /// handed back the first one, so the rest are sitting right behind it.
+    fn drain_scroll(&mut self) -> Vec<i32> {
+        let mut deltas = Vec::new();
+        while let Some(BackendEvent::Scroll { delta }) = self.state.events.front() {
+            deltas.push(*delta);
+            self.state.events.pop_front();
+        }
+        deltas
+    }
 }
 
 /// Clamp an fd-poll timeout to the next key-repeat deadline. `poll(2)` has
