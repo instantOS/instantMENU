@@ -1314,12 +1314,18 @@ fn scroll_turns_pages() {
     menu.paging.next = Some(1);
     menu.paging.prev = 0;
 
-    assert_eq!(menu.scroll_burst(&[1]), Transition::Redraw);
+    assert_eq!(
+        menu.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }]),
+        Transition::Redraw
+    );
     assert_eq!(menu.selection.selected, Some(1));
     assert_eq!(menu.selection.page_start, Some(1));
 
     // scrolling back up moves the page, the selection follows the page top
-    assert_eq!(menu.scroll_burst(&[-1]), Transition::Redraw);
+    assert_eq!(
+        menu.apply_repaint_batch(&[BackendEvent::Scroll { delta: -1 }]),
+        Transition::Redraw
+    );
     assert_eq!(menu.selection.page_start, Some(0));
 }
 
@@ -1370,17 +1376,20 @@ fn a_scroll_burst_presents_one_frame_and_lands_on_the_last_page() {
 fn a_scroll_burst_lands_where_one_detent_at_a_time_would() {
     let items: Vec<String> = (0..40).map(|i| format!("item {i}")).collect();
     let refs: Vec<&str> = items.iter().map(String::as_str).collect();
-    let deltas = [1, 1, 1, -1, 1, 1, 1, 1];
+    let events: Vec<BackendEvent> = [1, 1, 1, -1, 1, 1, 1, 1]
+        .iter()
+        .map(|&delta| BackendEvent::Scroll { delta })
+        .collect();
 
     let (mut stepped, _stub, _out) = menu_with(Config::default(), &refs);
     one_item_per_page(&mut stepped);
-    for &delta in &deltas {
-        stepped.scroll_burst(&[delta]);
+    for event in &events {
+        stepped.apply_repaint_batch(std::slice::from_ref(event));
     }
 
     let (mut burst, _stub, _out) = menu_with(Config::default(), &refs);
     one_item_per_page(&mut burst);
-    assert_eq!(burst.scroll_burst(&deltas), Transition::Redraw);
+    assert_eq!(burst.apply_repaint_batch(&events), Transition::Redraw);
 
     assert_eq!(burst.selection, stepped.selection);
     assert_eq!(burst.paging, stepped.paging);
@@ -1394,39 +1403,137 @@ fn a_scroll_burst_clamps_at_the_list_ends() {
     let refs: Vec<&str> = items.iter().map(String::as_str).collect();
     let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
     one_item_per_page(&mut menu);
+    let down: Vec<BackendEvent> =
+        std::iter::repeat_n(BackendEvent::Scroll { delta: 1 }, 8).collect();
+    let up: Vec<BackendEvent> =
+        std::iter::repeat_n(BackendEvent::Scroll { delta: -1 }, 8).collect();
 
     // more detents down than there are pages
-    assert_eq!(menu.scroll_burst(&[1; 8]), Transition::Redraw);
+    assert_eq!(menu.apply_repaint_batch(&down), Transition::Redraw);
     let last = menu.selection.page_start;
     // and a burst that overshoots the top stops there
-    assert_eq!(menu.scroll_burst(&[-1; 8]), Transition::Redraw);
+    assert_eq!(menu.apply_repaint_batch(&up), Transition::Redraw);
     assert_eq!(menu.selection.page_start, Some(0));
     // already at the top: a further burst changes nothing and does not redraw
-    assert_eq!(menu.scroll_burst(&[-1; 8]), Transition::Nop);
+    assert_eq!(menu.apply_repaint_batch(&up), Transition::Nop);
     assert!(last.unwrap_or(0) > 0);
 }
+
+/// Scrolling while wiggling the mouse: the wheel detents and the motion
+/// events interleave, so a drain that only accepted detents would stop at the
+/// first motion and leave the flick un-coalesced. The whole gesture must
+/// still be one frame.
+#[test]
+fn an_interleaved_scroll_and_motion_burst_is_one_frame() {
+    let items: Vec<String> = (0..40).map(|i| format!("item {i}")).collect();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, stub, _out) = menu_with(Config::default(), &refs);
+    one_item_per_page(&mut menu);
+    let presents = stub.state().presents;
+
+    // five detents, each followed by a motion over a different row
+    for i in 0..5 {
+        stub.push(BackendEvent::Scroll { delta: 1 });
+        stub.push(BackendEvent::Motion {
+            time: i,
+            pos: Point::new(0, (i as i32 + 1) * menu.layout.bar_height + 1),
+            source: InputSource::Menu,
+        });
+    }
+    stub.push(BackendEvent::ButtonPress {
+        button: MouseButton::Left,
+        mods: M_NONE,
+        pos: Point::new(0, 0),
+        source: InputSource::External,
+    });
+
+    assert_eq!(menu.run(), ExitStatus::Failure);
+    // all five detents applied…
+    assert_eq!(menu.selection.page_start, Some(5));
+    // …and the ten queued events cost a single repaint
+    assert_eq!(stub.state().presents - presents, 1);
+}
+
+/// The point of coalescing motion instead of dropping it: the highlight still
+/// ends up under the pointer's final resting position, which is why motion
+/// cannot simply be discarded the way a stale one could be.
+#[test]
+fn an_interleaved_burst_leaves_the_highlight_under_the_resting_pointer() {
+    let items: Vec<String> = (0..40).map(|i| format!("item {i}")).collect();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let rest = Point::new(0, 3 * TEST_BAR_HEIGHT);
+
+    let (mut stepped, _stub, _out) = menu_with(Config::default(), &refs);
+    one_item_per_page(&mut stepped);
+    stepped.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }]);
+    stepped.apply_repaint_batch(&[BackendEvent::Motion {
+        time: 0,
+        pos: rest,
+        source: InputSource::Menu,
+    }]);
+
+    let (mut burst, _stub, _out) = menu_with(Config::default(), &refs);
+    one_item_per_page(&mut burst);
+    burst.apply_repaint_batch(&[
+        BackendEvent::Scroll { delta: 1 },
+        BackendEvent::Motion {
+            time: 0,
+            pos: rest,
+            source: InputSource::Menu,
+        },
+    ]);
+
+    assert_eq!(burst.selection, stepped.selection);
+    assert_eq!(burst.hovered, stepped.hovered);
+}
+
+/// The bar height `menu_with` installs, for building row coordinates.
+const TEST_BAR_HEIGHT: i32 = 30;
 
 /// Only the leading run of wheel events is absorbed. A detent that sits behind
 /// an event of another kind must keep its place, or a click would be applied
 /// before the scrolling the user did before it.
 #[test]
-fn drain_scroll_stops_at_the_first_event_of_another_kind() {
+fn drain_repaint_takes_wheel_and_motion_but_stops_at_anything_else() {
     let mut backend = TestBackend::new();
     let handle = backend.handle();
+    let motion = |time: u32| BackendEvent::Motion {
+        time,
+        pos: Point::new(0, 0),
+        source: InputSource::Menu,
+    };
     for delta in [1, 1] {
         handle.push(BackendEvent::Scroll { delta });
     }
-    handle.push(BackendEvent::Motion {
-        time: 0,
+    handle.push(motion(0));
+    handle.push(BackendEvent::Scroll { delta: 1 });
+    handle.push(motion(1));
+    // something that must not be folded in, with a detent behind it
+    handle.push(BackendEvent::ButtonPress {
+        button: MouseButton::Left,
+        mods: M_NONE,
         pos: Point::new(0, 0),
-        source: InputSource::Menu,
+        source: InputSource::External,
     });
     handle.push(BackendEvent::Scroll { delta: 1 });
 
-    assert_eq!(backend.drain_scroll(), vec![1, 1]);
-    // the motion and the detent behind it are still queued, in order
+    let drained = backend.drain_repaint();
+    assert_eq!(
+        drained,
+        vec![
+            BackendEvent::Scroll { delta: 1 },
+            BackendEvent::Scroll { delta: 1 },
+            motion(0),
+            BackendEvent::Scroll { delta: 1 },
+            motion(1),
+        ]
+    );
+    // the click and the detent behind it are still queued, in order
     let rest = handle.feed.lock().unwrap();
-    assert!(matches!(rest.front(), Some(BackendEvent::Motion { .. })));
+    assert!(matches!(
+        rest.front(),
+        Some(BackendEvent::ButtonPress { .. })
+    ));
     assert!(matches!(
         rest.get(1),
         Some(BackendEvent::Scroll { delta: 1 })
@@ -2661,7 +2768,7 @@ fn report(name: &str, times: &mut [f64]) {
 /// path still pays for the page it lands on.
 fn scroll_frame(menu: &mut Menu, delta: i32) -> Option<std::time::Duration> {
     let start = std::time::Instant::now();
-    let t = menu.scroll_burst(&[delta]);
+    let t = menu.apply_repaint_batch(&[BackendEvent::Scroll { delta }]);
     if matches!(t, Transition::Nop) {
         return None;
     }
@@ -2757,12 +2864,28 @@ fn bench_scroll() {
     /* The reported symptom: a fast flick. Queue a whole burst of detents on
      * the stub backend — what a mouse wheel actually delivers — and run the
      * real event loop over them. */
-    for burst in [1, 5, 15] {
+    for (burst, wiggle) in [
+        (1, false),
+        (5, false),
+        (15, false),
+        (1, true),
+        (5, true),
+        (15, true),
+    ] {
         let (mut flick, stub, _out) = emoji_picker_menu(&items);
         let start_page = flick.selection.page_start.unwrap_or(0);
         let start_presents = stub.state().presents;
-        for _ in 0..burst {
+        for i in 0..burst {
             stub.push(BackendEvent::Scroll { delta: 1 });
+            if wiggle {
+                // a motion over a different row between detents: what
+                // scrolling with the cursor loosely on the pad looks like
+                stub.push(BackendEvent::Motion {
+                    time: i as u32,
+                    pos: Point::new(0, (i % 12 + 1) * 32 + 1),
+                    source: InputSource::Menu,
+                });
+            }
         }
         stub.push(BackendEvent::ButtonPress {
             button: MouseButton::Left,
@@ -2776,8 +2899,13 @@ fn bench_scroll() {
         assert_eq!(status, ExitStatus::Failure);
         let frames = stub.state().presents - start_presents;
         let moved = flick.selection.page_start.unwrap_or(0) - start_page;
+        let kind = if wiggle {
+            "scrolling + moving mouse"
+        } else {
+            "scrolling only       "
+        };
         println!(
-            "flick of {burst:>2} detents: {moved:>2} pages in {elapsed:7.2}ms across {frames:>2} frame(s)",
+            "{kind}: flick of {burst:>2} detents -> {moved:>3} pages in {elapsed:7.2}ms across {frames:>2} frame(s)",
         );
     }
 }

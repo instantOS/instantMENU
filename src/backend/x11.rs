@@ -780,21 +780,24 @@ impl Backend for X11Backend {
     }
 
     /// Drain every event the connection already holds, keeping the leading run
-    /// of wheel detents and parking the rest in `pending`. A fast flick
-    /// arrives as a run of button 4/5 presses in the server's queue, so
+    /// of wheel and motion events and parking the rest in `pending`. A fast
+    /// flick arrives as a run of button 4/5 presses in the server's queue, and
+    /// moving the mouse at the same time interleaves motion events into it;
     /// without this each one costs the core a full redraw.
-    fn drain_scroll(&mut self) -> Vec<i32> {
-        let mut deltas = Vec::new();
+    fn drain_repaint(&mut self) -> Vec<BackendEvent> {
+        let mut out = Vec::new();
         while let Ok(Some(raw)) = self.connection.poll_for_event() {
             match self.handle_event(raw) {
-                Some(BackendEvent::Scroll { delta }) => deltas.push(delta),
+                Some(ev @ (BackendEvent::Scroll { .. } | BackendEvent::Motion { .. })) => {
+                    out.push(ev)
+                }
                 Some(other) => self.pending.push_back(other),
                 /* Not for us (a wheel press outside the menu, an unmapped
                  * button): discarding it is what the single-event path did. */
                 None => {}
             }
         }
-        deltas
+        out
     }
 }
 

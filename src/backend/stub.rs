@@ -152,14 +152,20 @@ impl Backend for TestBackend {
         }
     }
 
-    fn drain_scroll(&mut self) -> Vec<i32> {
+    fn drain_repaint(&mut self) -> Vec<BackendEvent> {
         let mut feed = self.feed.lock().unwrap();
-        let mut deltas = Vec::new();
-        while let Some(BackendEvent::Scroll { delta }) = feed.front() {
-            deltas.push(*delta);
+        let mut out = Vec::new();
+        while let Some(ev) = feed.front() {
+            if !matches!(
+                ev,
+                BackendEvent::Scroll { .. } | BackendEvent::Motion { .. }
+            ) {
+                break;
+            }
+            out.push(ev.clone());
             feed.pop_front();
         }
-        deltas
+        out
     }
 
     fn request_selection(&mut self, clipboard: bool) {

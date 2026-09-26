@@ -7,7 +7,7 @@ use super::layout::Header;
 use super::paging;
 use super::transition::Transition;
 use super::Menu;
-use crate::backend::{Modifiers, MouseButton};
+use crate::backend::{BackendEvent, Modifiers, MouseButton};
 use crate::enums::{EditOp, ExitStatus, Side};
 use crate::geom::Point;
 
@@ -107,20 +107,33 @@ impl Menu {
         false
     }
 
-    /// Apply a whole burst of wheel steps and redraw once.
+    /// Apply a burst of repaint-only events and redraw once.
     ///
-    /// Every detent is applied in order — so the end state is exactly what
-    /// one redraw per detent would have produced, clamping at the list ends
-    /// included — but only the final page is painted. A fast flick otherwise
+    /// Every event is applied in order — so the end state is exactly what one
+    /// redraw per event would have produced, list-end clamping and hover
+    /// included — but only the final state is painted. A fast flick otherwise
     /// queues one full redraw per detent, and each one has to be drawn before
-    /// the next detent is even read, so the menu falls behind the wheel
-    /// instead of landing on the page the user flicked to.
-    pub(super) fn scroll_burst(&mut self, deltas: &[i32]) -> Transition {
-        let mut moved = false;
-        for &delta in deltas {
-            moved |= self.scroll_one(delta);
+    /// the next event is even read, so the menu falls behind the wheel
+    /// instead of landing on the page the user flicked to. Scrolling while
+    /// moving the mouse interleaves the two kinds, so the burst has to cover
+    /// both: honouring only the detents would still spend a repaint on every
+    /// step of the gesture.
+    ///
+    /// The trailing motion is never dropped, only its intermediate frames
+    /// are skipped, so the highlight still ends up under the resting pointer.
+    pub(super) fn apply_repaint_batch(&mut self, events: &[BackendEvent]) -> Transition {
+        let mut repaint = false;
+        for event in events {
+            let redrew = match event {
+                BackendEvent::Scroll { delta } => self.scroll_one(*delta),
+                BackendEvent::Motion { pos, .. } => {
+                    !matches!(self.set_selection(*pos), Transition::Nop)
+                }
+                _ => continue,
+            };
+            repaint |= redrew;
         }
-        if moved {
+        if repaint {
             Transition::Redraw
         } else {
             Transition::Nop

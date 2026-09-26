@@ -72,11 +72,19 @@ impl Menu {
             };
 
             let t = match ev {
-                /* set_selection is already cheap within a row (Nop), and a
-                 * changed row redraws once. Dropping motion by timestamp can
-                 * discard the final event before the pointer stops, leaving
-                 * a permanently stale highlight. */
-                BackendEvent::Motion { pos, .. } => self.set_selection(pos),
+                /* Wheel detents and pointer motion both only ever ask for a
+                 * repaint, and a fast flick arrives with them interleaved
+                 * (scroll while wiggling the mouse). Fold the whole leading
+                 * run into one frame: every event is still applied in order,
+                 * so the state is identical — only the intermediate paints are
+                 * skipped. set_selection stays cheap within a row, and the
+                 * trailing motion is never dropped, so a pointer that comes to
+                 * rest still ends up with the highlight under it. */
+                ev @ (BackendEvent::Scroll { .. } | BackendEvent::Motion { .. }) => {
+                    let mut batch = vec![ev];
+                    batch.extend(self.backend.drain_repaint());
+                    self.apply_repaint_batch(&batch)
+                }
                 BackendEvent::Destroyed => return ExitStatus::Failure,
                 BackendEvent::ButtonPress {
                     source: InputSource::External,
@@ -91,16 +99,6 @@ impl Menu {
                     button, mods, pos, ..
                 } => self.button_press(button, mods, pos),
                 BackendEvent::ButtonRelease { .. } => continue,
-                /* One wheel detent redraws once — unless more are already
-                 * queued behind it, which is what a fast flick looks like.
-                 * Absorb the burst and present only the page it lands on:
-                 * the same end state, without making the user watch the
-                 * menu grind through every intermediate page. */
-                BackendEvent::Scroll { delta } => {
-                    let mut burst = self.backend.drain_scroll();
-                    burst.insert(0, delta);
-                    self.scroll_burst(&burst)
-                }
                 BackendEvent::Expose => {
                     self.backend.present(&self.canvas);
                     continue;
