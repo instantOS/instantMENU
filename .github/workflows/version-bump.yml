@@ -29,7 +29,7 @@ on:
 jobs:
   version-bump:
     name: Prepare release PR
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     container:
       image: archlinux:latest
     if: ${{ github.repository_owner == 'instantOS' }}
