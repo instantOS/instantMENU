@@ -33,7 +33,7 @@ use std::time::SystemTime;
 use crate::backend::{Backend, Modifiers};
 use crate::config::Config;
 use crate::enums::ExitStatus;
-use crate::geom::Rect;
+use crate::geom::{Point, Rect};
 use crate::render::{Canvas, Painter, Renderer};
 
 use accept::{AcceptMode, AcceptTarget};
@@ -91,6 +91,11 @@ pub struct Menu {
     /// pointer is a Nop even right after a rematch reset the selection to
     /// the best match — hover and typing cannot alternate frames.
     pub(in crate::menu) hovered: Option<usize>,
+    /// Last position hover selection was decided for. A motion event at this
+    /// exact position carries no new information, so it is a Nop without
+    /// re-reading which row is under the pointer — see
+    /// [`Menu::set_selection`] for why that matters across a page turn.
+    pub(in crate::menu) hover_pos: Option<Point>,
     pub(in crate::menu) layout: Layout,
     /// The -l/-g grid as adjusted for the current item count, recomputed
     /// whenever items stream in (the C version computed it once after
@@ -156,6 +161,7 @@ impl Menu {
             selection: Selection::default(),
             paging: Paging::default(),
             hovered: None,
+            hover_pos: None,
             layout: Layout::default(),
             stdin_grid: layout::GridShape {
                 lines: cfg.lines,

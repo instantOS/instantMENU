@@ -12,13 +12,36 @@ use crate::enums::{EditOp, ExitStatus, Side};
 use crate::geom::Point;
 
 impl Menu {
-    /// set_selection — hover selection on motion. A motion event redraws
-    /// only when the pointer enters a *different* row; jitter around a
-    /// resting pointer is a Nop, even right after a rematch moved the
-    /// highlight away from under it. That is what keeps hover and typing
-    /// from alternating frames: typing resets the selection to the best
-    /// match, and the pointer must genuinely change rows to take it back.
+    /// set_selection — hover selection on motion.
+    ///
+    /// A motion event repaints only when the pointer has actually *moved*.
+    /// Both halves of that matter, and they guard against different things:
+    ///
+    /// - Same position as last time: nothing about the pointer changed, so
+    ///   there is nothing to re-decide. Without this the resolved row is
+    ///   re-read on every event the server sends for a resting pointer, and
+    ///   each read is a fresh chance to disagree with whatever moved the
+    ///   selection in the meantime.
+    /// - Moved, but landed on the row already highlighted: also a Nop. This
+    ///   is what keeps hover and typing from alternating frames — typing
+    ///   resets the selection to the best match, and the pointer must
+    ///   genuinely change rows to take it back.
+    ///
+    /// The first rule is what makes a page turn stick. `scroll_one` parks the
+    /// selection on the new page top, but the pointer has not moved, and the
+    /// row under it is a different match index on every page. Deciding hover
+    /// from the resolved row alone therefore made the two fight: the page
+    /// turn won when its event came last and the pointer won when its event
+    /// came last, so scrolling with the cursor resting flickered between the
+    /// page top and the row under the cursor. Deciding from the pointer's
+    /// position instead makes the outcome independent of event order — a
+    /// resting pointer keeps the page top, and only a real move takes the
+    /// selection back.
     pub(super) fn set_selection(&mut self, pos: Point) -> Transition {
+        if self.hover_pos == Some(pos) {
+            return Transition::Nop;
+        }
+        self.hover_pos = Some(pos);
         let header = self.header();
         let item = self.hovered_match(pos, &header);
         if item == self.hovered {

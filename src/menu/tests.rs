@@ -1454,6 +1454,235 @@ fn an_interleaved_scroll_and_motion_burst_is_one_frame() {
     assert_eq!(stub.state().presents - presents, 1);
 }
 
+/// A three-row page, so there is somewhere for the pointer to rest that is not
+/// the page top. `menu_with` has already matched and paginated against the
+/// default horizontal layout, so paging is recomputed after the override.
+fn three_row_pages(menu: &mut Menu) {
+    menu.layout.lines = 3;
+    menu.layout.columns = 1;
+    menu.recalc_paging();
+}
+
+/// Row `i` of a vertical list sits at y `(i + 1) * bar_height`; +1 puts the
+/// point inside the row rather than on its edge.
+fn row_y(row: i32) -> i32 {
+    (row + 1) * TEST_BAR_HEIGHT + 1
+}
+
+fn twelve_items() -> Vec<String> {
+    (0..12).map(|i| format!("item {i}")).collect()
+}
+
+/// Scroll down with the pointer resting on a row. The page turn parks the
+/// selection on the new page top, and the pointer has not moved, so the same
+/// gesture must land on the same item no matter which order the two events
+/// arrive in. It did not: the resting pointer won when its event came second
+/// and lost when it came first, so the highlight flickered between the page
+/// top and the row under the cursor on every detent.
+#[test]
+fn a_scroll_with_a_resting_pointer_lands_the_same_either_way_round() {
+    let items = twelve_items();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let rest = Point::new(0, row_y(1));
+    let scroll = BackendEvent::Scroll { delta: 1 };
+    let motion = || BackendEvent::Motion {
+        time: 0,
+        pos: rest,
+        source: InputSource::Menu,
+    };
+
+    // the pointer is already resting on row 1 before the wheel turns
+    let (mut scroll_first, _s, _o) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut scroll_first);
+    scroll_first.apply_repaint_batch(&[motion()]);
+    scroll_first.apply_repaint_batch(&[scroll.clone(), motion()]);
+
+    let (mut motion_first, _s, _o) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut motion_first);
+    motion_first.apply_repaint_batch(&[motion()]);
+    motion_first.apply_repaint_batch(&[motion(), scroll]);
+
+    assert_eq!(scroll_first.selection, motion_first.selection);
+}
+
+/// The corollary: a pointer that has not moved never takes the selection back
+/// from the page turn, so the highlight rests on the page top instead of
+/// flickering. A pointer that genuinely moves still takes it.
+#[test]
+fn only_a_real_pointer_move_takes_the_selection_back_from_a_page_turn() {
+    let items = twelve_items();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut menu);
+
+    let motion = |pos: Point| BackendEvent::Motion {
+        time: 0,
+        pos,
+        source: InputSource::Menu,
+    };
+    // rest on row 1, then turn the page
+    menu.apply_repaint_batch(&[motion(Point::new(0, row_y(1)))]);
+    assert_eq!(menu.selection.selected, Some(1));
+    menu.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }]);
+    let page_top = menu.selection.selected;
+    assert_eq!(menu.selection.page_start, Some(3));
+
+    // the pointer stays exactly where it was: the page turn keeps the selection
+    menu.apply_repaint_batch(&[motion(Point::new(0, row_y(1)))]);
+    assert_eq!(menu.selection.selected, page_top);
+    // and so does a burst that interleaves the two
+    menu.apply_repaint_batch(&[
+        BackendEvent::Scroll { delta: 1 },
+        motion(Point::new(0, row_y(1))),
+    ]);
+    assert_eq!(menu.selection.selected, menu.selection.page_start);
+
+    // moving to a different row does take it back
+    menu.apply_repaint_batch(&[motion(Point::new(0, row_y(2)))]);
+    assert_ne!(menu.selection.selected, menu.selection.page_start);
+}
+
+/// Typing wins over a resting pointer, and keeps winning while the pointer
+/// stays put. The subtle case is typing from a later page: the rematch resets
+/// `page_start` to 0, so the row under the stationary pointer now resolves to
+/// a different match index. Change-detecting on the resolved row therefore
+/// read that as "the pointer entered a new row" and handed the selection
+/// straight back to the pointer, undoing the typed match.
+#[test]
+fn typing_keeps_the_selection_over_a_resting_pointer_on_a_later_page() {
+    let items = twelve_items();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut menu);
+    let rest = Point::new(0, row_y(1));
+
+    // park the pointer on row 1, then turn to a later page. The hover has to
+    // land *after* the page turn: that is the order in which the pointer's row
+    // index changes, which is what the old row-based change detection read as
+    // "the pointer entered a new row".
+    menu.apply_repaint_batch(&[
+        BackendEvent::Scroll { delta: 1 },
+        BackendEvent::Motion {
+            time: 0,
+            pos: rest,
+            source: InputSource::Menu,
+        },
+    ]);
+    assert_eq!(menu.selection.page_start, Some(3));
+    assert_eq!(menu.selection.selected, Some(4));
+
+    // typing re-ranks and resets the page, and the best match is selected
+    type_text(&mut menu, "item 1");
+    let typed = menu.selection.selected;
+    assert_eq!(menu.selection.page_start, Some(0));
+    assert_eq!(typed, Some(0));
+
+    // the pointer has not moved, so it cannot take the selection back
+    assert_eq!(
+        menu.apply_repaint_batch(&[BackendEvent::Motion {
+            time: 0,
+            pos: rest,
+            source: InputSource::Menu,
+        }]),
+        Transition::Nop
+    );
+    assert_eq!(menu.selection.selected, typed);
+
+    // but a genuine move still re-engages hover
+    assert_eq!(
+        menu.apply_repaint_batch(&[BackendEvent::Motion {
+            time: 1,
+            pos: Point::new(0, row_y(2)),
+            source: InputSource::Menu,
+        }]),
+        Transition::Redraw
+    );
+    assert_ne!(menu.selection.selected, typed);
+}
+
+/// The other half of the resting-pointer rule, and the one that matters day to
+/// day: typing owns the selection only until the pointer is moved again. A
+/// real move onto another visible match takes the selection back, and a click
+/// takes that match regardless of whether hover ever engaged — a click is
+/// hit-tested from the coordinates, not from the highlight.
+#[test]
+fn moving_the_pointer_after_typing_hands_the_selection_back() {
+    let items: Vec<String> = ["apple", "banana", "cherry", "date"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+
+    /* hovering a row after typing re-engages the hover */
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut menu);
+    // "a" keeps apple, banana and date and drops cherry; apple is the best match
+    type_text(&mut menu, "a");
+    let typed = menu.selection.selected;
+    assert_eq!(typed, Some(0));
+    assert_eq!(
+        menu.apply_repaint_batch(&[BackendEvent::Motion {
+            time: 0,
+            pos: Point::new(0, row_y(1)),
+            source: InputSource::Menu,
+        }]),
+        Transition::Redraw
+    );
+    assert_eq!(menu.selection.selected, Some(1));
+    assert_ne!(menu.selection.selected, typed);
+
+    /* and a click resolves the row from the coordinates even when the pointer
+     * has never hovered there, so a resting highlight cannot misdirect it */
+    let (mut menu, _stub, out) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut menu);
+    type_text(&mut menu, "a");
+    assert_eq!(menu.selection.selected, Some(0));
+    let third_row = Point::new(0, row_y(2));
+    let t = menu.button_press(MouseButton::Left, M_NONE, third_row);
+    assert_eq!(t, Transition::PrintAndExit("date".into()));
+    assert_eq!(menu.perform(t), Some(ExitStatus::Success));
+    assert_eq!(out.contents(), "date\n");
+}
+
+/// A move *within* the row already hovered is not a row change, so it does not
+/// re-engage hover. This is the pre-existing "the pointer must genuinely change
+/// rows" rule, unchanged by the position check: `hovered` already suppressed it
+/// before, and the click path above is what makes it harmless.
+#[test]
+fn moving_within_the_hovered_row_does_not_re_engage_hover() {
+    let items: Vec<String> = ["apple", "banana", "cherry", "date"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut menu);
+    type_text(&mut menu, "a");
+    let typed = menu.selection.selected;
+
+    // hover row 1, then let typing take the selection, then jiggle inside row 1
+    menu.apply_repaint_batch(&[BackendEvent::Motion {
+        time: 0,
+        pos: Point::new(10, row_y(1)),
+        source: InputSource::Menu,
+    }]);
+    type_text(&mut menu, "ap");
+    let after_typing = menu.selection.selected;
+    assert_ne!(after_typing, Some(1));
+
+    assert_eq!(
+        menu.apply_repaint_batch(&[BackendEvent::Motion {
+            time: 1,
+            // same row, different x
+            pos: Point::new(120, row_y(1)),
+            source: InputSource::Menu,
+        }]),
+        Transition::Nop
+    );
+    assert_eq!(menu.selection.selected, after_typing);
+    let _ = typed;
+}
+
 /// The point of coalescing motion instead of dropping it: the highlight still
 /// ends up under the pointer's final resting position, which is why motion
 /// cannot simply be discarded the way a stale one could be.
