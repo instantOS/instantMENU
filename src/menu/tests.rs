@@ -1505,11 +1505,12 @@ fn a_scroll_with_a_resting_pointer_lands_the_same_either_way_round() {
     assert_eq!(scroll_first.selection, motion_first.selection);
 }
 
-/// The corollary: a pointer that has not moved never takes the selection back
-/// from the page turn, so the highlight rests on the page top instead of
-/// flickering. A pointer that genuinely moves still takes it.
+/// A wheel page turn keeps the selection on the row under the pointer, so the
+/// highlight travels with the cursor instead of jumping to the page top. It
+/// is resolved as part of the turn, so a following motion event has nothing
+/// left to decide and the highlight never flickers.
 #[test]
-fn only_a_real_pointer_move_takes_the_selection_back_from_a_page_turn() {
+fn a_wheel_page_turn_keeps_the_selection_under_the_pointer() {
     let items = twelve_items();
     let refs: Vec<&str> = items.iter().map(String::as_str).collect();
     let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
@@ -1520,26 +1521,257 @@ fn only_a_real_pointer_move_takes_the_selection_back_from_a_page_turn() {
         pos,
         source: InputSource::Menu,
     };
-    // rest on row 1, then turn the page
+    // park on row 1, then turn the page
     menu.apply_repaint_batch(&[motion(Point::new(0, row_y(1)))]);
     assert_eq!(menu.selection.selected, Some(1));
     menu.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }]);
-    let page_top = menu.selection.selected;
     assert_eq!(menu.selection.page_start, Some(3));
+    // row 1 of the new page, not the page top
+    assert_eq!(menu.selection.selected, Some(4));
 
-    // the pointer stays exactly where it was: the page turn keeps the selection
-    menu.apply_repaint_batch(&[motion(Point::new(0, row_y(1)))]);
-    assert_eq!(menu.selection.selected, page_top);
-    // and so does a burst that interleaves the two
+    // the turn already decided it, so the pointer resting there repaints
+    // nothing and moves nothing
+    assert_eq!(
+        menu.apply_repaint_batch(&[motion(Point::new(0, row_y(1)))]),
+        Transition::Nop
+    );
+    assert_eq!(menu.selection.selected, Some(4));
+
+    // and a burst that interleaves the wheel with the pointer lands the same
+    // place, with no intermediate focus to flicker through
     menu.apply_repaint_batch(&[
-        BackendEvent::Scroll { delta: 1 },
+        BackendEvent::Scroll { delta: -1 },
         motion(Point::new(0, row_y(1))),
     ]);
-    assert_eq!(menu.selection.selected, menu.selection.page_start);
+    assert_eq!(menu.selection.page_start, Some(0));
+    assert_eq!(menu.selection.selected, Some(1));
+}
 
-    // moving to a different row does take it back
-    menu.apply_repaint_batch(&[motion(Point::new(0, row_y(2)))]);
-    assert_ne!(menu.selection.selected, menu.selection.page_start);
+/// …but only while the pointer is over an actual row. Parked over the input
+/// line there is nothing to follow, so the page turn keeps the page top.
+#[test]
+fn a_wheel_page_turn_falls_back_to_the_page_top_without_a_usable_pointer() {
+    let items = twelve_items();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+
+    // the pointer has never moved: no position to follow
+    let (mut unseen, _s, _o) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut unseen);
+    unseen.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }]);
+    assert_eq!(unseen.selection.page_start, Some(3));
+    assert_eq!(unseen.selection.selected, Some(3));
+
+    // the pointer is over the input row, which is not a selectable row
+    let (mut over_input, _s, _o) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut over_input);
+    over_input.apply_repaint_batch(&[BackendEvent::Motion {
+        time: 0,
+        pos: Point::new(10, 2),
+        source: InputSource::Menu,
+    }]);
+    over_input.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }]);
+    assert_eq!(over_input.selection.page_start, Some(3));
+    assert_eq!(over_input.selection.selected, Some(3));
+}
+
+/// Keyboard paging is the other half of the rule: PageDown selects the page
+/// top even with the pointer resting on a row, because a keypress carries no
+/// pointer. PageUp likewise.
+#[test]
+fn keyboard_paging_selects_the_page_top_whatever_the_pointer_is_on() {
+    let items = twelve_items();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut menu);
+    menu.apply_repaint_batch(&[BackendEvent::Motion {
+        time: 0,
+        pos: Point::new(0, row_y(1)),
+        source: InputSource::Menu,
+    }]);
+    assert_eq!(menu.selection.selected, Some(1));
+
+    assert_eq!(key(&mut menu, ks::KEY_Next, M_NONE), Transition::Redraw);
+    assert_eq!(menu.selection.page_start, Some(3));
+    assert_eq!(menu.selection.selected, Some(3));
+
+    assert_eq!(key(&mut menu, ks::KEY_Prior, M_NONE), Transition::Redraw);
+    assert_eq!(menu.selection.page_start, Some(0));
+    assert_eq!(menu.selection.selected, Some(0));
+}
+
+/// The keyboard keeps the selection until the pointer genuinely moves, not
+/// merely until the pointer stops moving. PageDown with the cursor parked on a
+/// lower row puts the selection on the page top, and it stays there for as long
+/// as the cursor stays put — including through the duplicate motion events a
+/// server sends for a resting pointer. Only a real move hands it back.
+#[test]
+fn the_keyboard_keeps_the_selection_until_the_pointer_really_moves() {
+    let items = twelve_items();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut menu);
+    let parked = Point::new(0, row_y(2));
+    let motion = |time: u32, pos: Point| BackendEvent::Motion {
+        time,
+        pos,
+        source: InputSource::Menu,
+    };
+
+    // cursor parked on the lowest visible row
+    menu.apply_repaint_batch(&[motion(0, parked)]);
+    assert_eq!(menu.selection.selected, Some(2));
+
+    // the keyboard takes over
+    assert_eq!(key(&mut menu, ks::KEY_Next, M_NONE), Transition::Redraw);
+    assert_eq!(menu.selection.page_start, Some(3));
+    assert_eq!(menu.selection.selected, Some(3));
+
+    // a resting pointer re-announcing the same position changes nothing
+    for time in 1..4 {
+        assert_eq!(
+            menu.apply_repaint_batch(&[motion(time, parked)]),
+            Transition::Nop
+        );
+        assert_eq!(menu.selection.selected, Some(3));
+    }
+
+    // A real move onto the row the keyboard already chose is a Nop: the
+    // pointer moved, but it resolved to the item that was already selected, so
+    // there is nothing to repaint and the keyboard's choice stands.
+    assert_eq!(
+        menu.apply_repaint_batch(&[motion(9, Point::new(0, row_y(0)))]),
+        Transition::Nop
+    );
+    assert_eq!(menu.selection.selected, Some(3));
+
+    // A real move onto a *different* row hands the selection to the cursor.
+    assert_eq!(
+        menu.apply_repaint_batch(&[motion(10, Point::new(0, row_y(1)))]),
+        Transition::Redraw
+    );
+    assert_eq!(menu.selection.selected, Some(4));
+
+    // and moving back re-applies the keyboard's row, now as a real change
+    assert_eq!(
+        menu.apply_repaint_batch(&[motion(11, Point::new(0, row_y(0)))]),
+        Transition::Redraw
+    );
+    assert_eq!(menu.selection.selected, Some(3));
+}
+
+/// The wheel agrees with PageDown at the end of the list: one more detent down
+/// on the last page goes to the last item instead of doing nothing, so neither
+/// route to the end of a long list is dead. Both must land in the same place.
+#[test]
+fn the_wheel_and_page_down_agree_at_the_end_of_the_list() {
+    let items = twelve_items();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+
+    let reach_end = |by_wheel: bool| {
+        let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+        three_row_pages(&mut menu);
+        // walk to the last page with the wheel, cursor parked on row 0
+        menu.apply_repaint_batch(&[BackendEvent::Motion {
+            time: 0,
+            pos: Point::new(0, row_y(0)),
+            source: InputSource::Menu,
+        }]);
+        while menu.paging.next.is_some() {
+            menu.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }]);
+        }
+        let page = menu.selection.page_start;
+        let t = if by_wheel {
+            menu.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }])
+        } else {
+            key(&mut menu, ks::KEY_Next, M_NONE)
+        };
+        (t, menu.selection.selected, menu.selection.page_start, page)
+    };
+
+    let wheel = reach_end(true);
+    let paged = reach_end(false);
+    assert_eq!(wheel.0, Transition::Redraw);
+    assert_eq!(wheel, paged, "wheel and PageDown must agree at the end");
+    assert_eq!(wheel.1, Some(11), "the last item is selected");
+    assert_eq!(wheel.2, wheel.3, "the page must not move");
+
+    // and at the very end both go quiet instead of redrawing for nothing
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut menu);
+    while menu.paging.next.is_some() {
+        menu.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }]);
+    }
+    menu.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }]);
+    assert_eq!(menu.selection.selected, Some(11));
+    assert_eq!(
+        menu.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }]),
+        Transition::Nop
+    );
+    assert_eq!(key(&mut menu, ks::KEY_Next, M_NONE), Transition::Nop);
+}
+
+/// On the last page PageDown has no page left to turn, so instead of being
+/// dead it goes to the end of the list.
+#[test]
+fn page_down_on_the_last_page_selects_the_last_item() {
+    let items = twelve_items();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, _stub, out) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut menu);
+
+    // walk to the last page
+    while menu.paging.next.is_some() {
+        assert_eq!(key(&mut menu, ks::KEY_Next, M_NONE), Transition::Redraw);
+    }
+    let last_page = menu.selection.page_start;
+    assert!(menu.paging.next.is_none());
+
+    // still on that page, and PageDown reaches the very last item
+    assert_eq!(key(&mut menu, ks::KEY_Next, M_NONE), Transition::Redraw);
+    assert_eq!(menu.selection.selected, Some(11));
+    assert_eq!(
+        menu.selection.page_start, last_page,
+        "the page must not move"
+    );
+
+    // and pressing it again at the end does nothing
+    assert_eq!(key(&mut menu, ks::KEY_Next, M_NONE), Transition::Nop);
+
+    // the item is really the last one
+    assert_eq!(
+        menu.button_press(MouseButton::Left, M_NONE, Point::new(0, row_y(2))),
+        Transition::PrintAndExit("item 11".into())
+    );
+    assert_eq!(
+        menu.perform(Transition::PrintAndExit("item 11".into())),
+        Some(ExitStatus::Success)
+    );
+    assert_eq!(out.contents(), "item 11\n");
+}
+
+/// A trailing heading must not catch the end-of-list jump: the last
+/// *selectable* match wins, not simply the last match.
+#[test]
+fn page_down_on_the_last_page_skips_a_trailing_heading() {
+    let items: Vec<String> = ["alpha", "beta", "gamma", "more"]
+        .iter()
+        .map(|s| format!("{s} item"))
+        .collect();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+    menu.add_items(vec![Item::new("{blue} a heading")]);
+    let _ = menu.do_match();
+    three_row_pages(&mut menu);
+
+    while menu.paging.next.is_some() {
+        let _ = key(&mut menu, ks::KEY_Next, M_NONE);
+    }
+    let last = menu.last_selectable_match();
+    assert_eq!(key(&mut menu, ks::KEY_Next, M_NONE), Transition::Redraw);
+    assert_eq!(menu.selection.selected, last);
+    assert!(menu
+        .matcher
+        .match_is_selectable(menu.selection.selected.unwrap()));
 }
 
 /// Typing wins over a resting pointer, and keeps winning while the pointer

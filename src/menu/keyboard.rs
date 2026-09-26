@@ -376,8 +376,20 @@ impl Menu {
             Transition::Redraw
         } else if sym == ks::KEY_Next || sym == ks::KEY_KP_Next {
             let Some(next) = self.paging.next else {
-                return Transition::Nop;
+                /* On the last page there is no page left to turn, so the key
+                 * would be dead exactly where the user wants it most: at the
+                 * end of a long list. Go to the end instead, the same place one
+                 * more wheel detent goes, so both routes agree. */
+                return if self.select_last_item() {
+                    Transition::Redraw
+                } else {
+                    Transition::Nop
+                };
             };
+            /* Keyboard paging selects the page top rather than the row under
+             * the pointer. The wheel's cursor-following rule has nothing to
+             * follow here, and a keypress should not depend on where the
+             * pointer happens to be parked. */
             self.select_page(next);
             self.recalc_paging();
             Transition::Redraw
@@ -532,7 +544,7 @@ impl Menu {
         self.select_next();
     }
 
-    fn last_selectable_match(&self) -> Option<usize> {
+    pub(super) fn last_selectable_match(&self) -> Option<usize> {
         (0..self.matcher.matches.len())
             .rev()
             .find(|&pos| self.matcher.match_is_selectable(pos))

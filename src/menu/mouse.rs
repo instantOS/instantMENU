@@ -120,14 +120,68 @@ impl Menu {
                     .unwrap_or(0);
                 self.select_page(page);
                 self.recalc_paging();
+                self.select_hovered_row();
                 return true;
             }
         } else if let Some(next) = self.paging.next {
             self.select_page(next);
             self.recalc_paging();
+            self.select_hovered_row();
             return true;
+        } else if delta > 0 {
+            /* No page left to turn, but the cursor-following rule wants the
+             * selection under the pointer and there is nothing under it past
+             * the final row. Go to the end of the list, exactly as PageDown
+             * does there, so both ways of reaching the end of a long list land
+             * in the same place instead of one of them going dead. Only the
+             * selection moves: the last match is already on this page. */
+            return self.select_last_item();
         }
         false
+    }
+
+    /// Select the last selectable match, reporting whether that changed
+    /// anything. Shared by the wheel and PageDown at the end of the list, so
+    /// the two routes to the end of a long list cannot drift apart.
+    pub(super) fn select_last_item(&mut self) -> bool {
+        let Some(last) = self.last_selectable_match() else {
+            return false;
+        };
+        if self.selection.selected == Some(last) {
+            return false;
+        }
+        self.selection.selected = Some(last);
+        true
+    }
+
+    /// After a wheel page turn, put the selection back on whatever row the
+    /// pointer now sits over, so the highlight travels with the cursor instead
+    /// of jumping to the top of the new page.
+    ///
+    /// Resolved in the same step as the page turn rather than by a following
+    /// motion event, which is the entire point: letting a second event
+    /// re-decide the selection is what made the highlight flicker between the
+    /// page top and the cursor's row. The pointer position is absolute, so the
+    /// row it lands on is simply whatever now occupies that spot on the new
+    /// page.
+    ///
+    /// Falls back to the page top when the pointer is not over a selectable
+    /// row: it has never been seen to move, it is parked over the input line
+    /// or the hint bar, or the final page is too short to reach it. Keyboard
+    /// paging deliberately does not do this — there the page top is the right
+    /// answer. The two rules differ only because a wheel detent implies a
+    /// pointer and a keypress does not.
+    fn select_hovered_row(&mut self) {
+        let Some(pos) = self.hover_pos else { return };
+        let header = self.header();
+        let Some(item) = self.hovered_match(pos, &header) else {
+            return;
+        };
+        // Keep `hovered` in step, so "what is under the pointer is what is
+        // recorded as hovered" survives the turn and the next motion event is
+        // a plain Nop rather than a second opinion.
+        self.hovered = Some(item);
+        self.selection.selected = Some(item);
     }
 
     /// Apply a burst of repaint-only events and redraw once.
