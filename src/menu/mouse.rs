@@ -7,18 +7,41 @@ use super::layout::Header;
 use super::paging;
 use super::transition::Transition;
 use super::Menu;
-use crate::backend::{Modifiers, MouseButton};
+use crate::backend::{BackendEvent, Modifiers, MouseButton};
 use crate::enums::{EditOp, ExitStatus, Side};
 use crate::geom::Point;
 
 impl Menu {
-    /// set_selection — hover selection on motion. A motion event redraws
-    /// only when the pointer enters a *different* row; jitter around a
-    /// resting pointer is a Nop, even right after a rematch moved the
-    /// highlight away from under it. That is what keeps hover and typing
-    /// from alternating frames: typing resets the selection to the best
-    /// match, and the pointer must genuinely change rows to take it back.
+    /// set_selection — hover selection on motion.
+    ///
+    /// A motion event repaints only when the pointer has actually *moved*.
+    /// Both halves of that matter, and they guard against different things:
+    ///
+    /// - Same position as last time: nothing about the pointer changed, so
+    ///   there is nothing to re-decide. Without this the resolved row is
+    ///   re-read on every event the server sends for a resting pointer, and
+    ///   each read is a fresh chance to disagree with whatever moved the
+    ///   selection in the meantime.
+    /// - Moved, but landed on the row already highlighted: also a Nop. This
+    ///   is what keeps hover and typing from alternating frames — typing
+    ///   resets the selection to the best match, and the pointer must
+    ///   genuinely change rows to take it back.
+    ///
+    /// The first rule is what makes a page turn stick. `scroll_one` parks the
+    /// selection on the new page top, but the pointer has not moved, and the
+    /// row under it is a different match index on every page. Deciding hover
+    /// from the resolved row alone therefore made the two fight: the page
+    /// turn won when its event came last and the pointer won when its event
+    /// came last, so scrolling with the cursor resting flickered between the
+    /// page top and the row under the cursor. Deciding from the pointer's
+    /// position instead makes the outcome independent of event order — a
+    /// resting pointer keeps the page top, and only a real move takes the
+    /// selection back.
     pub(super) fn set_selection(&mut self, pos: Point) -> Transition {
+        if self.hover_pos == Some(pos) {
+            return Transition::Nop;
+        }
+        self.hover_pos = Some(pos);
         let header = self.header();
         let item = self.hovered_match(pos, &header);
         if item == self.hovered {
@@ -86,8 +109,10 @@ impl Menu {
         }
     }
 
-    /// Wheel movement pages through the list (positive scrolls down).
-    pub(super) fn scroll(&mut self, delta: i32) -> Transition {
+    /// One wheel step, mutating the page window. Returns whether the page
+    /// actually turned, so a burst can be applied without redrawing between
+    /// steps (see [`Menu::scroll_burst`]).
+    pub(super) fn scroll_one(&mut self, delta: i32) -> bool {
         if delta < 0 {
             if self.paging.prev != 0 || self.selection.page_start.map(|c| c > 0).unwrap_or(false) {
                 let page = paging::scroll_up(&self.selection, &self.paging)
@@ -95,14 +120,101 @@ impl Menu {
                     .unwrap_or(0);
                 self.select_page(page);
                 self.recalc_paging();
-                return Transition::Redraw;
+                self.select_hovered_row();
+                return true;
             }
         } else if let Some(next) = self.paging.next {
             self.select_page(next);
             self.recalc_paging();
-            return Transition::Redraw;
+            self.select_hovered_row();
+            return true;
+        } else if delta > 0 {
+            /* No page left to turn, but the cursor-following rule wants the
+             * selection under the pointer and there is nothing under it past
+             * the final row. Go to the end of the list, exactly as PageDown
+             * does there, so both ways of reaching the end of a long list land
+             * in the same place instead of one of them going dead. Only the
+             * selection moves: the last match is already on this page. */
+            return self.select_last_item();
         }
-        Transition::Nop
+        false
+    }
+
+    /// Select the last selectable match, reporting whether that changed
+    /// anything. Shared by the wheel and PageDown at the end of the list, so
+    /// the two routes to the end of a long list cannot drift apart.
+    pub(super) fn select_last_item(&mut self) -> bool {
+        let Some(last) = self.last_selectable_match() else {
+            return false;
+        };
+        if self.selection.selected == Some(last) {
+            return false;
+        }
+        self.selection.selected = Some(last);
+        true
+    }
+
+    /// After a wheel page turn, put the selection back on whatever row the
+    /// pointer now sits over, so the highlight travels with the cursor instead
+    /// of jumping to the top of the new page.
+    ///
+    /// Resolved in the same step as the page turn rather than by a following
+    /// motion event, which is the entire point: letting a second event
+    /// re-decide the selection is what made the highlight flicker between the
+    /// page top and the cursor's row. The pointer position is absolute, so the
+    /// row it lands on is simply whatever now occupies that spot on the new
+    /// page.
+    ///
+    /// Falls back to the page top when the pointer is not over a selectable
+    /// row: it has never been seen to move, it is parked over the input line
+    /// or the hint bar, or the final page is too short to reach it. Keyboard
+    /// paging deliberately does not do this — there the page top is the right
+    /// answer. The two rules differ only because a wheel detent implies a
+    /// pointer and a keypress does not.
+    fn select_hovered_row(&mut self) {
+        let Some(pos) = self.hover_pos else { return };
+        let header = self.header();
+        let Some(item) = self.hovered_match(pos, &header) else {
+            return;
+        };
+        // Keep `hovered` in step, so "what is under the pointer is what is
+        // recorded as hovered" survives the turn and the next motion event is
+        // a plain Nop rather than a second opinion.
+        self.hovered = Some(item);
+        self.selection.selected = Some(item);
+    }
+
+    /// Apply a burst of repaint-only events and redraw once.
+    ///
+    /// Every event is applied in order — so the end state is exactly what one
+    /// redraw per event would have produced, list-end clamping and hover
+    /// included — but only the final state is painted. A fast flick otherwise
+    /// queues one full redraw per detent, and each one has to be drawn before
+    /// the next event is even read, so the menu falls behind the wheel
+    /// instead of landing on the page the user flicked to. Scrolling while
+    /// moving the mouse interleaves the two kinds, so the burst has to cover
+    /// both: honouring only the detents would still spend a repaint on every
+    /// step of the gesture.
+    ///
+    /// The trailing motion is never dropped, only its intermediate frames
+    /// are skipped, so the highlight still ends up under the resting pointer.
+    pub(super) fn apply_repaint_batch(&mut self, events: &[BackendEvent]) -> Transition {
+        let mut repaint = false;
+        for event in events {
+            let redrew = match event {
+                BackendEvent::Scroll { delta } => self.scroll_one(*delta),
+                BackendEvent::Motion { pos, .. } => {
+                    !matches!(self.set_selection(*pos), Transition::Nop)
+                }
+                _ => continue,
+            };
+            repaint |= redrew;
+        }
+        if repaint {
+            Transition::Redraw
+        } else {
+            Transition::Nop
+        }
     }
 
     /// left-click: clear the input, or click an item/arrow/command cell.

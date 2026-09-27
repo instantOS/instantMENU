@@ -633,6 +633,24 @@ impl Backend for WaylandBackend {
          * to the pipe (next_event() polls it only after this) */
         let _ = self.connection.flush();
     }
+
+    /// Take the leading run of queued wheel and motion events. The dispatcher
+    /// already appended the whole burst to `state.events` before `poll_event`
+    /// handed back the first one, so the rest are sitting right behind it.
+    fn drain_repaint(&mut self) -> Vec<BackendEvent> {
+        let mut out = Vec::new();
+        while let Some(ev) = self.state.events.front() {
+            if !matches!(
+                ev,
+                BackendEvent::Scroll { .. } | BackendEvent::Motion { .. }
+            ) {
+                break;
+            }
+            out.push(ev.clone());
+            self.state.events.pop_front();
+        }
+        out
+    }
 }
 
 /// Clamp an fd-poll timeout to the next key-repeat deadline. `poll(2)` has

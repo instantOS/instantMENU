@@ -325,6 +325,31 @@ pub trait Backend {
     /// are checked before queued backend events: a blocked pipe writer is
     /// more time-critical than an already-queued event.
     fn poll_event(&mut self, timeout: Option<std::time::Duration>, extra: &[RawFd]) -> EventPoll;
+    /// Take the events still queued behind the one just returned by
+    /// [`Backend::poll_event`] that can be folded into the same frame, in
+    /// arrival order, leaving every other queued event untouched.
+    ///
+    /// Currently [`BackendEvent::Scroll`] and [`BackendEvent::Motion`]: both
+    /// only ever ask for a repaint, and neither ends the menu, so applying
+    /// them one frame at a time spends a whole redraw per event. A fast wheel
+    /// flick arrives as a burst of detents, and scrolling while moving the
+    /// mouse interleaves them, so the run has to cover both kinds — stopping
+    /// at the first motion event leaves the flick un-coalesced and the cost
+    /// exactly where it started. On a list whose rows are expensive to paint
+    /// (the emoji picker's colour bitmaps: a never-seen row costs
+    /// milliseconds, a cached one a fraction of that) that is the difference
+    /// between the menu landing on the page you flicked to and trailing the
+    /// wheel there.
+    ///
+    /// Only the leading run is taken: a burst interrupted by anything else (a
+    /// key press, a click) must keep its original ordering relative to that
+    /// event. Every returned event is passed on, never dropped — dropping the
+    /// last motion before the pointer comes to rest would strand the
+    /// highlight. The default returns nothing, which is correct for a backend
+    /// that never queues more than one event.
+    fn drain_repaint(&mut self) -> Vec<BackendEvent> {
+        Vec::new()
+    }
     /// Block for the next event, None when the connection died.
     fn next_event(&mut self) -> Option<BackendEvent> {
         match self.poll_event(None, &[]) {

@@ -7,7 +7,9 @@ use super::matcher::Item;
 use super::transition::Transition;
 use super::Menu;
 use crate::backend::stub::{TestBackend, TestHandle as StubHandle};
-use crate::backend::{BackendEvent, InputSource, MenuCursor, Modifiers, MonitorInfo, MouseButton};
+use crate::backend::{
+    Backend, BackendEvent, InputSource, MenuCursor, Modifiers, MonitorInfo, MouseButton,
+};
 use crate::config::{Config, SlideSettings, Width};
 use crate::enums::{ExitStatus, Scheme};
 use crate::geom::{Point, Rect, Size};
@@ -1312,16 +1314,693 @@ fn scroll_turns_pages() {
     menu.paging.next = Some(1);
     menu.paging.prev = 0;
 
-    assert_eq!(menu.scroll(1), Transition::Redraw);
+    assert_eq!(
+        menu.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }]),
+        Transition::Redraw
+    );
     assert_eq!(menu.selection.selected, Some(1));
     assert_eq!(menu.selection.page_start, Some(1));
 
     // scrolling back up moves the page, the selection follows the page top
-    assert_eq!(menu.scroll(-1), Transition::Redraw);
+    assert_eq!(
+        menu.apply_repaint_batch(&[BackendEvent::Scroll { delta: -1 }]),
+        Transition::Redraw
+    );
     assert_eq!(menu.selection.page_start, Some(0));
 }
 
 /* ── the event loop ────────────────────────────────────────────────────── */
+
+/// A vertical list one row taller than the page budget, so every wheel detent
+/// turns exactly one page and `page_start` is a plain count of detents.
+/// `menu_with` has already matched and paginated against the default
+/// horizontal layout, so the paging has to be recomputed after the override.
+fn one_item_per_page(menu: &mut Menu) {
+    menu.layout.lines = 1;
+    menu.layout.columns = 1;
+    menu.recalc_paging();
+}
+
+/// A fast flick: the detents queued behind the first one are absorbed into a
+/// single redraw, so the menu lands on the final page in one frame instead of
+/// grinding through every intermediate one.
+#[test]
+fn a_scroll_burst_presents_one_frame_and_lands_on_the_last_page() {
+    let items: Vec<String> = (0..40).map(|i| format!("item {i}")).collect();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, stub, _out) = menu_with(Config::default(), &refs);
+    one_item_per_page(&mut menu);
+    let presents = stub.state().presents;
+
+    for _ in 0..5 {
+        stub.push(BackendEvent::Scroll { delta: 1 });
+    }
+    // the run loop must not spin forever: a click ends it
+    stub.push(BackendEvent::ButtonPress {
+        button: MouseButton::Left,
+        mods: M_NONE,
+        pos: Point::new(0, 0),
+        source: InputSource::External,
+    });
+
+    assert_eq!(menu.run(), ExitStatus::Failure);
+    // five detents turn five pages…
+    assert_eq!(menu.selection.page_start, Some(5));
+    // …but they were presented as a single frame
+    assert_eq!(stub.state().presents - presents, 1);
+}
+
+/// A burst is only a redraw-coalescing shortcut: it has to leave the list in
+/// exactly the state the same detents would have produced one frame at a time.
+#[test]
+fn a_scroll_burst_lands_where_one_detent_at_a_time_would() {
+    let items: Vec<String> = (0..40).map(|i| format!("item {i}")).collect();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let events: Vec<BackendEvent> = [1, 1, 1, -1, 1, 1, 1, 1]
+        .iter()
+        .map(|&delta| BackendEvent::Scroll { delta })
+        .collect();
+
+    let (mut stepped, _stub, _out) = menu_with(Config::default(), &refs);
+    one_item_per_page(&mut stepped);
+    for event in &events {
+        stepped.apply_repaint_batch(std::slice::from_ref(event));
+    }
+
+    let (mut burst, _stub, _out) = menu_with(Config::default(), &refs);
+    one_item_per_page(&mut burst);
+    assert_eq!(burst.apply_repaint_batch(&events), Transition::Redraw);
+
+    assert_eq!(burst.selection, stepped.selection);
+    assert_eq!(burst.paging, stepped.paging);
+}
+
+/// A burst whose steps are absorbed still clamps at the list ends, exactly as
+/// one redraw per detent would.
+#[test]
+fn a_scroll_burst_clamps_at_the_list_ends() {
+    let items: Vec<String> = (0..3).map(|i| format!("item {i}")).collect();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+    one_item_per_page(&mut menu);
+    let down: Vec<BackendEvent> =
+        std::iter::repeat_n(BackendEvent::Scroll { delta: 1 }, 8).collect();
+    let up: Vec<BackendEvent> =
+        std::iter::repeat_n(BackendEvent::Scroll { delta: -1 }, 8).collect();
+
+    // more detents down than there are pages
+    assert_eq!(menu.apply_repaint_batch(&down), Transition::Redraw);
+    let last = menu.selection.page_start;
+    // and a burst that overshoots the top stops there
+    assert_eq!(menu.apply_repaint_batch(&up), Transition::Redraw);
+    assert_eq!(menu.selection.page_start, Some(0));
+    // already at the top: a further burst changes nothing and does not redraw
+    assert_eq!(menu.apply_repaint_batch(&up), Transition::Nop);
+    assert!(last.unwrap_or(0) > 0);
+}
+
+/// Scrolling while wiggling the mouse: the wheel detents and the motion
+/// events interleave, so a drain that only accepted detents would stop at the
+/// first motion and leave the flick un-coalesced. The whole gesture must
+/// still be one frame.
+#[test]
+fn an_interleaved_scroll_and_motion_burst_is_one_frame() {
+    let items: Vec<String> = (0..40).map(|i| format!("item {i}")).collect();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, stub, _out) = menu_with(Config::default(), &refs);
+    one_item_per_page(&mut menu);
+    let presents = stub.state().presents;
+
+    // five detents, each followed by a motion over a different row
+    for i in 0..5 {
+        stub.push(BackendEvent::Scroll { delta: 1 });
+        stub.push(BackendEvent::Motion {
+            time: i,
+            pos: Point::new(0, (i as i32 + 1) * menu.layout.bar_height + 1),
+            source: InputSource::Menu,
+        });
+    }
+    stub.push(BackendEvent::ButtonPress {
+        button: MouseButton::Left,
+        mods: M_NONE,
+        pos: Point::new(0, 0),
+        source: InputSource::External,
+    });
+
+    assert_eq!(menu.run(), ExitStatus::Failure);
+    // all five detents applied…
+    assert_eq!(menu.selection.page_start, Some(5));
+    // …and the ten queued events cost a single repaint
+    assert_eq!(stub.state().presents - presents, 1);
+}
+
+/// A three-row page, so there is somewhere for the pointer to rest that is not
+/// the page top. `menu_with` has already matched and paginated against the
+/// default horizontal layout, so paging is recomputed after the override.
+fn three_row_pages(menu: &mut Menu) {
+    menu.layout.lines = 3;
+    menu.layout.columns = 1;
+    menu.recalc_paging();
+}
+
+/// Row `i` of a vertical list sits at y `(i + 1) * bar_height`; +1 puts the
+/// point inside the row rather than on its edge.
+fn row_y(row: i32) -> i32 {
+    (row + 1) * TEST_BAR_HEIGHT + 1
+}
+
+fn twelve_items() -> Vec<String> {
+    (0..12).map(|i| format!("item {i}")).collect()
+}
+
+/// Scroll down with the pointer resting on a row. The page turn parks the
+/// selection on the new page top, and the pointer has not moved, so the same
+/// gesture must land on the same item no matter which order the two events
+/// arrive in. It did not: the resting pointer won when its event came second
+/// and lost when it came first, so the highlight flickered between the page
+/// top and the row under the cursor on every detent.
+#[test]
+fn a_scroll_with_a_resting_pointer_lands_the_same_either_way_round() {
+    let items = twelve_items();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let rest = Point::new(0, row_y(1));
+    let scroll = BackendEvent::Scroll { delta: 1 };
+    let motion = || BackendEvent::Motion {
+        time: 0,
+        pos: rest,
+        source: InputSource::Menu,
+    };
+
+    // the pointer is already resting on row 1 before the wheel turns
+    let (mut scroll_first, _s, _o) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut scroll_first);
+    scroll_first.apply_repaint_batch(&[motion()]);
+    scroll_first.apply_repaint_batch(&[scroll.clone(), motion()]);
+
+    let (mut motion_first, _s, _o) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut motion_first);
+    motion_first.apply_repaint_batch(&[motion()]);
+    motion_first.apply_repaint_batch(&[motion(), scroll]);
+
+    assert_eq!(scroll_first.selection, motion_first.selection);
+}
+
+/// A wheel page turn keeps the selection on the row under the pointer, so the
+/// highlight travels with the cursor instead of jumping to the page top. It
+/// is resolved as part of the turn, so a following motion event has nothing
+/// left to decide and the highlight never flickers.
+#[test]
+fn a_wheel_page_turn_keeps_the_selection_under_the_pointer() {
+    let items = twelve_items();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut menu);
+
+    let motion = |pos: Point| BackendEvent::Motion {
+        time: 0,
+        pos,
+        source: InputSource::Menu,
+    };
+    // park on row 1, then turn the page
+    menu.apply_repaint_batch(&[motion(Point::new(0, row_y(1)))]);
+    assert_eq!(menu.selection.selected, Some(1));
+    menu.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }]);
+    assert_eq!(menu.selection.page_start, Some(3));
+    // row 1 of the new page, not the page top
+    assert_eq!(menu.selection.selected, Some(4));
+
+    // the turn already decided it, so the pointer resting there repaints
+    // nothing and moves nothing
+    assert_eq!(
+        menu.apply_repaint_batch(&[motion(Point::new(0, row_y(1)))]),
+        Transition::Nop
+    );
+    assert_eq!(menu.selection.selected, Some(4));
+
+    // and a burst that interleaves the wheel with the pointer lands the same
+    // place, with no intermediate focus to flicker through
+    menu.apply_repaint_batch(&[
+        BackendEvent::Scroll { delta: -1 },
+        motion(Point::new(0, row_y(1))),
+    ]);
+    assert_eq!(menu.selection.page_start, Some(0));
+    assert_eq!(menu.selection.selected, Some(1));
+}
+
+/// …but only while the pointer is over an actual row. Parked over the input
+/// line there is nothing to follow, so the page turn keeps the page top.
+#[test]
+fn a_wheel_page_turn_falls_back_to_the_page_top_without_a_usable_pointer() {
+    let items = twelve_items();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+
+    // the pointer has never moved: no position to follow
+    let (mut unseen, _s, _o) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut unseen);
+    unseen.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }]);
+    assert_eq!(unseen.selection.page_start, Some(3));
+    assert_eq!(unseen.selection.selected, Some(3));
+
+    // the pointer is over the input row, which is not a selectable row
+    let (mut over_input, _s, _o) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut over_input);
+    over_input.apply_repaint_batch(&[BackendEvent::Motion {
+        time: 0,
+        pos: Point::new(10, 2),
+        source: InputSource::Menu,
+    }]);
+    over_input.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }]);
+    assert_eq!(over_input.selection.page_start, Some(3));
+    assert_eq!(over_input.selection.selected, Some(3));
+}
+
+/// Keyboard paging is the other half of the rule: PageDown selects the page
+/// top even with the pointer resting on a row, because a keypress carries no
+/// pointer. PageUp likewise.
+#[test]
+fn keyboard_paging_selects_the_page_top_whatever_the_pointer_is_on() {
+    let items = twelve_items();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut menu);
+    menu.apply_repaint_batch(&[BackendEvent::Motion {
+        time: 0,
+        pos: Point::new(0, row_y(1)),
+        source: InputSource::Menu,
+    }]);
+    assert_eq!(menu.selection.selected, Some(1));
+
+    assert_eq!(key(&mut menu, ks::KEY_Next, M_NONE), Transition::Redraw);
+    assert_eq!(menu.selection.page_start, Some(3));
+    assert_eq!(menu.selection.selected, Some(3));
+
+    assert_eq!(key(&mut menu, ks::KEY_Prior, M_NONE), Transition::Redraw);
+    assert_eq!(menu.selection.page_start, Some(0));
+    assert_eq!(menu.selection.selected, Some(0));
+}
+
+/// The keyboard keeps the selection until the pointer genuinely moves, not
+/// merely until the pointer stops moving. PageDown with the cursor parked on a
+/// lower row puts the selection on the page top, and it stays there for as long
+/// as the cursor stays put — including through the duplicate motion events a
+/// server sends for a resting pointer. Only a real move hands it back.
+#[test]
+fn the_keyboard_keeps_the_selection_until_the_pointer_really_moves() {
+    let items = twelve_items();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut menu);
+    let parked = Point::new(0, row_y(2));
+    let motion = |time: u32, pos: Point| BackendEvent::Motion {
+        time,
+        pos,
+        source: InputSource::Menu,
+    };
+
+    // cursor parked on the lowest visible row
+    menu.apply_repaint_batch(&[motion(0, parked)]);
+    assert_eq!(menu.selection.selected, Some(2));
+
+    // the keyboard takes over
+    assert_eq!(key(&mut menu, ks::KEY_Next, M_NONE), Transition::Redraw);
+    assert_eq!(menu.selection.page_start, Some(3));
+    assert_eq!(menu.selection.selected, Some(3));
+
+    // a resting pointer re-announcing the same position changes nothing
+    for time in 1..4 {
+        assert_eq!(
+            menu.apply_repaint_batch(&[motion(time, parked)]),
+            Transition::Nop
+        );
+        assert_eq!(menu.selection.selected, Some(3));
+    }
+
+    // A real move onto the row the keyboard already chose is a Nop: the
+    // pointer moved, but it resolved to the item that was already selected, so
+    // there is nothing to repaint and the keyboard's choice stands.
+    assert_eq!(
+        menu.apply_repaint_batch(&[motion(9, Point::new(0, row_y(0)))]),
+        Transition::Nop
+    );
+    assert_eq!(menu.selection.selected, Some(3));
+
+    // A real move onto a *different* row hands the selection to the cursor.
+    assert_eq!(
+        menu.apply_repaint_batch(&[motion(10, Point::new(0, row_y(1)))]),
+        Transition::Redraw
+    );
+    assert_eq!(menu.selection.selected, Some(4));
+
+    // and moving back re-applies the keyboard's row, now as a real change
+    assert_eq!(
+        menu.apply_repaint_batch(&[motion(11, Point::new(0, row_y(0)))]),
+        Transition::Redraw
+    );
+    assert_eq!(menu.selection.selected, Some(3));
+}
+
+/// The wheel agrees with PageDown at the end of the list: one more detent down
+/// on the last page goes to the last item instead of doing nothing, so neither
+/// route to the end of a long list is dead. Both must land in the same place.
+#[test]
+fn the_wheel_and_page_down_agree_at_the_end_of_the_list() {
+    let items = twelve_items();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+
+    let reach_end = |by_wheel: bool| {
+        let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+        three_row_pages(&mut menu);
+        // walk to the last page with the wheel, cursor parked on row 0
+        menu.apply_repaint_batch(&[BackendEvent::Motion {
+            time: 0,
+            pos: Point::new(0, row_y(0)),
+            source: InputSource::Menu,
+        }]);
+        while menu.paging.next.is_some() {
+            menu.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }]);
+        }
+        let page = menu.selection.page_start;
+        let t = if by_wheel {
+            menu.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }])
+        } else {
+            key(&mut menu, ks::KEY_Next, M_NONE)
+        };
+        (t, menu.selection.selected, menu.selection.page_start, page)
+    };
+
+    let wheel = reach_end(true);
+    let paged = reach_end(false);
+    assert_eq!(wheel.0, Transition::Redraw);
+    assert_eq!(wheel, paged, "wheel and PageDown must agree at the end");
+    assert_eq!(wheel.1, Some(11), "the last item is selected");
+    assert_eq!(wheel.2, wheel.3, "the page must not move");
+
+    // and at the very end both go quiet instead of redrawing for nothing
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut menu);
+    while menu.paging.next.is_some() {
+        menu.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }]);
+    }
+    menu.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }]);
+    assert_eq!(menu.selection.selected, Some(11));
+    assert_eq!(
+        menu.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }]),
+        Transition::Nop
+    );
+    assert_eq!(key(&mut menu, ks::KEY_Next, M_NONE), Transition::Nop);
+}
+
+/// On the last page PageDown has no page left to turn, so instead of being
+/// dead it goes to the end of the list.
+#[test]
+fn page_down_on_the_last_page_selects_the_last_item() {
+    let items = twelve_items();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, _stub, out) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut menu);
+
+    // walk to the last page
+    while menu.paging.next.is_some() {
+        assert_eq!(key(&mut menu, ks::KEY_Next, M_NONE), Transition::Redraw);
+    }
+    let last_page = menu.selection.page_start;
+    assert!(menu.paging.next.is_none());
+
+    // still on that page, and PageDown reaches the very last item
+    assert_eq!(key(&mut menu, ks::KEY_Next, M_NONE), Transition::Redraw);
+    assert_eq!(menu.selection.selected, Some(11));
+    assert_eq!(
+        menu.selection.page_start, last_page,
+        "the page must not move"
+    );
+
+    // and pressing it again at the end does nothing
+    assert_eq!(key(&mut menu, ks::KEY_Next, M_NONE), Transition::Nop);
+
+    // the item is really the last one
+    assert_eq!(
+        menu.button_press(MouseButton::Left, M_NONE, Point::new(0, row_y(2))),
+        Transition::PrintAndExit("item 11".into())
+    );
+    assert_eq!(
+        menu.perform(Transition::PrintAndExit("item 11".into())),
+        Some(ExitStatus::Success)
+    );
+    assert_eq!(out.contents(), "item 11\n");
+}
+
+/// A trailing heading must not catch the end-of-list jump: the last
+/// *selectable* match wins, not simply the last match.
+#[test]
+fn page_down_on_the_last_page_skips_a_trailing_heading() {
+    let items: Vec<String> = ["alpha", "beta", "gamma", "more"]
+        .iter()
+        .map(|s| format!("{s} item"))
+        .collect();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+    menu.add_items(vec![Item::new("{blue} a heading")]);
+    let _ = menu.do_match();
+    three_row_pages(&mut menu);
+
+    while menu.paging.next.is_some() {
+        let _ = key(&mut menu, ks::KEY_Next, M_NONE);
+    }
+    let last = menu.last_selectable_match();
+    assert_eq!(key(&mut menu, ks::KEY_Next, M_NONE), Transition::Redraw);
+    assert_eq!(menu.selection.selected, last);
+    assert!(menu
+        .matcher
+        .match_is_selectable(menu.selection.selected.unwrap()));
+}
+
+/// Typing wins over a resting pointer, and keeps winning while the pointer
+/// stays put. The subtle case is typing from a later page: the rematch resets
+/// `page_start` to 0, so the row under the stationary pointer now resolves to
+/// a different match index. Change-detecting on the resolved row therefore
+/// read that as "the pointer entered a new row" and handed the selection
+/// straight back to the pointer, undoing the typed match.
+#[test]
+fn typing_keeps_the_selection_over_a_resting_pointer_on_a_later_page() {
+    let items = twelve_items();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut menu);
+    let rest = Point::new(0, row_y(1));
+
+    // park the pointer on row 1, then turn to a later page. The hover has to
+    // land *after* the page turn: that is the order in which the pointer's row
+    // index changes, which is what the old row-based change detection read as
+    // "the pointer entered a new row".
+    menu.apply_repaint_batch(&[
+        BackendEvent::Scroll { delta: 1 },
+        BackendEvent::Motion {
+            time: 0,
+            pos: rest,
+            source: InputSource::Menu,
+        },
+    ]);
+    assert_eq!(menu.selection.page_start, Some(3));
+    assert_eq!(menu.selection.selected, Some(4));
+
+    // typing re-ranks and resets the page, and the best match is selected
+    type_text(&mut menu, "item 1");
+    let typed = menu.selection.selected;
+    assert_eq!(menu.selection.page_start, Some(0));
+    assert_eq!(typed, Some(0));
+
+    // the pointer has not moved, so it cannot take the selection back
+    assert_eq!(
+        menu.apply_repaint_batch(&[BackendEvent::Motion {
+            time: 0,
+            pos: rest,
+            source: InputSource::Menu,
+        }]),
+        Transition::Nop
+    );
+    assert_eq!(menu.selection.selected, typed);
+
+    // but a genuine move still re-engages hover
+    assert_eq!(
+        menu.apply_repaint_batch(&[BackendEvent::Motion {
+            time: 1,
+            pos: Point::new(0, row_y(2)),
+            source: InputSource::Menu,
+        }]),
+        Transition::Redraw
+    );
+    assert_ne!(menu.selection.selected, typed);
+}
+
+/// The other half of the resting-pointer rule, and the one that matters day to
+/// day: typing owns the selection only until the pointer is moved again. A
+/// real move onto another visible match takes the selection back, and a click
+/// takes that match regardless of whether hover ever engaged — a click is
+/// hit-tested from the coordinates, not from the highlight.
+#[test]
+fn moving_the_pointer_after_typing_hands_the_selection_back() {
+    let items: Vec<String> = ["apple", "banana", "cherry", "date"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+
+    /* hovering a row after typing re-engages the hover */
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut menu);
+    // "a" keeps apple, banana and date and drops cherry; apple is the best match
+    type_text(&mut menu, "a");
+    let typed = menu.selection.selected;
+    assert_eq!(typed, Some(0));
+    assert_eq!(
+        menu.apply_repaint_batch(&[BackendEvent::Motion {
+            time: 0,
+            pos: Point::new(0, row_y(1)),
+            source: InputSource::Menu,
+        }]),
+        Transition::Redraw
+    );
+    assert_eq!(menu.selection.selected, Some(1));
+    assert_ne!(menu.selection.selected, typed);
+
+    /* and a click resolves the row from the coordinates even when the pointer
+     * has never hovered there, so a resting highlight cannot misdirect it */
+    let (mut menu, _stub, out) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut menu);
+    type_text(&mut menu, "a");
+    assert_eq!(menu.selection.selected, Some(0));
+    let third_row = Point::new(0, row_y(2));
+    let t = menu.button_press(MouseButton::Left, M_NONE, third_row);
+    assert_eq!(t, Transition::PrintAndExit("date".into()));
+    assert_eq!(menu.perform(t), Some(ExitStatus::Success));
+    assert_eq!(out.contents(), "date\n");
+}
+
+/// A move *within* the row already hovered is not a row change, so it does not
+/// re-engage hover. This is the pre-existing "the pointer must genuinely change
+/// rows" rule, unchanged by the position check: `hovered` already suppressed it
+/// before, and the click path above is what makes it harmless.
+#[test]
+fn moving_within_the_hovered_row_does_not_re_engage_hover() {
+    let items: Vec<String> = ["apple", "banana", "cherry", "date"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &refs);
+    three_row_pages(&mut menu);
+    type_text(&mut menu, "a");
+    let typed = menu.selection.selected;
+
+    // hover row 1, then let typing take the selection, then jiggle inside row 1
+    menu.apply_repaint_batch(&[BackendEvent::Motion {
+        time: 0,
+        pos: Point::new(10, row_y(1)),
+        source: InputSource::Menu,
+    }]);
+    type_text(&mut menu, "ap");
+    let after_typing = menu.selection.selected;
+    assert_ne!(after_typing, Some(1));
+
+    assert_eq!(
+        menu.apply_repaint_batch(&[BackendEvent::Motion {
+            time: 1,
+            // same row, different x
+            pos: Point::new(120, row_y(1)),
+            source: InputSource::Menu,
+        }]),
+        Transition::Nop
+    );
+    assert_eq!(menu.selection.selected, after_typing);
+    let _ = typed;
+}
+
+/// The point of coalescing motion instead of dropping it: the highlight still
+/// ends up under the pointer's final resting position, which is why motion
+/// cannot simply be discarded the way a stale one could be.
+#[test]
+fn an_interleaved_burst_leaves_the_highlight_under_the_resting_pointer() {
+    let items: Vec<String> = (0..40).map(|i| format!("item {i}")).collect();
+    let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+    let rest = Point::new(0, 3 * TEST_BAR_HEIGHT);
+
+    let (mut stepped, _stub, _out) = menu_with(Config::default(), &refs);
+    one_item_per_page(&mut stepped);
+    stepped.apply_repaint_batch(&[BackendEvent::Scroll { delta: 1 }]);
+    stepped.apply_repaint_batch(&[BackendEvent::Motion {
+        time: 0,
+        pos: rest,
+        source: InputSource::Menu,
+    }]);
+
+    let (mut burst, _stub, _out) = menu_with(Config::default(), &refs);
+    one_item_per_page(&mut burst);
+    burst.apply_repaint_batch(&[
+        BackendEvent::Scroll { delta: 1 },
+        BackendEvent::Motion {
+            time: 0,
+            pos: rest,
+            source: InputSource::Menu,
+        },
+    ]);
+
+    assert_eq!(burst.selection, stepped.selection);
+    assert_eq!(burst.hovered, stepped.hovered);
+}
+
+/// The bar height `menu_with` installs, for building row coordinates.
+const TEST_BAR_HEIGHT: i32 = 30;
+
+/// Only the leading run of wheel events is absorbed. A detent that sits behind
+/// an event of another kind must keep its place, or a click would be applied
+/// before the scrolling the user did before it.
+#[test]
+fn drain_repaint_takes_wheel_and_motion_but_stops_at_anything_else() {
+    let mut backend = TestBackend::new();
+    let handle = backend.handle();
+    let motion = |time: u32| BackendEvent::Motion {
+        time,
+        pos: Point::new(0, 0),
+        source: InputSource::Menu,
+    };
+    for delta in [1, 1] {
+        handle.push(BackendEvent::Scroll { delta });
+    }
+    handle.push(motion(0));
+    handle.push(BackendEvent::Scroll { delta: 1 });
+    handle.push(motion(1));
+    // something that must not be folded in, with a detent behind it
+    handle.push(BackendEvent::ButtonPress {
+        button: MouseButton::Left,
+        mods: M_NONE,
+        pos: Point::new(0, 0),
+        source: InputSource::External,
+    });
+    handle.push(BackendEvent::Scroll { delta: 1 });
+
+    let drained = backend.drain_repaint();
+    assert_eq!(
+        drained,
+        vec![
+            BackendEvent::Scroll { delta: 1 },
+            BackendEvent::Scroll { delta: 1 },
+            motion(0),
+            BackendEvent::Scroll { delta: 1 },
+            motion(1),
+        ]
+    );
+    // the click and the detent behind it are still queued, in order
+    let rest = handle.feed.lock().unwrap();
+    assert!(matches!(
+        rest.front(),
+        Some(BackendEvent::ButtonPress { .. })
+    ));
+    assert!(matches!(
+        rest.get(1),
+        Some(BackendEvent::Scroll { delta: 1 })
+    ));
+    assert_eq!(rest.len(), 2);
+}
 
 #[test]
 fn run_returns_failure_when_the_connection_dies() {
@@ -2503,4 +3182,236 @@ fn auto_width_fits_an_action_even_with_short_items() {
     let hint_width =
         menu.renderer.text_width("Ctrl+E  Edit this entry") + menu.renderer.horizontal_padding;
     assert!(menu.layout.menu_width >= hint_width);
+}
+
+/* ── frame-cost benchmarks ───────────────────────────────────────────────
+ *
+ * Ignored by default; run with
+ *   cargo test --release -- --ignored --nocapture bench_scroll
+ * They drive the real Menu (real renderer, real canvas, real paging) so the
+ * numbers are the ones the event loop actually pays per frame. */
+
+/// The `ins assist` emoji picker's exact invocation, as a Config.
+fn emoji_picker_cfg() -> Config {
+    Config {
+        prompt: Some("Emoji".into()),
+        placeholder: Some("Search emoji names".into()),
+        insensitive: true,
+        lines: 12,
+        columns: 1,
+        width: Width::Fixed(700),
+        position: crate::config::Position::Center,
+        line_height: crate::config::LineHeight::Pixels(32),
+        ..Config::default()
+    }
+}
+
+/// The picker's stdin: one line per catalog entry, `emoji name`. The catalog
+/// lives in the instantCLI checkout; without it there is nothing emoji-shaped
+/// to measure, so the benchmark reports and returns instead of failing.
+fn emoji_picker_items() -> Option<Vec<String>> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()?
+        .join("instantCLI/src/assist/actions/emoji/catalog.tsv");
+    let text = std::fs::read_to_string(&path).ok()?;
+    Some(
+        text.lines()
+            .filter(|l| !l.starts_with("# "))
+            .filter_map(|l| l.split_once('\t'))
+            .map(|(emoji, name)| format!("{emoji} {name}"))
+            .collect(),
+    )
+}
+
+fn ms(d: std::time::Duration) -> f64 {
+    d.as_secs_f64() * 1000.0
+}
+
+fn report(name: &str, times: &mut [f64]) {
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let n = times.len();
+    println!(
+        "{name:<40} n={n:<4} first {:7.2}ms  p50 {:7.2}ms  p95 {:7.2}ms  p99 {:7.2}ms  max {:7.2}ms  mean {:7.2}ms",
+        times[0],
+        times[n / 2],
+        times[(n * 95 / 100).min(n - 1)],
+        times[(n * 99 / 100).min(n - 1)],
+        times[n - 1],
+        times.iter().sum::<f64>() / n as f64,
+    );
+}
+
+/// One full scroll frame: the handler plus the redraw the event loop performs.
+/// A single detent on purpose — this measures the per-frame cost the burst
+/// path still pays for the page it lands on.
+fn scroll_frame(menu: &mut Menu, delta: i32) -> Option<std::time::Duration> {
+    let start = std::time::Instant::now();
+    let t = menu.apply_repaint_batch(&[BackendEvent::Scroll { delta }]);
+    if matches!(t, Transition::Nop) {
+        return None;
+    }
+    menu.perform(t);
+    Some(start.elapsed())
+}
+
+/// Drive `count` frames in one scroll direction, stopping at the list ends.
+fn sweep(menu: &mut Menu, delta: i32, count: usize) -> Vec<f64> {
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count * 4 {
+        if out.len() == count {
+            break;
+        }
+        if let Some(d) = scroll_frame(menu, delta) {
+            out.push(ms(d));
+        }
+    }
+    out
+}
+
+#[test]
+#[ignore = "benchmark"]
+fn bench_scroll() {
+    let mut cfg = emoji_picker_cfg();
+    cfg.fonts = vec![
+        std::env::var("BENCH_FONT_PRIMARY").unwrap_or_else(|_| "DejaVu Sans:size=12".into()),
+        std::env::var("BENCH_FONT_ICON").unwrap_or_else(|_| "DejaVu Sans:size=14".into()),
+        std::env::var("BENCH_FONT_EMOJI")
+            .unwrap_or_else(|_| "Noto Color Emoji:pixelsize=20".into()),
+    ];
+    let items = match emoji_picker_items() {
+        Some(items) if !items.is_empty() => items,
+        _ => {
+            println!("bench_scroll: instantCLI emoji catalog not found, skipping");
+            return;
+        }
+    };
+    let required: HashSet<char> = items.iter().flat_map(|i| i.chars()).collect();
+    let t0 = std::time::Instant::now();
+    let renderer = Renderer::new(&cfg.fonts, cfg.palette, &required);
+    println!(
+        "renderer startup (all {} chars): {:.1}ms",
+        required.len(),
+        ms(t0.elapsed())
+    );
+
+    let backend = TestBackend {
+        monitors: vec![MonitorInfo {
+            rect: Rect::new(0, 0, 1920, 1080),
+            name: "stub".into(),
+        }],
+        ..TestBackend::new()
+    };
+    let mut menu = Menu::new(cfg, renderer, Box::new(backend));
+    let t0 = std::time::Instant::now();
+    menu.add_items(items.iter().map(Item::new).collect());
+    println!("add_items: {:.1}ms", ms(t0.elapsed()));
+    menu.stream_dirty = false;
+    // The geometry setup() would install.
+    menu.layout = super::layout::Layout {
+        lines: 12,
+        columns: 1,
+        hint_rows: 0,
+        bar_height: 32,
+        menu_width: 700,
+        menu_height: 13 * 32,
+        input_width: 700 / 3,
+        ..Default::default()
+    };
+    menu.canvas.resize(Size::new(700, 13 * 32));
+    let t0 = std::time::Instant::now();
+    let _ = menu.do_match();
+    println!(
+        "do_match over {} matches: {:.1}ms",
+        menu.matcher.matches.len(),
+        ms(t0.elapsed())
+    );
+    menu.draw_menu();
+
+    // Scroll down through fresh content (the reported slow direction)...
+    let mut down = sweep(&mut menu, 1, 200);
+    report("scroll down (fresh content)", &mut down);
+
+    // ...and back up over the same, now-cached pages.
+    let mut up = sweep(&mut menu, -1, 200);
+    report("scroll up (revisited content)", &mut up);
+
+    // And down again, now that everything is cached: pure redraw cost.
+    let mut again = sweep(&mut menu, 1, 200);
+    report("scroll down (all cached)", &mut again);
+
+    /* The reported symptom: a fast flick. Queue a whole burst of detents on
+     * the stub backend — what a mouse wheel actually delivers — and run the
+     * real event loop over them. */
+    for (burst, wiggle) in [
+        (1, false),
+        (5, false),
+        (15, false),
+        (1, true),
+        (5, true),
+        (15, true),
+    ] {
+        let (mut flick, stub, _out) = emoji_picker_menu(&items);
+        let start_page = flick.selection.page_start.unwrap_or(0);
+        let start_presents = stub.state().presents;
+        for i in 0..burst {
+            stub.push(BackendEvent::Scroll { delta: 1 });
+            if wiggle {
+                // a motion over a different row between detents: what
+                // scrolling with the cursor loosely on the pad looks like
+                stub.push(BackendEvent::Motion {
+                    time: i as u32,
+                    pos: Point::new(0, (i % 12 + 1) * 32 + 1),
+                    source: InputSource::Menu,
+                });
+            }
+        }
+        stub.push(BackendEvent::ButtonPress {
+            button: MouseButton::Left,
+            mods: M_NONE,
+            pos: Point::new(0, 0),
+            source: InputSource::External,
+        });
+        let t = std::time::Instant::now();
+        let status = flick.run();
+        let elapsed = ms(t.elapsed());
+        assert_eq!(status, ExitStatus::Failure);
+        let frames = stub.state().presents - start_presents;
+        let moved = flick.selection.page_start.unwrap_or(0) - start_page;
+        let kind = if wiggle {
+            "scrolling + moving mouse"
+        } else {
+            "scrolling only       "
+        };
+        println!(
+            "{kind}: flick of {burst:>2} detents -> {moved:>3} pages in {elapsed:7.2}ms across {frames:>2} frame(s)",
+        );
+    }
+}
+
+/// The emoji picker as the run loop builds it: real renderer, real canvas,
+/// real geometry, stub backend so detents can be queued by hand.
+fn emoji_picker_menu(items: &[String]) -> (Menu, StubHandle, SharedOutput) {
+    let mut cfg = emoji_picker_cfg();
+    cfg.fonts = vec![
+        std::env::var("BENCH_FONT_PRIMARY").unwrap_or_else(|_| "DejaVu Sans:size=12".into()),
+        std::env::var("BENCH_FONT_ICON").unwrap_or_else(|_| "DejaVu Sans:size=14".into()),
+        std::env::var("BENCH_FONT_EMOJI")
+            .unwrap_or_else(|_| "Noto Color Emoji:pixelsize=20".into()),
+    ];
+    let required: HashSet<char> = items.iter().flat_map(|i| i.chars()).collect();
+    let renderer = Renderer::new(&cfg.fonts, cfg.palette, &required);
+    let backend = TestBackend {
+        monitors: vec![MonitorInfo {
+            rect: Rect::new(0, 0, 1920, 1080),
+            name: "stub".into(),
+        }],
+        ..TestBackend::new()
+    };
+    let stub = backend.handle();
+    let mut menu = Menu::new(cfg, renderer, Box::new(backend));
+    menu.add_items(items.iter().map(Item::new).collect());
+    menu.stream_dirty = false;
+    menu.canvas.resize(Size::new(700, 13 * 32));
+    let _ = menu.setup();
+    (menu, stub, SharedOutput::default())
 }
