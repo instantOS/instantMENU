@@ -41,6 +41,12 @@ unsafe extern "C" {
         index: c_int,
         value: *mut *mut c_uchar,
     ) -> c_int;
+    fn FcPatternGetCharSet(
+        pattern: *const FcPattern,
+        object: *const c_char,
+        index: c_int,
+        charset: *mut *mut FcCharSet,
+    ) -> c_int;
     fn FcCharSetCreate() -> *mut FcCharSet;
     fn FcCharSetDestroy(charset: *mut FcCharSet);
     fn FcCharSetAddChar(charset: *mut FcCharSet, codepoint: u32) -> c_int;
@@ -67,6 +73,15 @@ const RESULT_MATCH: c_int = 0;
 const FAMILY: &[u8] = b"family\0";
 const CHARSET: &[u8] = b"charset\0";
 const FILE: &[u8] = b"file\0";
+const FONTFORMAT: &[u8] = b"fontformat\0";
+
+/// Whether fontdb can load a font of this fontconfig `fontformat`: ttf-parser
+/// reads TrueType and OpenType/CFF outlines only. Bitmap and legacy formats
+/// (PCF, BDF, Type 1, ...) are reported by fontconfig too, and may be the
+/// only fonts covering a script (e.g. Hangul in the X11 `misc` fonts).
+fn loadable_format(format: &[u8]) -> bool {
+    matches!(format, b"TrueType" | b"CFF")
+}
 
 struct Config(*mut FcConfig);
 
@@ -102,7 +117,14 @@ impl Config {
         path
     }
 
-    fn sorted_fallbacks(&self, chars: &mut HashSet<char>) -> Vec<PathBuf> {
+    /// Try loadable fonts in preference order until `chars` is covered.
+    /// The callback removes characters only after the loaded font actually
+    /// provides them. Returns characters no listed loadable font claims.
+    fn visit_fallbacks(
+        &self,
+        chars: &mut HashSet<char>,
+        mut try_font: impl FnMut(PathBuf, &mut HashSet<char>),
+    ) -> HashSet<char> {
         let pattern = unsafe { FcPatternCreate() };
         let charset = unsafe { FcCharSetCreate() };
         if pattern.is_null() || charset.is_null() {
@@ -114,7 +136,7 @@ impl Config {
                     FcCharSetDestroy(charset)
                 };
             }
-            return Vec::new();
+            return HashSet::new();
         }
         unsafe {
             for &ch in chars.iter() {
@@ -124,43 +146,55 @@ impl Config {
             prepare(self.0, pattern);
         }
         let mut result = 0;
-        let mut coverage = std::ptr::null_mut();
-        let set = unsafe { FcFontSort(self.0, pattern, 0, &mut coverage, &mut result) };
-        let mut paths = Vec::new();
-        // FcFontSort can return a face for every installed font (thousands),
-        // so dedupe their file paths through a set: the previous linear
-        // `paths.contains` made this O(n^2) and dominated menu startup on
-        // systems with large font collections.
+        let set = unsafe { FcFontSort(self.0, pattern, 0, std::ptr::null_mut(), &mut result) };
+        // FcFontSort returns every installed font. Consult its cached
+        // charsets before loading files, but only remove a character once
+        // the callback has verified coverage in the loaded database.
+        let mut claimed = HashSet::new();
         let mut seen: HashSet<PathBuf> = HashSet::new();
-        // Fontconfig returns the union of the sorted fonts' character sets.
-        // Discard codepoints unavailable anywhere on the system; walking every
-        // font file cannot make those render and turns one absent glyph into a
-        // full system-font scan.
-        if !coverage.is_null() {
-            chars.retain(|&ch| unsafe { FcCharSetHasChar(coverage, ch as u32) } != 0);
-        }
         if !set.is_null() {
             let set_ref = unsafe { &*set };
             for index in 0..set_ref.nfont.max(0) as usize {
+                if chars.is_empty() {
+                    break;
+                }
                 let font = unsafe { *set_ref.fonts.add(index) };
-                if let Some(path) = pattern_file(font) {
-                    if seen.insert(path.clone()) {
-                        paths.push(path);
+                if !pattern_string(font, FONTFORMAT).is_some_and(|f| loadable_format(f.to_bytes()))
+                {
+                    continue;
+                }
+                let mut font_chars = std::ptr::null_mut();
+                let found = unsafe {
+                    FcPatternGetCharSet(font, CHARSET.as_ptr().cast(), 0, &mut font_chars)
+                };
+                if found != RESULT_MATCH || font_chars.is_null() {
+                    continue;
+                }
+                // font_chars is owned by the pattern; it is not destroyed here
+                let mut relevant = false;
+                for &ch in chars.iter() {
+                    if unsafe { FcCharSetHasChar(font_chars, ch as u32) } != 0 {
+                        claimed.insert(ch);
+                        relevant = true;
+                    }
+                }
+                if relevant {
+                    if let Some(path) = pattern_file(font).filter(|path| seen.insert(path.clone()))
+                    {
+                        try_font(path, chars);
                     }
                 }
             }
         }
+        let unavailable = chars.difference(&claimed).copied().collect();
         unsafe {
-            if !coverage.is_null() {
-                FcCharSetDestroy(coverage)
-            };
             if !set.is_null() {
                 FcFontSetDestroy(set)
             };
             FcPatternDestroy(pattern);
             FcCharSetDestroy(charset);
         }
-        paths
+        unavailable
     }
 }
 
@@ -175,16 +209,22 @@ unsafe fn prepare(config: *mut FcConfig, pattern: *mut FcPattern) {
     FcDefaultSubstitute(pattern);
 }
 
-fn pattern_file(pattern: *mut FcPattern) -> Option<PathBuf> {
+/// A string property of `pattern`, copied so it cannot outlive the pattern.
+fn pattern_string(pattern: *mut FcPattern, object: &[u8]) -> Option<CString> {
     if pattern.is_null() {
         return None;
     }
     let mut value = std::ptr::null_mut();
-    let result = unsafe { FcPatternGetString(pattern, FILE.as_ptr().cast(), 0, &mut value) };
+    let result = unsafe { FcPatternGetString(pattern, object.as_ptr().cast(), 0, &mut value) };
     if result != RESULT_MATCH || value.is_null() {
         return None;
     }
-    let path = unsafe { CStr::from_ptr(value.cast()) }.to_string_lossy();
+    Some(unsafe { CStr::from_ptr(value.cast()) }.to_owned())
+}
+
+fn pattern_file(pattern: *mut FcPattern) -> Option<PathBuf> {
+    let value = pattern_string(pattern, FILE)?;
+    let path = value.to_string_lossy();
     Some(PathBuf::from(path.as_ref()))
 }
 
@@ -262,22 +302,18 @@ pub(super) fn database_for(
             cache.set_family(family, path);
         }
         remove_covered(&db, &mut uncovered);
-        let queried = uncovered.clone();
-        let fallback_paths = config.sorted_fallbacks(&mut uncovered);
-        for ch in queried.difference(&uncovered) {
-            cache.add_missing(*ch);
-        }
-        for path in fallback_paths {
+        let unavailable = config.visit_fallbacks(&mut uncovered, |path, uncovered| {
             let before = uncovered.len();
             if load_file(&mut db, &mut loaded, path.clone()) {
-                remove_covered(&db, &mut uncovered);
+                remove_covered(&db, uncovered);
                 if uncovered.len() < before {
                     cache.add_fallback(path);
                 }
-                if uncovered.is_empty() {
-                    break;
-                }
             }
+        });
+        for ch in unavailable {
+            cache.add_missing(ch);
+            uncovered.remove(&ch);
         }
         if !uncovered.is_empty() {
             return None;
@@ -301,14 +337,6 @@ pub(super) fn add_fallbacks(db: &mut fontdb::Database, required_chars: &HashSet<
     }
 
     let mut cache = FontCache::load();
-    uncovered.retain(|ch| !cache.missing.contains(ch));
-    let Some(config) = Config::new() else { return };
-    let queried = uncovered.clone();
-    let paths = config.sorted_fallbacks(&mut uncovered);
-    for ch in queried.difference(&uncovered) {
-        cache.add_missing(*ch);
-    }
-
     let mut loaded: HashSet<PathBuf> = db
         .faces()
         .filter_map(|face| match &face.source {
@@ -316,17 +344,34 @@ pub(super) fn add_fallbacks(db: &mut fontdb::Database, required_chars: &HashSet<
             fontdb::Source::Binary(_) => None,
         })
         .collect();
-    for path in paths {
+    // Like database_for: fallbacks that covered something before, and
+    // codepoints known to be unavailable, are settled without starting
+    // fontconfig, whose initialization walks every font directory.
+    for path in cache.fallbacks.clone() {
+        if uncovered.is_empty() {
+            break;
+        }
+        if load_file(db, &mut loaded, path) {
+            remove_covered(db, &mut uncovered);
+        }
+    }
+    uncovered.retain(|ch| !cache.missing.contains(ch));
+    if uncovered.is_empty() {
+        return;
+    }
+
+    let Some(config) = Config::new() else { return };
+    let unavailable = config.visit_fallbacks(&mut uncovered, |path, uncovered| {
         let before = uncovered.len();
         if load_file(db, &mut loaded, path.clone()) {
-            remove_covered(db, &mut uncovered);
+            remove_covered(db, uncovered);
             if uncovered.len() < before {
                 cache.add_fallback(path);
             }
-            if uncovered.is_empty() {
-                break;
-            }
         }
+    });
+    for ch in unavailable {
+        cache.add_missing(ch);
     }
     cache.save();
 }
@@ -486,7 +531,54 @@ fn fontconfig_stamp() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use super::needs_coverage;
+    use super::{loadable_format, needs_coverage, Config};
+    use std::collections::HashSet;
+
+    /// Only formats ttf-parser can read may be offered as fallbacks.
+    #[test]
+    fn only_outline_formats_are_loadable() {
+        assert!(loadable_format(b"TrueType"));
+        assert!(loadable_format(b"CFF"));
+        for format in [&b"PCF"[..], b"BDF", b"Type 1", b"PFR", b""] {
+            assert!(!loadable_format(format), "{format:?}");
+        }
+    }
+
+    /// A codepoint no loadable font covers is reported unavailable, without
+    /// loading every installed font.
+    #[test]
+    fn uncoverable_codepoints_yield_no_fallbacks() {
+        let Some(config) = Config::new() else { return };
+        let mut chars: HashSet<char> = ['\u{FDD0}'].into(); // noncharacter
+        let missing = config.visit_fallbacks(&mut chars, |_, _| panic!("no candidate expected"));
+        assert_eq!(missing, chars);
+    }
+
+    /// Stop once a font actually supplies every requested character.
+    #[test]
+    fn fallbacks_stop_once_everything_is_covered() {
+        let Some(config) = Config::new() else { return };
+        let mut chars: HashSet<char> = ['a', '\u{FDD0}'].into();
+        let mut attempts = 0;
+        let missing = config.visit_fallbacks(&mut chars, |_, chars| {
+            attempts += 1;
+            chars.remove(&'a');
+        });
+        assert_eq!(chars, ['\u{FDD0}'].into());
+        assert_eq!(missing, chars);
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn a_claimed_but_unloaded_character_stays_unresolved() {
+        let Some(config) = Config::new() else { return };
+        let mut chars: HashSet<char> = ['a'].into();
+        let mut attempts = 0;
+        let missing = config.visit_fallbacks(&mut chars, |_, _| attempts += 1);
+        assert!(attempts > 0);
+        assert!(missing.is_empty());
+        assert_eq!(chars, ['a'].into());
+    }
 
     /// Emoji selectors and joiners are consumed by the shaper and must not
     /// trigger the font-fallback machinery (the U+FE0F regression: the emoji
