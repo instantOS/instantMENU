@@ -9,11 +9,11 @@ set -euo pipefail
 # Native builds happen on Arch (scripts/ci/install-deps-arch.sh), so this
 # script only provisions the ARM cross toolchains plus the :arm64/:armhf
 # copies of the system libraries instantMENU links against. Those are
-# libxkbcommon and libxkbcommon-x11 (via the xkbcommon crate's pkg-config
-# build script); everything else in the dependency tree (x11rb, wayland-client,
-# cosmic-text, ...) is pure Rust. A musl target is not supported here: Ubuntu
-# doesn't ship musl variants of those libraries (same blocker that dropped
-# musl from instantWM's cross-compile matrix).
+# libxkbcommon, libxkbcommon-x11 (both via the xkbcommon crate's pkg-config
+# build script) and libfontconfig; everything else in the dependency tree
+# (x11rb, wayland-client, cosmic-text, ...) is pure Rust. A musl target is not
+# supported here: Ubuntu doesn't ship musl variants of those libraries (same
+# blocker that dropped musl from instantWM's cross-compile matrix).
 #
 # Usage:
 #   bash scripts/ci/install-deps-ubuntu.sh --cross arm64   # aarch64 toolchain + :arm64 dev libs
@@ -60,10 +60,18 @@ PKGS=(
   curl
 )
 
-# System libraries instantMENU links against natively.
+# System libraries instantMENU links against natively. Keep this in sync with
+# scripts/ci/install-deps-arch.sh.
+#
+# libfontconfig needs no pkg-config entry: src/render/fontconfig.rs declares
+# `#[link(name = "fontconfig")]` and binds the Fc* symbols by hand, so nothing
+# probes for it at build time. A cross sysroot that is missing it therefore
+# fails only at the final link, as "cannot find -lfontconfig" - so it has to be
+# listed here explicitly.
 DEV_LIBS=(
   libxkbcommon-dev
   libxkbcommon-x11-dev
+  libfontconfig-dev
 )
 
 if ((${#CROSS_ARCHS[@]} > 0)); then
@@ -123,7 +131,8 @@ EOF
   done
 
   # Mirror DEV_LIBS for each cross architecture so the xkbcommon build script
-  # can find the native deps via the cross pkg-config wrappers.
+  # can find the native deps via the cross pkg-config wrappers, and so the
+  # cross linker resolves the hand-declared -lfontconfig.
   for arch in "${CROSS_ARCHS[@]}"; do
     for lib in "${DEV_LIBS[@]}"; do
       PKGS+=("${lib}:${arch}")

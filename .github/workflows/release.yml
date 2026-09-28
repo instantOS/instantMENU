@@ -184,6 +184,16 @@ jobs:
       - build
     if: ${{ needs.metadata.outputs.should_release == 'true' }}
     steps:
+      # actions/checkout falls back to a source archive when git is absent,
+      # and this job needs `git archive` below to build the source tarball.
+      # A bare archlinux:latest container has no git yet at checkout time, so
+      # bootstrap it first to get a real repository instead of a tarball.
+      - name: Bootstrap checkout dependencies
+        run: |
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed git
       - name: Checkout
         uses: actions/checkout@v7
       - name: Setup Arch container
