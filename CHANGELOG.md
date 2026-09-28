@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.1.3](https://github.com/instantOS/instantMENU/compare/v5.1.2...v5.1.3) - 2026-09-28
+
+### Fixed
+
+- faster font rendering
+
+### Other
+
+- move CI to ubuntu 26.04
+- Merge branch 'dev' of github.com:instantOS/instantMENU into dev
+- Merge branch 'main' into dev
+- Merge branch 'dev' of https://github.com/instantOS/instantMENU into dev
+
 ## [5.1.2](https://github.com/instantOS/instantMENU/compare/v5.1.1...v5.1.2) - 2026-09-23
 
 ### Fixed
