@@ -2,7 +2,10 @@
 //! Drawing primitives take the target [`Canvas`] explicitly; the backends blit
 //! that canvas to the window.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+use std::num::NonZeroUsize;
+
+use lru::LruCache;
 
 use cosmic_text::{
     Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics, Shaping, SwashCache, Wrap,
@@ -18,6 +21,11 @@ use super::color::{Color, Palette, SchemeColors};
 use super::font::{parse_font_name, primary_font_height, resolve_family, FontSpec};
 use super::fontconfig;
 use super::painter::Painter;
+
+// Fits the 3,944-entry emoji catalog plus headers, queries and truncated
+// prefixes. Keep memory bounded for arbitrary streamed input; evict only the
+// least recently measured or drawn label rather than losing the whole corpus.
+const LAYOUT_CACHE_CAPACITY: usize = 8192;
 
 /// The shared drawing context: fonts, color schemes and the shaped-text cache.
 pub struct Renderer {
@@ -37,7 +45,7 @@ pub struct Renderer {
     pub scheme: SchemeColors,
 
     // Shaped text is reusable for both measurement and drawing.
-    layout_cache: HashMap<String, TextLayout>,
+    layout_cache: LruCache<String, TextLayout>,
     // Characters whose fallback coverage has already been checked. This lets
     // pasted text extend the small startup database without repeated queries.
     checked_chars: HashSet<char>,
@@ -79,7 +87,7 @@ impl Renderer {
             font_height,
             horizontal_padding: font_height,
             scheme: palette.normal,
-            layout_cache: HashMap::new(),
+            layout_cache: LruCache::new(NonZeroUsize::new(LAYOUT_CACHE_CAPACITY).unwrap()),
             checked_chars,
         }
     }
@@ -124,11 +132,8 @@ impl Renderer {
         }
         let buffer = self.make_buffer(text, None);
         let width = Renderer::buffer_width(&buffer);
-        if self.layout_cache.len() >= 1024 {
-            self.layout_cache.clear();
-        }
         self.layout_cache
-            .insert(text.to_owned(), TextLayout { width, buffer });
+            .put(text.to_owned(), TextLayout { width, buffer });
         width
     }
 
@@ -239,7 +244,7 @@ impl Renderer {
         // Remove-then-reinsert: the miss path (`make_buffer`) needs `&mut
         // self`, so we can't hold a cache entry across it. Take the layout
         // out, draw from it, then put it back.
-        let mut layout = self.layout_cache.remove(text).unwrap_or_else(|| {
+        let mut layout = self.layout_cache.pop(text).unwrap_or_else(|| {
             let buffer = self.make_buffer(text, None);
             TextLayout {
                 width: Renderer::buffer_width(&buffer),
@@ -271,10 +276,7 @@ impl Renderer {
                 canvas.blend_pixel(crate::geom::Point::new(cx, cy), px_color);
             },
         );
-        if self.layout_cache.len() >= 1024 {
-            self.layout_cache.clear();
-        }
-        self.layout_cache.insert(text.to_owned(), layout);
+        self.layout_cache.put(text.to_owned(), layout);
     }
 }
 
@@ -378,6 +380,44 @@ fn font_runs(text: &str) -> Vec<(&str, FontClass)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn layout_cache_preserves_labels_across_the_old_clear_threshold() {
+        let mut r = make_test_renderer();
+        let first_width = r.text_width("first label");
+        for i in 0..1100 {
+            r.text_width(&format!("label {i}"));
+        }
+        assert_eq!(r.layout_cache.len(), 1101);
+        assert_eq!(
+            r.layout_cache.peek("first label").unwrap().width,
+            first_width
+        );
+    }
+
+    #[test]
+    fn layout_cache_evicts_only_the_least_recently_measured_or_drawn_label() {
+        let mut r = make_test_renderer();
+        r.layout_cache = LruCache::new(NonZeroUsize::new(3).unwrap());
+        for text in ["measured", "drawn", "old"] {
+            r.text_width(text);
+        }
+        r.text_width("measured");
+        let mut canvas = Canvas::new(crate::geom::Size::new(200, 30));
+        r.draw_shaped_text(
+            &mut canvas,
+            Rect::new(0, 0, 200, 30),
+            0,
+            "drawn",
+            r.scheme.fg,
+        );
+        r.text_width("new");
+        assert_eq!(r.layout_cache.len(), 3);
+        for text in ["measured", "drawn", "new"] {
+            assert!(r.layout_cache.contains(text), "{text}");
+        }
+        assert!(!r.layout_cache.contains("old"));
+    }
 
     #[test]
     fn fit_text_returns_the_whole_text_when_it_fits() {
