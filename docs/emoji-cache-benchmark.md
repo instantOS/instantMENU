@@ -34,3 +34,30 @@ Previously, inserting the 1,025th layout cleared the entire cache. The new
 truncated prefixes. Both measuring and drawing refresh recency, and overflow
 evicts only the oldest layout. This permits more retained layout memory than
 the previous 1,024-entry limit; the entry count remains bounded.
+
+## Integration with incoming font optimizations
+
+The incoming `9f28469` change separates measured widths from shaped buffers
+and improves font fallback discovery/loading. Its buffer cache still clears
+at 1,024 entries, and its width cache clears at 4,096 entries.
+
+The merge retains those font changes and the separate width cache, using
+8,192-entry LRU storage for layouts and 16,384-entry LRU storage for widths.
+Width-only hits do not recreate an evicted layout. Existing width entries
+are refreshed without allocating another label string. The independent
+X11 event-ordering fix remains in place.
+
+The same benchmark was rerun with the incoming renderer and the combined
+renderer, with identical incoming fontconfig code and three alternating
+release runs. Values are medians of the reported percentiles.
+
+| Pass | Incoming p50 | Combined p50 | Incoming p99 | Combined p99 |
+| --- | ---: | ---: | ---: | ---: |
+| Fresh pages, down | 4.03 ms | 4.21 ms | 6.14 ms | 5.61 ms |
+| Revisited pages, up | 0.54 ms | 0.27 ms | 3.11 ms | 0.45 ms |
+| Second visit, down | 0.55 ms | 0.26 ms | 2.79 ms | 0.45 ms |
+
+The combination cuts revisited-frame median cost roughly in half compared
+with the incoming renderer. It does not improve fresh-page median cost in
+this measurement. Font fallback changes are shared by both variants; this
+comparison does not measure their separate benefit or cold startup.

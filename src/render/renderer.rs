@@ -26,6 +26,9 @@ use super::painter::Painter;
 // prefixes. Keep memory bounded for arbitrary streamed input; evict only the
 // least recently measured or drawn label rather than losing the whole corpus.
 const LAYOUT_CACHE_CAPACITY: usize = 8192;
+// Widths are much smaller than shaped buffers and remain useful after buffer
+// eviction, particularly for repeated measurements of a large corpus.
+const WIDTH_CACHE_CAPACITY: usize = 16384;
 
 /// The shared drawing context: fonts, color schemes and the shaped-text cache.
 pub struct Renderer {
@@ -46,6 +49,7 @@ pub struct Renderer {
 
     // Shaped text is reusable for both measurement and drawing.
     layout_cache: LruCache<String, TextLayout>,
+    widths: LruCache<String, i32>,
     // Characters whose fallback coverage has already been checked. This lets
     // pasted text extend the small startup database without repeated queries.
     checked_chars: HashSet<char>,
@@ -88,6 +92,7 @@ impl Renderer {
             horizontal_padding: font_height,
             scheme: palette.normal,
             layout_cache: LruCache::new(NonZeroUsize::new(LAYOUT_CACHE_CAPACITY).unwrap()),
+            widths: LruCache::new(NonZeroUsize::new(WIDTH_CACHE_CAPACITY).unwrap()),
             checked_chars,
         }
     }
@@ -127,14 +132,30 @@ impl Renderer {
         if text.is_empty() {
             return 0;
         }
+        // A retained layout is also kept hot by measurement. When only its
+        // width remains, measuring it does not need to reshape the text.
         if let Some(layout) = self.layout_cache.get(text) {
-            return layout.width;
+            let width = layout.width;
+            self.remember_width(text, width);
+            return width;
+        }
+        if let Some(&width) = self.widths.get(text) {
+            return width;
         }
         let buffer = self.make_buffer(text, None);
         let width = Renderer::buffer_width(&buffer);
         self.layout_cache
             .put(text.to_owned(), TextLayout { width, buffer });
+        self.remember_width(text, width);
         width
+    }
+
+    fn remember_width(&mut self, text: &str, width: i32) {
+        if let Some(cached) = self.widths.get_mut(text) {
+            *cached = width;
+        } else {
+            self.widths.put(text.to_owned(), width);
+        }
     }
 
     /// Load fallback fonts covering `chars` into the live font database.
@@ -276,6 +297,7 @@ impl Renderer {
                 canvas.blend_pixel(crate::geom::Point::new(cx, cy), px_color);
             },
         );
+        self.remember_width(text, layout.width);
         self.layout_cache.put(text.to_owned(), layout);
     }
 }
@@ -417,6 +439,40 @@ mod tests {
             assert!(r.layout_cache.contains(text), "{text}");
         }
         assert!(!r.layout_cache.contains("old"));
+    }
+
+    #[test]
+    fn widths_survive_layout_cache_eviction() {
+        let mut r = make_test_renderer();
+        r.layout_cache = LruCache::new(NonZeroUsize::new(2).unwrap());
+        let width = r.text_width("measured once");
+        for text in ["filler a", "filler b"] {
+            r.text_width(text);
+        }
+        assert!(!r.layout_cache.contains("measured once"));
+        assert_eq!(r.widths.peek("measured once"), Some(&width));
+        assert_eq!(r.text_width("measured once"), width);
+        // A width hit must not create a new shaped buffer.
+        assert!(!r.layout_cache.contains("measured once"));
+    }
+
+    #[test]
+    fn measured_widths_evict_only_the_oldest_entry() {
+        let mut r = make_test_renderer();
+        r.widths = LruCache::new(NonZeroUsize::new(3).unwrap());
+        r.layout_cache = LruCache::new(NonZeroUsize::new(1).unwrap());
+        let first = r.text_width("first");
+        r.text_width("old");
+        r.text_width("recent");
+        // The buffer for "first" is gone, but its width hit refreshes recency.
+        assert_eq!(r.text_width("first"), first);
+        assert!(!r.layout_cache.contains("first"));
+        r.text_width("new");
+        assert_eq!(r.widths.len(), 3);
+        assert!(r.widths.contains("first"));
+        assert!(r.widths.contains("recent"));
+        assert!(r.widths.contains("new"));
+        assert!(!r.widths.contains("old"));
     }
 
     #[test]

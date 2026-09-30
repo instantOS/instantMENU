@@ -13,9 +13,9 @@ on:
 jobs:
   metadata:
     name: Prepare release metadata
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     container:
-      image: ubuntu:24.04
+      image: ubuntu:26.04
     if: ${{ github.repository_owner == 'instantOS' }}
     permissions:
       contents: write
@@ -42,7 +42,7 @@ jobs:
         run: bash scripts/ci/determine-release.sh
   build:
     name: Build release artifacts
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     container:
       image: archlinux:latest
     needs: metadata
@@ -95,9 +95,14 @@ jobs:
     # variants of those libraries (same blocker that dropped musl from
     # instantWM's cross-compile matrix).
     name: Cross-compile ${{ matrix.target }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
+    # Container jobs run steps with `sh -e {0}`, which is dash on Ubuntu and
+    # does not support `pipefail` (or other bashisms).
+    defaults:
+      run:
+        shell: bash
     container:
-      image: ubuntu:24.04
+      image: ubuntu:26.04
     needs: metadata
     if: ${{ needs.metadata.outputs.should_release == 'true' }}
     strategy:
@@ -171,7 +176,7 @@ jobs:
             artifacts/instantmenu-${{ matrix.target }}-v${{ steps.vars.outputs.version }}.tgz.sha256
   pkgbuild:
     name: Build Arch package
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     container:
       image: archlinux:latest
     needs:
@@ -179,6 +184,16 @@ jobs:
       - build
     if: ${{ needs.metadata.outputs.should_release == 'true' }}
     steps:
+      # actions/checkout falls back to a source archive when git is absent,
+      # and this job needs `git archive` below to build the source tarball.
+      # A bare archlinux:latest container has no git yet at checkout time, so
+      # bootstrap it first to get a real repository instead of a tarball.
+      - name: Bootstrap checkout dependencies
+        run: |
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed git
       - name: Checkout
         uses: actions/checkout@v7
       - name: Setup Arch container
@@ -220,9 +235,9 @@ jobs:
           path: artifacts/
   deb:
     name: Build Debian package
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     container:
-      image: ubuntu:24.04
+      image: ubuntu:26.04
     needs:
       - metadata
       - build
@@ -267,9 +282,9 @@ jobs:
           path: artifacts/
   release:
     name: Publish GitHub release
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     container:
-      image: ubuntu:24.04
+      image: ubuntu:26.04
     needs:
       - metadata
       - build

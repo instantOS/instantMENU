@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install cross-compilation dependencies for instantMENU on Ubuntu 24.04
-# (Noble). Used by the release workflow's cross-compile matrix jobs.
+# Install cross-compilation dependencies for instantMENU on Ubuntu (CI runs
+# 26.04/Resolute, but nothing here is series-specific: the apt suites are
+# derived from the running release). Used by the release workflow's
+# cross-compile matrix jobs.
 #
 # Native builds happen on Arch (scripts/ci/install-deps-arch.sh), so this
 # script only provisions the ARM cross toolchains plus the :arm64/:armhf
 # copies of the system libraries instantMENU links against. Those are
-# libxkbcommon and libxkbcommon-x11 (via the xkbcommon crate's pkg-config
-# build script); everything else in the dependency tree (x11rb, wayland-client,
-# cosmic-text, ...) is pure Rust. A musl target is not supported here: Ubuntu
-# doesn't ship musl variants of those libraries (same blocker that dropped
-# musl from instantWM's cross-compile matrix).
+# libxkbcommon, libxkbcommon-x11 (both via the xkbcommon crate's pkg-config
+# build script) and libfontconfig; everything else in the dependency tree
+# (x11rb, wayland-client, cosmic-text, ...) is pure Rust. A musl target is not
+# supported here: Ubuntu doesn't ship musl variants of those libraries (same
+# blocker that dropped musl from instantWM's cross-compile matrix).
 #
 # Usage:
 #   bash scripts/ci/install-deps-ubuntu.sh --cross arm64   # aarch64 toolchain + :arm64 dev libs
@@ -58,10 +60,18 @@ PKGS=(
   curl
 )
 
-# System libraries instantMENU links against natively.
+# System libraries instantMENU links against natively. Keep this in sync with
+# scripts/ci/install-deps-arch.sh.
+#
+# libfontconfig needs no pkg-config entry: src/render/fontconfig.rs declares
+# `#[link(name = "fontconfig")]` and binds the Fc* symbols by hand, so nothing
+# probes for it at build time. A cross sysroot that is missing it therefore
+# fails only at the final link, as "cannot find -lfontconfig" - so it has to be
+# listed here explicitly.
 DEV_LIBS=(
   libxkbcommon-dev
   libxkbcommon-x11-dev
+  libfontconfig-dev
 )
 
 if ((${#CROSS_ARCHS[@]} > 0)); then
@@ -70,7 +80,7 @@ if ((${#CROSS_ARCHS[@]} > 0)); then
   # a separate ports source for the cross architectures so apt doesn't try to
   # fetch arm64 packages from a mirror that doesn't have them.
   if [[ -f /etc/apt/sources.list.d/ubuntu.sources ]]; then
-    # Ubuntu 24.04 ships sources in deb822 format. Add an `Architectures:`
+    # Ubuntu 24.04+ ships sources in deb822 format. Add an `Architectures:`
     # field to every stanza so we keep pulling amd64 from archive.ubuntu.com.
     if ! grep -q '^Architectures:' /etc/apt/sources.list.d/ubuntu.sources; then
       sed -i '/^Types:/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
@@ -78,10 +88,14 @@ if ((${#CROSS_ARCHS[@]} > 0)); then
   fi
 
   if [[ ! -f /etc/apt/sources.list.d/ubuntu-ports.sources ]]; then
+    # The ports suites must match the running release. Hardcoding them lets
+    # apt happily mix e.g. noble arm64 libraries into a resolute base, which
+    # produces a cross sysroot that no longer matches the linker.
+    codename="$(. /etc/os-release && printf '%s' "$VERSION_CODENAME")"
     cat > /etc/apt/sources.list.d/ubuntu-ports.sources <<EOF
 Types: deb
 URIs: http://ports.ubuntu.com/ubuntu-ports
-Suites: noble noble-updates noble-backports noble-security
+Suites: ${codename} ${codename}-updates ${codename}-backports ${codename}-security
 Components: main restricted universe multiverse
 Architectures: ${CROSS_ARCHS[*]}
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
@@ -95,15 +109,21 @@ EOF
   # Some :arm64 / :armhf packages run their own foreign-arch interpreter from
   # their postinst script. Without a qemu user-mode binfmt handler registered,
   # the kernel returns ENOEXEC and the whole apt transaction aborts. Install
-  # qemu-user-static + binfmt-support in a separate pass first so the handlers
+  # qemu-user-binfmt + binfmt-support in a separate pass first so the handlers
   # are registered before we pull in any :arm64 / :armhf packages.
+  #
+  # qemu-user-binfmt rather than qemu-user-static: as of 26.04 the latter is a
+  # virtual package with no installation candidate on amd64, so requesting it
+  # by name fails the whole apt run. qemu-user-binfmt is the real package that
+  # provides it, and it exists under that name on 24.04 too, so this stays
+  # usable on both series.
   #
   # NOTE: this requires /proc/sys/fs/binfmt_misc to be available inside the
   # container (true on standard Docker setups). If running in a container
   # where it isn't mounted, register handlers once on the host with:
   #   docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
   apt-get update
-  apt-get install -y --no-install-recommends qemu-user-static binfmt-support
+  apt-get install -y --no-install-recommends qemu-user-binfmt binfmt-support
 
   for arch in "${CROSS_ARCHS[@]}"; do
     triple="$(arch_triple "$arch")"
@@ -111,7 +131,8 @@ EOF
   done
 
   # Mirror DEV_LIBS for each cross architecture so the xkbcommon build script
-  # can find the native deps via the cross pkg-config wrappers.
+  # can find the native deps via the cross pkg-config wrappers, and so the
+  # cross linker resolves the hand-declared -lfontconfig.
   for arch in "${CROSS_ARCHS[@]}"; do
     for lib in "${DEV_LIBS[@]}"; do
       PKGS+=("${lib}:${arch}")
