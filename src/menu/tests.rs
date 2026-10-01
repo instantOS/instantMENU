@@ -3206,7 +3206,7 @@ fn emoji_picker_cfg() -> Config {
     }
 }
 
-/// The picker's stdin: one line per catalog entry, `emoji name`. The catalog
+/// The picker's stdin: the exact value markup, emoji and name. The catalog
 /// lives in the instantCLI checkout; without it there is nothing emoji-shaped
 /// to measure, so the benchmark reports and returns instead of failing.
 fn emoji_picker_items() -> Option<Vec<String>> {
@@ -3218,7 +3218,7 @@ fn emoji_picker_items() -> Option<Vec<String>> {
         text.lines()
             .filter(|l| !l.starts_with("# "))
             .filter_map(|l| l.split_once('\t'))
-            .map(|(emoji, name)| format!("{emoji} {name}"))
+            .map(|(emoji, name)| format!("{{value=\"{emoji}\"}} {emoji} {name}"))
             .collect(),
     )
 }
@@ -3228,11 +3228,12 @@ fn ms(d: std::time::Duration) -> f64 {
 }
 
 fn report(name: &str, times: &mut [f64]) {
+    let first = times[0];
     times.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let n = times.len();
     println!(
         "{name:<40} n={n:<4} first {:7.2}ms  p50 {:7.2}ms  p95 {:7.2}ms  p99 {:7.2}ms  max {:7.2}ms  mean {:7.2}ms",
-        times[0],
+        first,
         times[n / 2],
         times[(n * 95 / 100).min(n - 1)],
         times[(n * 99 / 100).min(n - 1)],
@@ -3335,9 +3336,9 @@ fn bench_scroll() {
     let mut up = sweep(&mut menu, -1, 200);
     report("scroll up (revisited content)", &mut up);
 
-    // And down again, now that everything is cached: pure redraw cost.
+    // And down again, to measure another visit to the same content.
     let mut again = sweep(&mut menu, 1, 200);
-    report("scroll down (all cached)", &mut again);
+    report("scroll down (second visit)", &mut again);
 
     /* The reported symptom: a fast flick. Queue a whole burst of detents on
      * the stub backend — what a mouse wheel actually delivers — and run the
@@ -3383,7 +3384,7 @@ fn bench_scroll() {
             "scrolling only       "
         };
         println!(
-            "{kind}: flick of {burst:>2} detents -> {moved:>3} pages in {elapsed:7.2}ms across {frames:>2} frame(s)",
+            "{kind}: flick of {burst:>2} detents -> {moved:>3} items in {elapsed:7.2}ms across {frames:>2} frame(s)",
         );
     }
 }

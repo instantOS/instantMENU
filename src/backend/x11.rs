@@ -65,8 +65,8 @@ pub struct X11Backend {
     root_width: i32,
     root_height: i32,
 
-    /// Events pulled off the connection by `drain_scroll` that were not wheel
-    /// movement, kept in arrival order so `poll_event` still sees them next.
+    /// Events pulled off the connection at a repaint-batch boundary, kept
+    /// in arrival order so `poll_event` still sees them next.
     pending: VecDeque<BackendEvent>,
 
     atoms: Atoms,
@@ -723,8 +723,7 @@ impl Backend for X11Backend {
     fn poll_event(&mut self, timeout: Option<Duration>, extra: &[RawFd]) -> EventPoll {
         let start = std::time::Instant::now();
         loop {
-            /* Events a `drain_scroll` sweep pulled off the connection but did
-             * not consume come first, still in arrival order. */
+            /* A repaint batch's parked boundary event comes first. */
             if let Some(ev) = self.pending.pop_front() {
                 return EventPoll::Event(ev);
             }
@@ -779,26 +778,42 @@ impl Backend for X11Backend {
         self.flush();
     }
 
-    /// Drain every event the connection already holds, keeping the leading run
-    /// of wheel and motion events and parking the rest in `pending`. A fast
-    /// flick arrives as a run of button 4/5 presses in the server's queue, and
-    /// moving the mouse at the same time interleaves motion events into it;
-    /// without this each one costs the core a full redraw.
+    /// Take only the leading run of wheel and motion events. Park the first
+    /// other event and leave everything after it on the connection, so input
+    /// and the keyboard state are never advanced past the batch boundary.
     fn drain_repaint(&mut self) -> Vec<BackendEvent> {
-        let mut out = Vec::new();
-        while let Ok(Some(raw)) = self.connection.poll_for_event() {
-            match self.handle_event(raw) {
-                Some(ev @ (BackendEvent::Scroll { .. } | BackendEvent::Motion { .. })) => {
-                    out.push(ev)
+        let mut pending = std::mem::take(&mut self.pending);
+        let out = drain_repaint_events(&mut pending, || {
+            // Unhandled protocol events are also ignored by poll_event.
+            while let Ok(Some(raw)) = self.connection.poll_for_event() {
+                if let Some(event) = self.handle_event(raw) {
+                    return Some(event);
                 }
-                Some(other) => self.pending.push_back(other),
-                /* Not for us (a wheel press outside the menu, an unmapped
-                 * button): discarding it is what the single-event path did. */
-                None => {}
             }
-        }
+            None
+        });
+        self.pending = pending;
         out
     }
+}
+
+/// Drain translated events without reading beyond the first batch boundary.
+/// Pending events always precede events still held by the X connection.
+fn drain_repaint_events(
+    pending: &mut VecDeque<BackendEvent>,
+    mut next_event: impl FnMut() -> Option<BackendEvent>,
+) -> Vec<BackendEvent> {
+    let mut out = Vec::new();
+    while let Some(event) = pending.pop_front().or_else(&mut next_event) {
+        match event {
+            ev @ (BackendEvent::Scroll { .. } | BackendEvent::Motion { .. }) => out.push(ev),
+            other => {
+                pending.push_front(other);
+                break;
+            }
+        }
+    }
+    out
 }
 
 /// Set up XKB so keysyms/text match what the server keymap produces.
@@ -953,4 +968,88 @@ fn x11_mods(state: x11rb::protocol::xproto::KeyButMask) -> Modifiers {
 /// X11 pixel value for a 24-bit depth: RGB in the top three bytes.
 fn x11_pixel(color: Color) -> u32 {
     ((color.r() as u32) << 16) | ((color.g() as u32) << 8) | color.b() as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn motion() -> BackendEvent {
+        BackendEvent::Motion {
+            time: 1,
+            pos: Point::new(10, 20),
+            source: InputSource::Menu,
+        }
+    }
+
+    fn key() -> BackendEvent {
+        BackendEvent::KeyPress {
+            sym: 0xff0d,
+            mods: Modifiers::default(),
+            text: String::new(),
+        }
+    }
+
+    #[test]
+    fn repaint_drain_stops_at_keys_clicks_and_other_events() {
+        let click = BackendEvent::ButtonPress {
+            button: MouseButton::Left,
+            mods: Modifiers::default(),
+            pos: Point::new(10, 20),
+            source: InputSource::Menu,
+        };
+        for boundary in [key(), click, BackendEvent::Destroyed, BackendEvent::Expose] {
+            let scroll = BackendEvent::Scroll { delta: 1 };
+            let mut connection_events = VecDeque::from([
+                scroll.clone(),
+                motion(),
+                boundary.clone(),
+                scroll.clone(),
+                motion(),
+            ]);
+            let mut pending = VecDeque::new();
+            assert_eq!(
+                drain_repaint_events(&mut pending, || connection_events.pop_front()),
+                vec![scroll.clone(), motion()]
+            );
+            assert_eq!(pending, VecDeque::from([boundary.clone()]));
+            assert_eq!(
+                connection_events,
+                VecDeque::from([scroll.clone(), motion()])
+            );
+
+            // A second drain must not reach past the parked boundary either.
+            assert!(drain_repaint_events(&mut pending, || {
+                panic!("read past pending boundary")
+            })
+            .is_empty());
+            assert_eq!(pending.pop_front(), Some(boundary));
+            assert_eq!(
+                drain_repaint_events(&mut pending, || connection_events.pop_front()),
+                vec![scroll, motion()]
+            );
+            assert!(pending.is_empty());
+            assert!(connection_events.is_empty());
+        }
+    }
+
+    #[test]
+    fn repaint_drain_consumes_pending_events_before_the_connection() {
+        let scroll = BackendEvent::Scroll { delta: -1 };
+        let mut pending = VecDeque::from([motion(), scroll.clone(), key(), motion()]);
+        assert_eq!(
+            drain_repaint_events(&mut pending, || panic!("read past pending boundary")),
+            vec![motion(), scroll]
+        );
+        assert_eq!(pending, VecDeque::from([key(), motion()]));
+
+        pending.pop_front();
+        let mut connection_events = VecDeque::from([BackendEvent::Scroll { delta: 1 }]);
+        assert_eq!(
+            drain_repaint_events(&mut pending, || connection_events.pop_front()),
+            vec![motion(), BackendEvent::Scroll { delta: 1 }]
+        );
+        assert!(pending.is_empty());
+        assert!(connection_events.is_empty());
+    }
 }
