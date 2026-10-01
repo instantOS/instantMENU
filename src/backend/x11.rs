@@ -62,6 +62,7 @@ pub struct X11Backend {
     xkb_state: xkb::State,
 
     monitors: Vec<MonitorInfo>,
+    startup_monitor: OnceCell<Option<usize>>,
     root_width: i32,
     root_height: i32,
 
@@ -76,6 +77,7 @@ pub struct X11Backend {
 struct Atoms {
     wm_name: u32,
     net_wm_name: u32,
+    net_active_window: u32,
     utf8_string: u32,
     clipboard: u32,
     wm_class: u32,
@@ -121,6 +123,7 @@ impl X11Backend {
             xkb_keymap,
             xkb_state,
             monitors,
+            startup_monitor: OnceCell::new(),
             root_width,
             root_height,
             pending: VecDeque::new(),
@@ -407,15 +410,46 @@ impl X11Backend {
             .position(|monitor| monitor.rect.contains_exclusive(point))
     }
 
-    /// Output the window X input focus names, by largest overlap. `None` when
-    /// focus is `PointerRoot`/`None`/the root window, and when the focused
-    /// window overlaps no output at all.
+    /// Prefer the WM's active client: X input focus can name a child or a
+    /// WM focus proxy whose geometry does not describe the active window.
     fn focus_window_monitor(&self) -> Option<usize> {
-        /* Queue geometry and root-coordinate translation together. */
-        let reply = self.connection.get_input_focus().ok()?.reply().ok()?;
-        let window = reply.focus;
-        if window == self.root || window == 0 || window == 1 {
-            return None; // PointerRoot(1)/None(0)
+        let active = self
+            .connection
+            .get_property(
+                false,
+                self.root,
+                self.atoms.net_active_window,
+                AtomEnum::WINDOW,
+                0,
+                1,
+            )
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .and_then(|reply| reply.value32().and_then(|mut values| values.next()));
+        active
+            .and_then(|window| self.window_monitor(window))
+            .or_else(|| {
+                let window = self.connection.get_input_focus().ok()?.reply().ok()?.focus;
+                self.window_monitor(window)
+            })
+    }
+
+    fn window_monitor(&self, mut window: Window) -> Option<usize> {
+        if window == self.root || window <= 1 || window == self.window {
+            return None;
+        }
+        // Walk to the root's child, including a WM frame when reparented.
+        // A focused widget's tiny rectangle may lie on a different output
+        // than most of the application window.
+        loop {
+            let tree = self.connection.query_tree(window).ok()?.reply().ok()?;
+            if tree.parent == self.root {
+                break;
+            }
+            if tree.parent == 0 || tree.parent == window {
+                return None;
+            }
+            window = tree.parent;
         }
         let geometry = self.connection.get_geometry(window).ok()?;
         let translated = self
@@ -424,22 +458,15 @@ impl X11Backend {
             .ok()?;
         let geometry = geometry.reply().ok()?;
         let translated = translated.reply().ok()?;
-        let rect = Rect::new(
-            translated.dst_x as i32,
-            translated.dst_y as i32,
-            geometry.width as i32,
-            geometry.height as i32,
-        );
-        let mut best = 0usize;
-        let mut area = 0;
-        for (idx, monitor) in self.monitors.iter().enumerate() {
-            let a = rect.intersect_area(monitor.rect);
-            if a > area {
-                area = a;
-                best = idx;
-            }
-        }
-        (area > 0).then_some(best)
+        monitor_for_window(
+            &self.monitors,
+            Rect::new(
+                translated.dst_x as i32,
+                translated.dst_y as i32,
+                geometry.width as i32,
+                geometry.height as i32,
+            ),
+        )
     }
 
     /// Read the pasted text the selection owner stored in `property`.
@@ -467,18 +494,13 @@ impl Backend for X11Backend {
     }
 
     fn focused_monitor(&self) -> Option<usize> {
-        /* Focus first, pointer second, output 0 last. X has no compositor to
-         * place the menu for us, and a WM-driven hotkey launch (instantWM
-         * spawning `ins launch`) regularly finds X input focus on
-         * PointerRoot — the WM only re-asserts focus when its own selection
-         * changes, so a stale or unset focus survives until something moves
-         * it. Falling straight through to output 0 then opens the menu on the
-         * wrong monitor whenever the pointer is elsewhere, so ask the pointer
-         * before giving up. Wayland keeps the focus-only chain: its pointer
-         * probe is a blocking round trip, and the compositor already places
-         * the menu itself (see `placed_monitor`). */
-        self.focus_window_monitor()
-            .or_else(|| self.pointer().and_then(|point| self.monitor_at(point)))
+        // Resolve before the menu takes focus and retain the answer during
+        // streaming reflows. Otherwise the menu's own window (or the pointer
+        // moving after launch) can change the selected monitor.
+        *self.startup_monitor.get_or_init(|| {
+            self.focus_window_monitor()
+                .or_else(|| self.pointer().and_then(|point| self.monitor_at(point)))
+        })
     }
 
     fn embed_parent_size(&self) -> Option<Size> {
@@ -884,12 +906,16 @@ fn intern_atoms(connection: &XCBConnection) -> Result<Atoms, String> {
     let utf8_string = connection
         .intern_atom(false, b"UTF8_STRING")
         .map_err(|e| e.to_string())?;
+    let net_active_window = connection
+        .intern_atom(false, b"_NET_ACTIVE_WINDOW")
+        .map_err(|e| e.to_string())?;
     let clipboard = connection
         .intern_atom(false, b"CLIPBOARD")
         .map_err(|e| e.to_string())?;
     Ok(Atoms {
         wm_name: AtomEnum::WM_NAME.into(),
         net_wm_name: net_wm_name.reply().map_err(|e| e.to_string())?.atom,
+        net_active_window: net_active_window.reply().map_err(|e| e.to_string())?.atom,
         utf8_string: utf8_string.reply().map_err(|e| e.to_string())?.atom,
         clipboard: clipboard.reply().map_err(|e| e.to_string())?.atom,
         wm_class: AtomEnum::WM_CLASS.into(),
@@ -1082,5 +1108,50 @@ mod tests {
         );
         assert!(pending.is_empty());
         assert!(connection_events.is_empty());
+    }
+}
+
+/// Largest positive overlap; an off-screen window leaves pointer fallback available.
+fn monitor_for_window(monitors: &[MonitorInfo], window: Rect) -> Option<usize> {
+    let mut best = None;
+    let mut area = 0;
+    for (index, monitor) in monitors.iter().enumerate() {
+        let overlap = window.intersect_area(monitor.rect);
+        if overlap > area {
+            area = overlap;
+            best = Some(index);
+        }
+    }
+    best
+}
+
+#[cfg(test)]
+mod monitor_tests {
+    use super::*;
+
+    #[test]
+    fn spanning_application_uses_largest_overlap_instead_of_focused_child() {
+        let monitors = vec![
+            MonitorInfo {
+                rect: Rect::new(-1920, 0, 1920, 1080),
+                name: "left".into(),
+            },
+            MonitorInfo {
+                rect: Rect::new(0, 0, 1920, 1080),
+                name: "right".into(),
+            },
+        ];
+        assert_eq!(
+            monitor_for_window(&monitors, Rect::new(-100, 0, 1000, 800)),
+            Some(1)
+        );
+        assert_eq!(
+            monitor_for_window(&monitors, Rect::new(-100, 0, 20, 20)),
+            Some(0)
+        );
+        assert_eq!(
+            monitor_for_window(&monitors, Rect::new(4000, 0, 100, 100)),
+            None
+        );
     }
 }
