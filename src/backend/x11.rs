@@ -384,6 +384,64 @@ impl X11Backend {
         }
     }
 
+    /// Root-window pointer position. Split out of
+    /// [`Backend::pointer_position`] so the `&self` queries below can reach it:
+    /// `QueryPointer` needs no exclusive receiver, and unlike the Wayland
+    /// pointer probe (which maps temporary surfaces and waits for the
+    /// compositor) this is one cheap round trip to the local server.
+    fn pointer(&self) -> Option<Point> {
+        let reply = self
+            .connection
+            .query_pointer(self.root)
+            .ok()?
+            .reply()
+            .ok()?;
+        Some(Point::new(reply.root_x as i32, reply.root_y as i32))
+    }
+
+    /// Index of the monitor containing `point`, half-open so a pointer exactly
+    /// on a shared edge belongs to the monitor to its right/below.
+    fn monitor_at(&self, point: Point) -> Option<usize> {
+        self.monitors
+            .iter()
+            .position(|monitor| monitor.rect.contains_exclusive(point))
+    }
+
+    /// Output the window X input focus names, by largest overlap. `None` when
+    /// focus is `PointerRoot`/`None`/the root window, and when the focused
+    /// window overlaps no output at all.
+    fn focus_window_monitor(&self) -> Option<usize> {
+        /* Queue geometry and root-coordinate translation together. */
+        let reply = self.connection.get_input_focus().ok()?.reply().ok()?;
+        let window = reply.focus;
+        if window == self.root || window == 0 || window == 1 {
+            return None; // PointerRoot(1)/None(0)
+        }
+        let geometry = self.connection.get_geometry(window).ok()?;
+        let translated = self
+            .connection
+            .translate_coordinates(window, self.root, 0, 0)
+            .ok()?;
+        let geometry = geometry.reply().ok()?;
+        let translated = translated.reply().ok()?;
+        let rect = Rect::new(
+            translated.dst_x as i32,
+            translated.dst_y as i32,
+            geometry.width as i32,
+            geometry.height as i32,
+        );
+        let mut best = 0usize;
+        let mut area = 0;
+        for (idx, monitor) in self.monitors.iter().enumerate() {
+            let a = rect.intersect_area(monitor.rect);
+            if a > area {
+                area = a;
+                best = idx;
+            }
+        }
+        (area > 0).then_some(best)
+    }
+
     /// Read the pasted text the selection owner stored in `property`.
     fn selection_text(&self, property: u32) -> Option<String> {
         let reply = self
@@ -405,49 +463,22 @@ impl Backend for X11Backend {
     }
 
     fn pointer_position(&mut self) -> Option<Point> {
-        let reply = self
-            .connection
-            .query_pointer(self.root)
-            .ok()?
-            .reply()
-            .ok()?;
-        Some(Point::new(reply.root_x as i32, reply.root_y as i32))
+        self.pointer()
     }
 
     fn focused_monitor(&self) -> Option<usize> {
-        /* Queue geometry and root-coordinate translation together. */
-        let reply = self.connection.get_input_focus().ok()?.reply().ok()?;
-        let window = reply.focus;
-        if window == self.root || window == 0 || window == 1 {
-            return None; // PointerRoot(1)/None(0)
-        }
-        let geometry = self.connection.get_geometry(window).ok()?;
-        let translated = self
-            .connection
-            .translate_coordinates(window, self.root, 0, 0)
-            .ok()?;
-        let geometry = geometry.reply().ok()?;
-        let translated = translated.reply().ok()?;
-        let mut best = 0usize;
-        let mut area = 0;
-        for (idx, monitor) in self.monitors.iter().enumerate() {
-            let a = Rect::new(
-                translated.dst_x as i32,
-                translated.dst_y as i32,
-                geometry.width as i32,
-                geometry.height as i32,
-            )
-            .intersect_area(monitor.rect);
-            if a > area {
-                area = a;
-                best = idx;
-            }
-        }
-        if area == 0 {
-            None
-        } else {
-            Some(best)
-        }
+        /* Focus first, pointer second, output 0 last. X has no compositor to
+         * place the menu for us, and a WM-driven hotkey launch (instantWM
+         * spawning `ins launch`) regularly finds X input focus on
+         * PointerRoot — the WM only re-asserts focus when its own selection
+         * changes, so a stale or unset focus survives until something moves
+         * it. Falling straight through to output 0 then opens the menu on the
+         * wrong monitor whenever the pointer is elsewhere, so ask the pointer
+         * before giving up. Wayland keeps the focus-only chain: its pointer
+         * probe is a blocking round trip, and the compositor already places
+         * the menu itself (see `placed_monitor`). */
+        self.focus_window_monitor()
+            .or_else(|| self.pointer().and_then(|point| self.monitor_at(point)))
     }
 
     fn embed_parent_size(&self) -> Option<Size> {
