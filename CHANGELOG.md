@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.1.5](https://github.com/instantOS/instantMENU/compare/v5.1.4...v5.1.5) - 2026-10-05
+
+### Changed
+
+- retain emoji layouts in a bounded LRU cache
+
+### Fixed
+
+- preserve X11 input order when batching repaints
+
+### Other
+
+- Merge origin/main, combine width caching with LRU layout retention
+- bump
+- Merge branch 'dev' of github.com:instantOS/instantMENU into dev
+- fix spawn pos
+- fix monitor startup thingy
+
 ## [5.1.4](https://github.com/instantOS/instantMENU/compare/v5.1.3...v5.1.4) - 2026-09-28
 
 ### Fixed
