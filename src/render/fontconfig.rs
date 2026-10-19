@@ -5,6 +5,7 @@
 use std::collections::HashSet;
 use std::ffi::{c_char, c_int, c_uchar, CStr, CString};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 
 use super::font::FontSpec;
 
@@ -377,7 +378,22 @@ pub(super) fn add_fallbacks(db: &mut fontdb::Database, required_chars: &HashSet<
 }
 
 fn load_file(db: &mut fontdb::Database, loaded: &mut HashSet<PathBuf>, path: PathBuf) -> bool {
-    loaded.insert(path.clone()) && db.load_font_file(path).is_ok()
+    if loaded.contains(&path) {
+        return false;
+    }
+    let Ok(data) = std::fs::read(&path) else {
+        return false;
+    };
+    // Retain the bytes for the renderer's lifetime. Source::File reopens and
+    // maps the font on every coverage/metrics query; it also makes cosmic-text
+    // reopen it again when shaping. SharedFile preserves path deduplication
+    // while sharing one safe, owned buffer across every face and consumer.
+    let ids = db.load_font_source(fontdb::Source::SharedFile(path.clone(), Arc::new(data)));
+    if ids.is_empty() {
+        return false;
+    }
+    loaded.insert(path);
+    true
 }
 
 fn remove_covered(db: &fontdb::Database, chars: &mut HashSet<char>) {
@@ -504,6 +520,14 @@ fn cache_path() -> Option<PathBuf> {
 }
 
 fn fontconfig_stamp() -> u128 {
+    // A menu keeps its font database for its lifetime. Check installed-font
+    // changes once per process, rather than restatting every fontconfig cache
+    // entry each time streamed text introduces another fallback character.
+    static STAMP: OnceLock<u128> = OnceLock::new();
+    *STAMP.get_or_init(read_fontconfig_stamp)
+}
+
+fn read_fontconfig_stamp() -> u128 {
     let mut roots = vec![PathBuf::from("/var/cache/fontconfig")];
     if let Some(path) = std::env::var_os("XDG_CACHE_HOME") {
         roots.push(PathBuf::from(path).join("fontconfig"));
@@ -533,6 +557,36 @@ fn fontconfig_stamp() -> u128 {
 mod tests {
     use super::{loadable_format, needs_coverage, Config};
     use std::collections::HashSet;
+
+    #[test]
+    fn loaded_fonts_keep_shared_bytes_without_reopening_the_backing_file() {
+        let Some(config) = Config::new() else { return };
+        let Some(source) = config.match_family("sans-serif") else {
+            return;
+        };
+        let path = std::env::temp_dir().join(format!(
+            "instantmenu-shared-font-{}.ttf",
+            std::process::id()
+        ));
+        std::fs::copy(source, &path).unwrap();
+        let mut db = fontdb::Database::new();
+        let mut loaded = HashSet::new();
+        assert!(super::load_file(&mut db, &mut loaded, path.clone()));
+        let faces = db.len();
+        assert!(!super::load_file(&mut db, &mut loaded, path.clone()));
+        assert_eq!(db.len(), faces);
+        std::fs::remove_file(&path).unwrap();
+        let face = db.faces().next().unwrap();
+        assert!(matches!(&face.source, fontdb::Source::SharedFile(_, _)));
+        assert_eq!(
+            db.with_face_data(face.id, |data, index| ttf_parser::Face::parse(data, index)
+                .is_ok()),
+            Some(true)
+        );
+        let mut uncovered = ['a'].into();
+        super::remove_covered(&db, &mut uncovered);
+        assert!(uncovered.is_empty());
+    }
 
     /// Only formats ttf-parser can read may be offered as fallbacks.
     #[test]
