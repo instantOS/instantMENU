@@ -90,6 +90,9 @@ pub struct EventState {
         Option<zwp_primary_selection_device_manager_v1::ZwpPrimarySelectionDeviceManagerV1>,
     pub(super) primary_device: Option<zwp_primary_selection_device_v1::ZwpPrimarySelectionDeviceV1>,
     pub(super) layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
+    /// Layer-shell layer every surface of this menu is created on. The
+    /// overlay layer is above fullscreen windows; the top layer is not.
+    pub(super) layer: zwlr_layer_shell_v1::Layer,
     pub(super) wm_base: Option<xdg_wm_base::XdgWmBase>,
     /// logical monitor geometry (wl_output mode sizes are physical pixels,
     /// which misplaces everything on scaled outputs)
@@ -175,7 +178,11 @@ pub struct EventState {
 }
 
 impl EventState {
-    pub(super) fn new(queue_handle: QueueHandle<Self>, track_focused_monitor: bool) -> Self {
+    pub(super) fn new(
+        queue_handle: QueueHandle<Self>,
+        track_focused_monitor: bool,
+        layer: crate::config::MenuLayer,
+    ) -> Self {
         EventState {
             queue_handle,
             compositor: None,
@@ -197,6 +204,7 @@ impl EventState {
             primary_manager: None,
             primary_device: None,
             layer_shell: None,
+            layer: layer.into(),
             wm_base: None,
             xdg_output_manager: None,
             xdg_outputs: Vec::new(),

@@ -18,7 +18,7 @@
 use clap::{Parser, Subcommand};
 
 use crate::backend::BackendChoice;
-use crate::config::{LineHeight, MatchMode, MonitorChoice, Position, Theme, Width};
+use crate::config::{LineHeight, MatchMode, MenuLayer, MonitorChoice, Position, Theme, Width};
 use crate::render::Color;
 use std::path::PathBuf;
 
@@ -318,6 +318,13 @@ pub struct WindowArgs {
     /// Let instantmenu be managed by the window manager as a normal window.
     #[arg(long, global = true)]
     pub managed: bool,
+
+    /// Wayland layer the menu is drawn on.
+    ///
+    /// `overlay` (the default) keeps the menu above fullscreen windows and
+    /// native popups. `top` puts it below fullscreen windows, like a panel.
+    #[arg(long, value_enum, value_name = "LAYER", global = true)]
+    pub layer: Option<MenuLayer>,
 
     /// Horizontal offset from the anchor position.
     ///

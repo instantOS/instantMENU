@@ -3,7 +3,7 @@
 
 use wayland_client::protocol::{wl_buffer, wl_output, wl_surface};
 use wayland_protocols::wp::viewporter::client::wp_viewport;
-use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
 use super::shm::MemfdPool;
 use super::state::EventState;
@@ -105,7 +105,7 @@ impl EventState {
             let layer_surface = shell.get_layer_surface(
                 &surface,
                 Some(&output),
-                zwlr_layer_shell_v1::Layer::Top,
+                self.layer,
                 "instantmenu".to_string(),
                 &qh,
                 ProbeTag,

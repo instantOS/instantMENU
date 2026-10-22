@@ -15,6 +15,7 @@ use std::os::fd::RawFd;
 
 use xkbcommon::xkb::{self, KeyDirection, Keycode};
 
+use crate::config::MenuLayer;
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
 
@@ -391,19 +392,23 @@ pub(crate) fn lookup_key(state: &xkb::State, code: Keycode) -> (u32, String) {
 /// `embed` is the `-W` window id (X11 only; ignored on Wayland).
 /// `track_focused_monitor` enables Wayland's foreign-toplevel snapshot; keep
 /// it false when geometry will use an explicit monitor or the pointer.
+/// `layer` is the Wayland layer-shell layer the menu is drawn on; X11 has no
+/// layers and ignores it.
 pub fn open(
     embed: Option<u32>,
     choice: BackendChoice,
     track_focused_monitor: bool,
+    layer: MenuLayer,
 ) -> Result<Box<dyn Backend>, String> {
     match choice {
         BackendChoice::X11 => Ok(Box::new(x11::X11Backend::new(embed)?)),
         BackendChoice::Wayland => Ok(Box::new(wayland::WaylandBackend::new(
             track_focused_monitor,
+            layer,
         )?)),
         BackendChoice::Auto => {
             if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-                match wayland::WaylandBackend::new(track_focused_monitor) {
+                match wayland::WaylandBackend::new(track_focused_monitor, layer) {
                     Ok(b) => return Ok(Box::new(b)),
                     Err(e) => {
                         eprintln!("instantmenu: wayland connection failed ({e}), trying X11")

@@ -75,6 +75,22 @@ pub enum MonitorChoice {
     Index(u32),
 }
 
+/// Wayland layer-shell layer the menu is rendered on (`--layer`).
+///
+/// The layer decides what the menu stacks above. `overlay` is the only
+/// layer that is unambiguously drawn above fullscreen windows — the
+/// protocol puts fullscreen surfaces at the top layer, so a menu on the
+/// top layer is hidden behind them. `top` is the layer traditional panels
+/// use, and matches where the menu sat before this option existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+pub enum MenuLayer {
+    /// The overlay layer: above fullscreen windows and native popups.
+    #[default]
+    Overlay,
+    /// The top layer: below fullscreen windows, above ordinary ones.
+    Top,
+}
+
 /// Item matching algorithm (`--match-mode`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum MatchMode {
@@ -294,6 +310,8 @@ pub struct Config {
     pub alt_tab: bool,
     /* --managed option; display as managed wm window */
     pub managed: bool,
+    /* --layer option; wlr-layer-shell layer the menu is rendered on */
+    pub layer: MenuLayer,
     /* -r option; reject input that results in no match */
     pub reject_no_match: bool,
     /* --single-key option; explicit single-key launcher mode */
@@ -351,6 +369,7 @@ impl Default for Config {
             outside_close: true,
             alt_tab: false,
             managed: false,
+            layer: MenuLayer::default(),
             reject_no_match: false,
             bindings: Vec::new(),
             single_key: false,
@@ -373,6 +392,16 @@ mod tests {
         let cfg = Config::default();
         assert_eq!(Theme::default(), Theme::Catppuccin);
         assert_eq!(cfg.palette, Theme::Catppuccin.palette());
+    }
+
+    #[test]
+    fn the_menu_is_drawn_on_the_overlay_layer_by_default() {
+        /* Fullscreen windows are rendered at the top layer, so a menu on
+         * the top layer is hidden behind them. Overlay is the layer that
+         * stays above fullscreen. */
+        let cfg = Config::default();
+        assert_eq!(cfg.layer, MenuLayer::Overlay);
+        assert_eq!(MenuLayer::default(), MenuLayer::Overlay);
     }
 
     #[test]

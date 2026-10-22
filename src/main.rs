@@ -38,11 +38,16 @@ fn main() {
     /* open backend (wayland by default when WAYLAND_DISPLAY is set;
      * --backend x11/wayland forces the choice) */
     let track_focused_monitor = cfg.monitor == MonitorChoice::Auto && !cfg.follow_cursor;
-    let mut backend = backend::open(cfg.embed, args.window.backend, track_focused_monitor)
-        .unwrap_or_else(|e| {
-            eprintln!("instantmenu: {e}");
-            ExitStatus::Failure.exit();
-        });
+    let mut backend = backend::open(
+        cfg.embed,
+        args.window.backend,
+        track_focused_monitor,
+        cfg.layer,
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("instantmenu: {e}");
+        ExitStatus::Failure.exit();
+    });
 
     /* Startup ordering: see [`stdin_mode`]. Streaming is the default, so
      * the keyboard is grabbed before anything slow happens; the other modes
@@ -383,6 +388,9 @@ fn apply_values(args: &cli::Args, cfg: &mut Config) {
     if let Some(m) = args.window.monitor {
         cfg.monitor = m;
     }
+    if let Some(l) = args.window.layer {
+        cfg.layer = l;
+    }
     if let Some(p) = &args.window.prompt {
         cfg.prompt = Some(p.clone());
     }
@@ -462,6 +470,7 @@ fn apply_appearance_values(args: &cli::Args, cfg: &mut Config) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use instantmenu::config::MenuLayer;
 
     #[test]
     fn explicit_colors_override_the_selected_theme() {
@@ -488,5 +497,26 @@ mod tests {
             cfg.palette.selected.bg,
             instantmenu::render::Color::hex(0x83A598)
         );
+    }
+
+    #[test]
+    fn the_menu_defaults_to_the_overlay_layer() {
+        /* The top layer sits below fullscreen windows, so a menu there
+         * disappears behind them. Overlay is the only layer that is
+         * unambiguously drawn above fullscreen. */
+        let args = cli::Args::try_parse_from(["instantmenu"]).unwrap();
+        let mut cfg = Config::default();
+        apply_values(&args, &mut cfg);
+
+        assert_eq!(cfg.layer, MenuLayer::Overlay);
+    }
+
+    #[test]
+    fn the_layer_option_overrides_the_default() {
+        let args = cli::Args::try_parse_from(["instantmenu", "--layer", "top"]).unwrap();
+        let mut cfg = Config::default();
+        apply_values(&args, &mut cfg);
+
+        assert_eq!(cfg.layer, MenuLayer::Top);
     }
 }

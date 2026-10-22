@@ -25,12 +25,27 @@ use xkbcommon::xkb::Keycode;
 
 use super::poll::{first_ready, poll_fds, poll_in, remaining_ms, PollOutcome};
 use super::{lookup_key, Backend, BackendEvent, EventPoll, MenuCursor, MonitorInfo};
+use crate::config::MenuLayer;
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Canvas, Color};
 use probe::PROBE_TIMEOUT_MS;
 use selection::{pump_offer, start_transfer};
 use shm::MemfdPool;
 use state::EventState;
+
+/// The layer-shell layer a menu surface is created on.
+///
+/// `overlay` is the only layer that is unambiguously drawn above fullscreen
+/// windows: the protocol renders fullscreen surfaces at the top layer, so a
+/// menu on the top layer disappears behind them.
+impl From<MenuLayer> for zwlr_layer_shell_v1::Layer {
+    fn from(layer: MenuLayer) -> Self {
+        match layer {
+            MenuLayer::Overlay => zwlr_layer_shell_v1::Layer::Overlay,
+            MenuLayer::Top => zwlr_layer_shell_v1::Layer::Top,
+        }
+    }
+}
 
 pub struct WaylandBackend {
     connection: Connection,
@@ -41,12 +56,12 @@ pub struct WaylandBackend {
 /* ──────────────────────── Backend impl ─────────────────────────────── */
 
 impl WaylandBackend {
-    pub fn new(track_focused_monitor: bool) -> Result<WaylandBackend, String> {
+    pub fn new(track_focused_monitor: bool, layer: MenuLayer) -> Result<WaylandBackend, String> {
         let connection =
             Connection::connect_to_env().map_err(|e| format!("cannot connect: {e}"))?;
         let mut queue: EventQueue<EventState> = connection.new_event_queue();
         let queue_handle = queue.handle();
-        let mut state = EventState::new(queue_handle.clone(), track_focused_monitor);
+        let mut state = EventState::new(queue_handle.clone(), track_focused_monitor, layer);
         let _ = connection.display().get_registry(&state.queue_handle, ());
         /* The first sync discovers globals. Create derived xdg-output
          * objects before the second sync so wl_output, logical-output and
@@ -156,7 +171,7 @@ impl WaylandBackend {
         let layer_surface = shell.get_layer_surface(
             surface,
             output.as_ref(),
-            zwlr_layer_shell_v1::Layer::Top,
+            state.layer,
             "instantmenu".to_string(),
             &state.queue_handle,
             (),
@@ -390,7 +405,7 @@ impl Backend for WaylandBackend {
         let layer_surface = shell.get_layer_surface(
             &surface,
             output,
-            zwlr_layer_shell_v1::Layer::Top,
+            state.layer,
             "instantmenu".to_string(),
             &state.queue_handle,
             (),
