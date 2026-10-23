@@ -146,7 +146,13 @@ impl Menu {
                         1,
                         gutter.h - margin * 2 - accent,
                     ),
-                    ColorRole::Detail,
+                    // The muted detail color can disappear against a hover
+                    // background. Use the same contrast as the text there.
+                    if is_selected {
+                        ColorRole::Foreground
+                    } else {
+                        ColorRole::Detail
+                    },
                 );
             }
         }
