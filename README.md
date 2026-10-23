@@ -74,6 +74,10 @@ selection on stdout, full keyboard control), with all extra features optional. T
 command line uses modern long options (`--width`, `--right-command`, ...) with a few
 single-letter shortcuts (`-i`, `-p`, `-l`, ...) instead of dmenu's historical flags.
 
+For agent guidance on scripting and item markup, run `instantmenu skill`
+(also available as `instantmenu --skill`). It prints a self-contained Markdown
+skill without opening a display.
+
 ## Item metadata
 
 Each input line is normally its visible label and selected output. A leading

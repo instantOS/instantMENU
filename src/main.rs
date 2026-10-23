@@ -17,6 +17,11 @@ fn main() {
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     let args = cli::Args::parse();
 
+    if let Some(cli::Cmd::Skill) = &args.subcommand {
+        print!("{}", include_str!("skill.md"));
+        return;
+    }
+
     if let Some(cli::Cmd::Icons(icons)) = &args.subcommand {
         print_icons(&icons.command);
         return;

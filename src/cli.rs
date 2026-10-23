@@ -1,8 +1,8 @@
 //! Command line: clap with long options as the canonical surface and
 //! single-letter shorts for the common flags.
 //!
-//! The surface is split along three modes. Menu mode is the default
-//! (`instantmenu`); slide and icon discovery are subcommands. Options
+//! Menu mode is the default (`instantmenu`); slide, icon discovery and agent
+//! guidance are subcommands. Options
 //! always follow the mode word: `instantmenu slide --width 600`, never
 //! `instantmenu --width 600 slide` (`args_conflicts_with_subcommands` makes
 //! clap reject any option that precedes a subcommand). Window, geometry,
@@ -95,7 +95,7 @@ pub struct Args {
     #[command(flatten)]
     pub menu: MenuArgs,
 
-    /// Running mode: menu (default), slide, or icon discovery.
+    /// Running mode: menu (default), slide, icon discovery, or agent guidance.
     #[command(subcommand)]
     pub subcommand: Option<Cmd>,
 }
@@ -525,6 +525,10 @@ pub enum Cmd {
 
     /// Discover the Nerd Fonts icon names accepted by icon entries.
     Icons(IconsArgs),
+
+    /// Print agent guidance for writing scripts and menu item markup.
+    #[command(long_flag = "skill")]
+    Skill,
 }
 
 /// Icon catalog commands. These print data and never open a display backend.
