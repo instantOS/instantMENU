@@ -103,6 +103,31 @@ impl Menu {
             let mode = AcceptMode::Bound(binding.key.clone());
             return self.accept(self.selected_target(), mode);
         }
+        if !self.cfg.single_key
+            && !self.cfg.input_only
+            && !self.cfg.password
+            && self.cfg.toast.is_none()
+        {
+            // Only activate current matches. Duplicate shortcuts resolve by
+            // arrival order, independent of fuzzy/frecency ranking and paging.
+            let target = self
+                .matcher
+                .matches
+                .iter()
+                .copied()
+                .filter(|&index| {
+                    let item = &self.matcher.items[index];
+                    item.is_selectable()
+                        && item
+                            .entry
+                            .shortcut
+                            .is_some_and(|key| key.matches(sym, mods))
+                })
+                .min_by_key(|&index| self.matcher.items[index].arrival_index);
+            if let Some(index) = target {
+                return self.accept(AcceptTarget::Item(index), AcceptMode::Exit);
+            }
+        }
         let (sym, mods) = if mods.ctrl {
             match self.ctrl_key(sym, mods) {
                 KeyPath::Continue(sym, mods) => (sym, mods),

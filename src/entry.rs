@@ -34,6 +34,8 @@ pub struct ItemEntry {
     pub icon: Option<char>,
     /// Explicit activation key used by `--single-key` mode.
     pub key: Option<char>,
+    /// Accelerator available in regular menus, with an inline hint.
+    pub shortcut: Option<crate::shortcut::Shortcut>,
     /// Structural, non-selectable heading row.
     pub heading: bool,
 }
@@ -118,6 +120,9 @@ fn parse_markup(text: &str) -> Option<ParsedItem<'_>> {
             ("match", Some(value)) if match_text.is_none() && !value.is_empty() => {
                 match_text = Some(value);
             }
+            ("shortcut", Some(value)) if entry.shortcut.is_none() => {
+                entry.shortcut = Some(value.parse().ok()?);
+            }
             ("value", Some(v)) if value.is_none() && !v.is_empty() => {
                 value = Some(v);
             }
@@ -134,7 +139,11 @@ fn parse_markup(text: &str) -> Option<ParsedItem<'_>> {
     }
 
     if !saw_attribute
-        || (entry.heading && (entry.key.is_some() || match_text.is_some() || value.is_some()))
+        || (entry.heading
+            && (entry.key.is_some()
+                || entry.shortcut.is_some()
+                || match_text.is_some()
+                || value.is_some()))
     {
         return None;
     }
@@ -402,6 +411,23 @@ mod tests {
         assert_eq!(parse("{key=λ} Lambda").entry.key, Some('λ'));
         for invalid in ["{key=} x", "{key=ab} x", "{key=' '} x", "{key='\t'} x"] {
             assert_eq!(parse(invalid), ParsedItem::plain(invalid), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn shortcuts_compose_with_presentation_and_output_metadata() {
+        let parsed = parse("{blue icon=folder shortcut=super-o value=open match=files} Open");
+        assert_eq!(parsed.label, "Open");
+        assert_eq!(parsed.value.as_deref(), Some("open"));
+        assert_eq!(parsed.entry.scheme, Some(Scheme::Selected));
+        assert!(parsed.entry.shortcut.is_some());
+        for invalid in [
+            "{shortcut=super-o shortcut=ctrl-o} Open",
+            "{heading shortcut=super-o} Files",
+            "{shortcut=ctrl-unknown} Open",
+            "{shortcut=esc} Quit",
+        ] {
+            assert_eq!(parse(invalid), ParsedItem::plain(invalid));
         }
     }
 

@@ -68,8 +68,18 @@ metadata; follow the closing brace with whitespace before the label:
 - `key=CHAR` supplies one non-whitespace, non-control Unicode character. With
   `--single-key`, only keyed entries are shown and pressing a key immediately
   outputs that entry's value. Use distinct keys; search is disabled in this mode.
+- `shortcut=KEY` adds a per-entry accelerator to a regular menu, with a keycap
+  hint beside the full label. Examples: `shortcut=super-o`, `shortcut=ctrl-shift-e`,
+  `shortcut=f2`. Combine `ctrl-`, `alt-`, `shift-`, and `super-` in any order.
+  Characters, function keys (`f1`–`f35`), and named keys such as `space`, `left`,
+  and `page-down` work. Letter names ignore case; specify Shift explicitly.
+  Plain characters override search typing. Escape, Ctrl-C, Ctrl-G, and plain
+  Enter/Tab are reserved. Only current search results can be activated, including
+  other pages; duplicate shortcuts pick the first match in input order. Global
+  `--bind` actions take precedence. Shortcuts print the entry's value and exit;
+  they are inactive in single-key, input-only, password, and toast modes.
 - `heading` creates a non-selectable structural row. It can have a color and
-  icon, but cannot have `key`, `match`, or `value`.
+  icon, but cannot have `key`, `shortcut`, `match`, or `value`.
 - Colors are palette roles: `normal` (`default`), `fade`, `highlight`, `hover`,
   `selected` (`blue`), `output`, `green`, `yellow`, and `red`. Use a bare role or
   `color=ROLE`. Item colors apply while selected; heading colors apply always.

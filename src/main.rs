@@ -117,6 +117,9 @@ fn main() {
         if let Some(key) = item.entry.key {
             required_chars.insert(key);
         }
+        if let Some(shortcut) = item.entry.shortcut {
+            required_chars.extend(shortcut.hint().chars());
+        }
     }
     for text in [
         args.menu.initial_text.as_deref(),

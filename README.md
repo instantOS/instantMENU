@@ -91,7 +91,7 @@ Display
 ```
 
 Known color names may be bare (`{red}`) or explicit (`{color=red}`). Other
-attributes are `icon`, `key`, `match`, `value`, and the `heading` flag. Quote values
+attributes are `icon`, `key`, `shortcut`, `match`, `value`, and the `heading` flag. Quote values
 that contain spaces. Run with `--single-key` to show and activate only entries
 that have `key=…`. Prefix a literal markup-like label with an extra opening
 brace: `{{red} literal` displays `{red} literal`. Use `value` to set a
@@ -105,6 +105,34 @@ menu but outputs `sh`. Ctrl-Enter/Ctrl-click accept without closing. Shift-Retur
 explicitly submits the input text instead (unless `--reject-no-match` is set);
 Shift-click still accepts the clicked item. Tab completion and hover prompts
 continue to use display labels.
+
+### Per-entry keyboard shortcuts
+
+Use `shortcut=…` in a regular menu to activate an entry directly while keeping
+its full label visible. Hints appear as keycaps at the right of each entry,
+using symbols for Ctrl (⌃), Alt (⎇), Shift (⇧), and Super (⊞):
+
+```sh
+instantmenu -l 5 <<'MENU'
+{icon=folder shortcut=super-o value=open} Open folder
+{blue shortcut=ctrl-shift-e value=edit} Edit
+{shortcut=f2 value=rename} Rename
+MENU
+```
+
+Combine `ctrl-`, `alt-`, `shift-`, and `super-` in any order before a character,
+function key (`f1`–`f35`), or named key (`space`, `enter`, `tab`, `backspace`,
+`delete`, `insert`, `left`, `right`, `up`, `down`, `home`, `end`, `page-up`,
+`page-down`). Letter names ignore case; request Shift explicitly. Plain
+characters are allowed but take precedence over typing into the search field.
+Escape, Ctrl-C, Ctrl-G, and unmodified Enter/Tab remain reserved.
+
+Shortcuts activate only entries in the current search results, including other
+pages. They print the entry's `value=` (or label) and close the menu. Use unique
+shortcuts; duplicates select the first matching entry in input order. Global
+`--bind` actions take precedence on conflicts. Headings cannot have shortcuts,
+and shortcuts are inactive in `--single-key`, input-only, password, and toast
+modes. `{key=q}` remains the separate single-character `--single-key` interface.
 
 --------
 ### instantOS is still in early beta, contributions always welcome

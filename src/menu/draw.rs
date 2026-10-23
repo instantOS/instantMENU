@@ -104,8 +104,57 @@ impl Menu {
             TextStyle::Normal
         };
         let rect = Rect::new(label_x, cell.y, label_w, self.layout.bar_height);
+        let hint = (!self.cfg.single_key)
+            .then_some(entry.shortcut)
+            .flatten()
+            .map(|key| key.hint());
+        let hint_width = hint
+            .as_ref()
+            .map(|text| {
+                (self.renderer.text_width(text)
+                    + self.renderer.horizontal_padding
+                    + self.renderer.cell_inset())
+                .min((label_w - self.renderer.horizontal_padding).max(0))
+            })
+            .unwrap_or(0);
         let mut p = self.painter();
-        p.draw_text_styled(rect, left_padding, &shown, style);
+        p.draw_text_styled(
+            Rect::new(rect.x, rect.y, rect.w - hint_width, rect.h),
+            left_padding,
+            &shown,
+            style,
+        );
+        if let Some(hint) = hint {
+            let gutter = Rect::new(rect.right() - hint_width, rect.y, hint_width, rect.h);
+            // Continue the row background and accent underneath the keycap.
+            p.draw_text_styled(gutter, 0, "", style);
+            let inset = p.renderer.cell_inset();
+            let margin = 3;
+            let accent = if style == TextStyle::Accented {
+                crate::render::ACCENT_STRIP_HEIGHT
+            } else {
+                0
+            };
+            let badge = Rect::new(
+                gutter.x,
+                gutter.y + margin,
+                gutter.w - inset,
+                gutter.h - margin * 2 - accent,
+            );
+            if badge.w > inset && badge.h > 2 {
+                p.set_scheme(if is_selected {
+                    Scheme::Selected
+                } else {
+                    Scheme::Fade
+                });
+                p.fill_rect(badge, ColorRole::Detail);
+                p.draw_text(
+                    Rect::new(badge.x + 1, badge.y + 1, badge.w - 2, badge.h - 2),
+                    (inset - 1).max(0),
+                    &hint,
+                );
+            }
+        }
     }
 
     /// Draw an item's icon gutter at the row's left edge; returns the

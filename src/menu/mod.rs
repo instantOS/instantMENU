@@ -211,6 +211,9 @@ impl Menu {
             if let Some(key) = item.entry.key {
                 self.pending_chars.insert(key);
             }
+            if let Some(shortcut) = item.entry.shortcut {
+                self.pending_chars.extend(shortcut.hint().chars());
+            }
         }
         let start = self.matcher.items.len();
         self.matcher

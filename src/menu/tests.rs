@@ -124,6 +124,130 @@ fn key(menu: &mut Menu, sym: u32, mods: Modifiers) -> Transition {
 
 /* ── confirm paths ─────────────────────────────────────────────────────── */
 
+#[test]
+fn entry_shortcuts_accept_their_own_value_with_exact_modifiers() {
+    let (mut menu, _, out) = menu_with(
+        Config::default(),
+        &[
+            "First",
+            "{shortcut=super-o value=open} Open folder",
+            "{shortcut=ctrl-shift-e value=edit} Edit",
+        ],
+    );
+    assert!(!matches!(
+        key(&mut menu, ks::KEY_o, M_NONE),
+        Transition::PrintAndExit(_)
+    ));
+    let transition = key(&mut menu, ks::KEY_o, M_LOGO);
+    assert_eq!(transition, Transition::PrintAndExit("open".into()));
+    assert_eq!(menu.perform(transition), Some(ExitStatus::Success));
+    assert_eq!(out.contents(), "open\n");
+    assert_eq!(
+        key(&mut menu, ks::KEY_E, M_CTRL_SHIFT),
+        Transition::PrintAndExit("edit".into())
+    );
+}
+
+#[test]
+fn entry_shortcuts_use_filtered_matches_and_stable_input_order() {
+    let (mut menu, _, _) = menu_with(
+        Config::default(),
+        &[
+            "{shortcut=f2 value=one} Alpha",
+            "{shortcut=f2 value=two} Beta",
+        ],
+    );
+    // Simulate a different ranking: duplicates still follow input order.
+    menu.matcher.matches.reverse();
+    assert_eq!(
+        key(&mut menu, ks::KEY_F2, M_NONE),
+        Transition::PrintAndExit("one".into())
+    );
+    type_text(&mut menu, "Beta");
+    assert_eq!(
+        key(&mut menu, ks::KEY_F2, M_NONE),
+        Transition::PrintAndExit("two".into())
+    );
+    type_text(&mut menu, "missing");
+    assert!(!matches!(
+        key(&mut menu, ks::KEY_F2, M_NONE),
+        Transition::PrintAndExit(_)
+    ));
+}
+
+#[test]
+fn a_plain_entry_shortcut_takes_precedence_over_search_typing() {
+    let (mut menu, _, _) = menu_with(
+        Config::default(),
+        &["First", "{shortcut=o value=open} Open"],
+    );
+    assert_eq!(
+        menu.key_press(ks::KEY_o, M_NONE, "o"),
+        Transition::PrintAndExit("open".into())
+    );
+    assert!(menu.editor.text.is_empty());
+}
+
+#[test]
+fn global_actions_take_precedence_over_entry_shortcuts() {
+    let cfg = Config {
+        bindings: vec!["ctrl-e:Edit".parse().unwrap()],
+        ..Config::default()
+    };
+    let (mut menu, _, _) = menu_with(cfg, &["Selected", "{shortcut=ctrl-e} Other"]);
+    assert_eq!(
+        key(&mut menu, ks::KEY_e, M_CTRL),
+        Transition::BoundAccept("ctrl-e".into(), Some("Selected".into()))
+    );
+}
+
+#[test]
+fn shortcuts_do_not_interfere_with_single_key_or_input_modes() {
+    for cfg in [
+        Config {
+            single_key: true,
+            ..Config::default()
+        },
+        Config {
+            input_only: true,
+            ..Config::default()
+        },
+        Config {
+            password: true,
+            ..Config::default()
+        },
+        Config {
+            toast: Some(1.0),
+            ..Config::default()
+        },
+    ] {
+        let (mut menu, _, _) = menu_with(cfg, &["{key=o shortcut=f2 value=open} Open"]);
+        assert!(!matches!(
+            key(&mut menu, ks::KEY_F2, M_NONE),
+            Transition::PrintAndExit(_)
+        ));
+    }
+}
+
+#[test]
+fn shortcut_hints_are_measured_for_auto_width_and_horizontal_hit_targets() {
+    use super::measure::{Measure, TextMeasurer};
+    let (mut menu, _, _) = menu_with(Config::default(), &["{shortcut=super-o} Open"]);
+    let item = menu.matcher.items[0].clone();
+    let plain = Item::new("Open");
+    let hint = item.entry.shortcut.unwrap().hint();
+    let hint_width = menu.renderer.text_width(&hint)
+        + menu.renderer.horizontal_padding
+        + menu.renderer.cell_inset();
+    let mut measurer = TextMeasurer::new(&mut menu.renderer, false, 30);
+    assert_eq!(
+        measurer.item_cell_width(&item) - measurer.item_cell_width(&plain),
+        hint_width
+    );
+    let mut measurer = TextMeasurer::new(&mut menu.renderer, true, 30);
+    assert_eq!(measurer.item_cell_width(&item), 30);
+}
+
 /// Return prints the selection and exits successfully.
 #[test]
 fn return_prints_selection_and_exits() {

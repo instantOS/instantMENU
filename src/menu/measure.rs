@@ -23,6 +23,11 @@ pub(super) trait Measure {
     /// when the parsed entry is an icon item.
     fn item_cell_width(&mut self, item: &Item) -> i32 {
         self.cell_width(item.label())
+            + item
+                .entry
+                .shortcut
+                .map(|key| self.shortcut_width(key))
+                .unwrap_or(0)
             + if item.entry.icon.is_some() {
                 self.icon_gutter_width()
             } else {
@@ -47,6 +52,11 @@ pub(super) trait Measure {
     /// test measurers have no gutter unless they opt into one.
     fn icon_gutter_width(&self) -> i32 {
         0
+    }
+
+    /// Keycap width plus separation from the label.
+    fn shortcut_width(&mut self, key: crate::shortcut::Shortcut) -> i32 {
+        self.cell_width(&key.hint()) + self.cell_width("") / 2
     }
 }
 
@@ -81,5 +91,13 @@ impl Measure for TextMeasurer<'_> {
 
     fn icon_gutter_width(&self) -> i32 {
         icon_gutter_width(self.renderer.font_height)
+    }
+
+    fn shortcut_width(&mut self, key: crate::shortcut::Shortcut) -> i32 {
+        if self.single_key {
+            0
+        } else {
+            self.cell_width(&key.hint()) + self.renderer.cell_inset()
+        }
     }
 }
