@@ -108,7 +108,7 @@ impl Shortcut {
         }
     }
 
-    /// Compact modifier symbols and a readable key name for the row's keycap.
+    /// Compact modifier symbols and a readable key name for the row's hint.
     pub fn hint(self) -> String {
         let mut parts = Vec::new();
         for (active, symbol) in [

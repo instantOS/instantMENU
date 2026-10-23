@@ -54,7 +54,7 @@ pub(super) trait Measure {
         0
     }
 
-    /// Keycap width plus separation from the label.
+    /// Hint width plus separation from the label.
     fn shortcut_width(&mut self, key: crate::shortcut::Shortcut) -> i32 {
         self.cell_width(&key.hint()) + self.cell_width("") / 2
     }

@@ -109,7 +109,7 @@ continue to use display labels.
 ### Per-entry keyboard shortcuts
 
 Use `shortcut=…` in a regular menu to activate an entry directly while keeping
-its full label visible. Hints appear as keycaps at the right of each entry,
+its full label visible. Hints align to the right of each entry with a left separator,
 using symbols for Ctrl (⌃), Alt (⎇), Shift (⇧), and Super (⊞):
 
 ```sh

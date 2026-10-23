@@ -68,7 +68,7 @@ metadata; follow the closing brace with whitespace before the label:
 - `key=CHAR` supplies one non-whitespace, non-control Unicode character. With
   `--single-key`, only keyed entries are shown and pressing a key immediately
   outputs that entry's value. Use distinct keys; search is disabled in this mode.
-- `shortcut=KEY` adds a per-entry accelerator to a regular menu, with a keycap
+- `shortcut=KEY` adds a per-entry accelerator to a regular menu, with a right-aligned
   hint beside the full label. Examples: `shortcut=super-o`, `shortcut=ctrl-shift-e`,
   `shortcut=f2`. Combine `ctrl-`, `alt-`, `shift-`, and `super-` in any order.
   Characters, function keys (`f1`–`f35`), and named keys such as `space`, `left`,

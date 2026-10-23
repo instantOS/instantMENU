@@ -126,7 +126,7 @@ impl Menu {
         );
         if let Some(hint) = hint {
             let gutter = Rect::new(rect.right() - hint_width, rect.y, hint_width, rect.h);
-            // Continue the row background and accent underneath the keycap.
+            // The hint shares the row's colors, with only a left separator.
             p.draw_text_styled(gutter, 0, "", style);
             let inset = p.renderer.cell_inset();
             let margin = 3;
@@ -135,23 +135,18 @@ impl Menu {
             } else {
                 0
             };
-            let badge = Rect::new(
-                gutter.x,
-                gutter.y + margin,
-                gutter.w - inset,
-                gutter.h - margin * 2 - accent,
-            );
-            if badge.w > inset && badge.h > 2 {
-                p.set_scheme(if is_selected {
-                    Scheme::Selected
-                } else {
-                    Scheme::Fade
-                });
-                p.fill_rect(badge, ColorRole::Detail);
-                p.draw_text(
-                    Rect::new(badge.x + 1, badge.y + 1, badge.w - 2, badge.h - 2),
-                    (inset - 1).max(0),
-                    &hint,
+            let text_cell = Rect::new(gutter.x + inset, gutter.y, gutter.w - inset * 2, gutter.h);
+            if text_cell.w > 0 {
+                let padding = (text_cell.w - p.renderer.text_width(&hint)).max(0);
+                p.draw_text_styled(text_cell, padding, &hint, style);
+                p.fill_rect(
+                    Rect::new(
+                        gutter.x,
+                        gutter.y + margin,
+                        1,
+                        gutter.h - margin * 2 - accent,
+                    ),
+                    ColorRole::Detail,
                 );
             }
         }
