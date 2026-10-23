@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.2.0](https://github.com/instantOS/instantMENU/compare/v5.1.5...v5.2.0) - 2026-10-23
+
+### Added
+
+- add skill command with agent scripting guidance
+- add shortcuts
+
+### Fixed
+
+- better font performance
+- make layer configurable, change default
+- hint contrast
+
+### Other
+
+- Merge branch 'main' of github.com:instantOS/instantMENU
+- update key hint design
+- bump stuff
+- Merge branch 'dev' of github.com:instantOS/instantMENU into dev
+
 ## [5.1.5](https://github.com/instantOS/instantMENU/compare/v5.1.4...v5.1.5) - 2026-10-05
 
 ### Changed
