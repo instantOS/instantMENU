@@ -309,12 +309,16 @@ Run through the shell with the current value appended as the last argument. Can 
 .SS instantmenu icons
 Discover the Nerd Fonts icon names accepted by icon entries
 
+.SS instantmenu skill
+Print agent guidance for writing scripts and menu item markup
+
 .SH EXTRA
 ITEM FORMAT:
   Each input line is a label. Optional leading `{...}` metadata is hidden
   from display and output: `{red icon=power key=q match=shutdown} Power off`.
   Attributes: color=NAME (or bare NAME), icon=NAME, key=CHAR,
-  match=TEXT, value=TEXT, and heading. Quote values containing spaces. `{{` escapes a
+  match=TEXT, value=TEXT, shortcut=KEY (e.g. super\-o), and heading.
+  Quote values containing spaces. `{{` escapes a
   literal leading brace.
 
 KEYBOARD CONTROL:
