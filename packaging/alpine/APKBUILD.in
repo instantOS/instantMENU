@@ -1,0 +1,42 @@
+# Maintainer: instantOS <hello@instantos.io>
+pkgname=instantmenu
+pkgdesc="Dynamic menu for X11 and Wayland"
+depends="bash perl font-dejavu fontconfig libxcb libxkbcommon libxkbcommon-x11 wayland-libs-client"
+makedepends="cargo rust build-base pkgconf git fontconfig-dev libxcb-dev libxkbcommon-dev wayland-dev"
+pkgver=@VERSION@
+pkgrel=0
+url="https://instantos.io"
+arch="x86_64 aarch64"
+license="MIT"
+options="!check !strip"
+source="source.tar.gz"
+builddir="$srcdir"
+_cargo_profile=${APK_BUILD_PROFILE:-release}
+_cargo_target=${APK_CARGO_TARGET_DIR:-$builddir/target}
+case "$_cargo_profile" in
+dev) _cargo_output=debug ;;
+release) _cargo_output=release ;;
+*)
+	printf 'unsupported APK_BUILD_PROFILE: %s\n' "$_cargo_profile" >&2
+	return 1
+	;;
+esac
+
+build() {
+	export CARGO_TARGET_DIR="$_cargo_target"
+	# These programs link Alpine's graphics libraries dynamically.
+	export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=-crt-static"
+	cargo build --locked --profile "$_cargo_profile" --bin instantmenu --bin itest
+}
+
+package() {
+	install -Dm755 "$_cargo_target/$_cargo_output/instantmenu" "$pkgdir/usr/bin/instantmenu"
+	install -Dm755 "$_cargo_target/$_cargo_output/itest" "$pkgdir/usr/bin/itest"
+	for helper in instantmenu_path instantmenu_run instantmenu_smartrun; do
+		install -Dm755 "$helper" "$pkgdir/usr/bin/$helper"
+	done
+	install -Dm644 instantmenu.1 "$pkgdir/usr/share/man/man1/instantmenu.1"
+	gzip -9 "$pkgdir/usr/share/man/man1/instantmenu.1"
+	install -Dm644 README.md "$pkgdir/usr/share/doc/instantmenu/README.md"
+	install -Dm644 LICENSE "$pkgdir/usr/share/licenses/instantmenu/LICENSE"
+}
