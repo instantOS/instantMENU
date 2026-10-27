@@ -11,8 +11,6 @@ pkgbase = instantmenu-bin
 	depends = glibc
 	depends = libxcb
 	depends = libxkbcommon-x11
-	depends = perl
-	optdepends = i3-wm: launch desktop entries with instantmenu_smartrun desktop
 	provides = instantmenu=5.1.5
 	conflicts = instantmenu
 	source = instantMENU-5.1.5.tar.gz

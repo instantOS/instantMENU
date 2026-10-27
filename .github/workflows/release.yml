@@ -322,7 +322,7 @@ jobs:
             instantmenu --version
             instantmenu --help > /dev/null
             itest -f /usr/bin/instantmenu
-            test -x /usr/bin/instantmenu_smartrun
+            test -x /usr/bin/instantmenu_path
             test -f /usr/share/man/man1/instantmenu.1.gz
           '
       - name: Upload Alpine package

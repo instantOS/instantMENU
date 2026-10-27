@@ -136,3 +136,9 @@ modes. `{key=q}` remains the separate single-character `--single-key` interface.
 
 --------
 ### instantOS is still in early beta, contributions always welcome
+
+## Application launcher
+
+Use `ins launch` from [instantCLI](https://github.com/instantOS/instantCLI) for
+desktop application discovery, frecency, and terminal application launching.
+instantMENU renders the menu; instantCLI owns application and terminal execution.

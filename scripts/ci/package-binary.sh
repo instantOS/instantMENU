@@ -24,7 +24,7 @@ mkdir -p "$tmpdir/$pkg_dir"
 
 install -Dm0755 "$bin_dir/instantmenu" "$tmpdir/$pkg_dir/instantmenu"
 install -Dm0755 "$bin_dir/itest" "$tmpdir/$pkg_dir/itest"
-for helper in instantmenu_path instantmenu_run instantmenu_smartrun; do
+for helper in instantmenu_path instantmenu_run; do
   install -Dm0755 "$helper" "$tmpdir/$pkg_dir/$helper"
 done
 install -Dm0644 instantmenu.1 "$tmpdir/$pkg_dir/instantmenu.1"

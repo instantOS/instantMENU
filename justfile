@@ -9,7 +9,6 @@ install: man
     install ./target/debug/itest ~/.local/bin/
     install ./instantmenu_path ~/.local/bin/
     install ./instantmenu_run ~/.local/bin/
-    install ./instantmenu_smartrun ~/.local/bin/
     install -D -m 644 ./instantmenu.1 ~/.local/share/man/man1/instantmenu.1
     chmod +x ~/.local/bin/instantmenu_*
 
@@ -20,7 +19,6 @@ rootinstall: man
     sudo install ./target/debug/itest /usr/local/bin/
     sudo install ./instantmenu_path /usr/local/bin/
     sudo install ./instantmenu_run /usr/local/bin/
-    sudo install ./instantmenu_smartrun /usr/local/bin/
     sudo install -D -m 644 ./instantmenu.1 /usr/local/share/man/man1/instantmenu.1
 
 

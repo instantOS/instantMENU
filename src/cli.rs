@@ -700,17 +700,16 @@ mod tests {
     }
 
     #[test]
-    fn smartrun_invocation_parses() {
-        /* the argv instantmenu_smartrun passes in its default mode (see
-         * instantmenu_smartrun) */
+    fn navigation_commands_parse() {
+        // Navigation actions remain generic renderer commands.
         let argv = [
             "instantmenu",
             "--frecency-cache",
-            "smartrun",
+            "navigation",
             "--right-command",
-            "instantmenu_smartrun terminal",
+            "ins launch --terminal",
             "--left-command",
-            "instantmenu_smartrun desktop",
+            "ins launch",
             "-p",
             "",
             "-i",

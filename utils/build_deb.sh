@@ -32,7 +32,7 @@ mkdir -p "$pkg_dir/DEBIAN"
 
 install -Dm755 "$instantmenu_bin" "$pkg_dir/usr/bin/instantmenu"
 install -Dm755 "$itest_bin" "$pkg_dir/usr/bin/itest"
-for helper in instantmenu_path instantmenu_run instantmenu_smartrun; do
+for helper in instantmenu_path instantmenu_run; do
   install -Dm755 "$helper" "$pkg_dir/usr/bin/$helper"
 done
 install -Dm644 instantmenu.1 "$pkg_dir/usr/share/man/man1/instantmenu.1"
