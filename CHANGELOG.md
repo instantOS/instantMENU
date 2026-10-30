@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.2.0](https://github.com/instantOS/instantMENU/compare/v5.1.5...v5.2.0) - 2026-10-24
+
+### Added
+
+- add skill command with agent scripting guidance
+- add shortcuts
+- build Alpine apk packages for x86_64 and ARM64
+
+### Fixed
+
+- better font performance
+- make layer configurable, change default
+- hint contrast
+
+### Other
+
+- Merge branch 'main' of github.com:instantOS/instantMENU
+- update key hint design
+- bump stuff
+- Merge branch 'dev' of github.com:instantOS/instantMENU into dev
+- Merge branch 'dev' of ufr:~/stuff/instantMENU into dev
+
 ## [5.1.5](https://github.com/instantOS/instantMENU/compare/v5.1.4...v5.1.5) - 2026-10-05
 
 ### Changed

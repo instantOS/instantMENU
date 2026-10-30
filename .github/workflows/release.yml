@@ -87,13 +87,8 @@ jobs:
             artifacts/*.tgz
             artifacts/*.sha256
   cross-compile:
-    # Cross-compile for ARM (aarch64 + armv7), one job per target.
-    # instantMENU links against system libxkbcommon(-x11), so each leg needs
-    # the :arm64/:armhf copies of those dev libraries (see
-    # scripts/ci/install-deps-ubuntu.sh); the rest of the dependency tree is
-    # pure Rust. A musl target is not planned: Ubuntu doesn't ship musl
-    # variants of those libraries (same blocker that dropped musl from
-    # instantWM's cross-compile matrix).
+    # GNU ARM cross builds use Ubuntu sysroots. The apk job builds musl
+    # natively on Alpine with its system libxkbcommon(-x11) libraries.
     name: Cross-compile ${{ matrix.target }}
     runs-on: ubuntu-26.04
     # Container jobs run steps with `sh -e {0}`, which is dash on Ubuntu and
@@ -280,6 +275,63 @@ jobs:
         with:
           name: instantmenu-${{ steps.vars.outputs.version }}-deb
           path: artifacts/
+  apk:
+    name: Build Alpine package (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    needs: metadata
+    if: ${{ needs.metadata.outputs.should_release == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Cache Alpine Cargo dependencies and build output
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/apk-cargo
+            target/apk-build
+          key: alpine-3.24-${{ matrix.arch }}-${{ hashFiles('Cargo.lock', 'packaging/alpine/APKBUILD.in') }}
+          restore-keys: alpine-3.24-${{ matrix.arch }}-
+      - name: Build native Alpine package
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work -e EXPECTED_ARCH \
+            -e CARGO_HOME=/work/target/apk-cargo \
+            -e APK_CARGO_TARGET_DIR=/work/target/apk-build \
+            -e CARGO_BUILD_JOBS=2 alpine:3.24 sh -ec '
+              test "$(apk --print-arch)" = "$EXPECTED_ARCH"
+              apk add --update-cache abuild
+              SUDO= abuild-keygen -a -n -i
+              ./utils/build_apk.sh
+            '
+      - name: Smoke test Alpine installation
+        run: |
+          docker run --rm -v "$PWD/target/apk:/packages:ro" alpine:3.24 sh -ec '
+            cd /packages
+            sha256sum -c ./*.apk.sha256
+            apk add --no-cache --allow-untrusted ./*.apk
+            instantmenu --version
+            instantmenu --help > /dev/null
+            itest -f /usr/bin/instantmenu
+            test -x /usr/bin/instantmenu_smartrun
+            test -f /usr/share/man/man1/instantmenu.1.gz
+          '
+      - name: Upload Alpine package
+        uses: actions/upload-artifact@v7
+        with:
+          name: instantmenu-${{ needs.metadata.outputs.version }}-apk-${{ matrix.arch }}
+          path: |
+            target/apk/*.apk
+            target/apk/*.apk.sha256
   release:
     name: Publish GitHub release
     runs-on: ubuntu-26.04
@@ -291,6 +343,7 @@ jobs:
       - cross-compile
       - pkgbuild
       - deb
+      - apk
     if: ${{ needs.metadata.outputs.should_release == 'true' }}
     permissions:
       contents: write
