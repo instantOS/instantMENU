@@ -317,10 +317,12 @@ fn acceptance_paths_share_item_output_contract() {
             "auto-confirm",
             "bound",
         ] {
-            let mut cfg = Config::default();
-            cfg.single_key = path == "single-key";
-            cfg.auto_confirm = path == "auto-confirm";
-            cfg.alt_tab = path == "alt-release";
+            let mut cfg = Config {
+                single_key: path == "single-key",
+                auto_confirm: path == "auto-confirm",
+                alt_tab: path == "alt-release",
+                ..Config::default()
+            };
             if path == "bound" {
                 cfg.bindings = bound_config().bindings;
             }
@@ -2905,10 +2907,9 @@ impl Drop for TestPipe {
     }
 }
 
-/// Startup only consumes a bounded prefix. In particular, a producer that
-/// never reaches EOF cannot hold window creation hostage.
-#[test]
-fn stream_preload_leaves_a_large_remainder_for_the_event_loop() {
+/// A regular file is always readable up to EOF, making continuous input
+/// deterministic without a writer thread racing the reader.
+fn stream_file(bytes: &[u8]) -> std::fs::File {
     let path = std::env::temp_dir().join(format!(
         "instantmenu-preload-{}-{:?}",
         std::process::id(),
@@ -2920,21 +2921,83 @@ fn stream_preload_leaves_a_large_remainder_for_the_event_loop() {
         .create_new(true)
         .open(&path)
         .unwrap();
-    let item_count = 100_000;
-    file.write_all(&b"x\n".repeat(item_count)).unwrap();
+    std::fs::remove_file(path).unwrap();
+    file.write_all(bytes).unwrap();
     file.seek(SeekFrom::Start(0)).unwrap();
+    file
+}
+
+/// Startup only consumes a bounded prefix. In particular, a producer that
+/// never reaches EOF cannot hold window creation hostage.
+#[test]
+fn stream_preload_leaves_a_large_remainder_for_the_event_loop() {
+    let item_count = 100_000;
+    let file = stream_file(&b"x\n".repeat(item_count));
 
     let (mut menu, _stub, _out) = menu_with(Config::default(), &[]);
     menu.begin_stream(file.as_raw_fd());
     menu.preload_available();
 
-    assert_eq!(menu.matcher.items.len(), 32_768);
+    assert!(!menu.matcher.items.is_empty());
+    assert!(menu.matcher.items.len() <= 32_768);
     assert!(menu.stream_active(), "the byte budget stopped before EOF");
-    assert!(menu.drain_stdin(), "the event-loop drain reaches EOF");
+    while !menu.drain_stdin() {}
     assert_eq!(menu.matcher.items.len(), item_count);
+}
 
-    drop(file);
-    std::fs::remove_file(path).unwrap();
+/// The event loop has the same bounded-input contract as startup. Include
+/// incomplete lines: buffering an unterminated item must yield too.
+#[test]
+fn stream_input_turn_yields_while_more_bytes_are_readable() {
+    for input in [b"x\n".repeat(100_000), vec![b'x'; 200_000]] {
+        let mut file = stream_file(&input);
+        let (mut menu, _, _) = menu_with(Config::default(), &[]);
+        menu.begin_stream(file.as_raw_fd());
+
+        assert!(!menu.drain_stdin(), "one turn must stop before EOF");
+        let consumed = file.stream_position().unwrap();
+        assert!(consumed > 0 && consumed <= 64 * 1024);
+        assert!(menu.stream_active());
+
+        while !menu.drain_stdin() {}
+        if input.contains(&b'\n') {
+            assert_eq!(menu.matcher.items.len(), 100_000);
+        } else {
+            assert_eq!(menu.matcher.items.len(), 1);
+            assert_eq!(menu.matcher.items[0].text.len(), input.len());
+        }
+    }
+}
+
+#[test]
+fn stream_accepts_visible_selection_before_consuming_continuous_input() {
+    let mut file = stream_file(&b"incoming\n".repeat(100_000));
+    let (mut menu, stub, out) = menu_with(Config::default(), &["visible"]);
+    menu.begin_stream(file.as_raw_fd());
+    stub.key(ks::KEY_Return, M_NONE, "");
+
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert_eq!(out.contents(), "visible\n");
+    assert!(menu.stream_active(), "selection must not require EOF");
+    assert!(file.stream_position().unwrap() < file.metadata().unwrap().len());
+}
+
+/// Display events cannot starve input either: every loop iteration advances
+/// stdin even if poll_event can return a queued backend event immediately.
+#[test]
+fn stream_progresses_while_backend_events_are_queued() {
+    let mut file = stream_file(&b"incoming\n".repeat(100_000));
+    let (mut menu, stub, _) = menu_with(Config::default(), &[]);
+    menu.begin_stream(file.as_raw_fd());
+    for _ in 0..64 {
+        stub.push(BackendEvent::Expose);
+    }
+    stub.key(ks::KEY_Escape, M_NONE, "");
+
+    assert_eq!(menu.run(), ExitStatus::Failure);
+    // Expose's present() call does not consume stdin; these bytes were read
+    // by separate bounded input turns in the menu loop.
+    assert!(file.stream_position().unwrap() > 64 * 1024);
 }
 
 /// Items stream in batch by batch; the menu keeps running until EOF, which

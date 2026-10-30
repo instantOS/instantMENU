@@ -134,5 +134,18 @@ shortcuts; duplicates select the first matching entry in input order. Global
 and shortcuts are inactive in `--single-key`, input-only, password, and toast
 modes. `{key=q}` remains the separate single-character `--single-key` interface.
 
+## Testing
+
+Run `cargo test --all-targets` for the unit and CLI tests. With `sway` and
+`wtype` installed, also run:
+
+```sh
+cargo build --bin instantmenu
+python3 scripts/test-streaming-wayland.py
+```
+
+The interaction test starts an isolated headless compositor and checks selection,
+typing, and cancellation while producers continue writing to real pipes.
+
 --------
 ### instantOS is still in early beta, contributions always welcome
