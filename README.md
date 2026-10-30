@@ -40,10 +40,15 @@ bump can also be selected manually from the workflow dispatch form.
 - Catppuccin, classic and Gruvbox themes (`--theme`)
 
 Large fuzzy searches update results progressively while the menu remains interactive.
+Small searches finish inline; a background worker starts only when a search
+exhausts its event-loop time budget.
 An ellipsis in the match counter means the result list is still being searched;
 ranking can improve as more candidates are scored. Enter accepts the current
 selection, and Escape cancels immediately. New input replaces an unfinished
 query instead of queuing searches for every intermediate keystroke.
+Automatic selection follows the best result. Once you navigate or hover to
+choose a result, incoming items preserve that choice and keep it visible,
+including when input finishes. Editing the query selects the best match again.
 
 ## Appearance configuration
 

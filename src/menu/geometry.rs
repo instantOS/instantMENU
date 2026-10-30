@@ -421,6 +421,7 @@ impl Menu {
             return None;
         }
         // selected = that item (find its position in the rebuilt match list)
+        self.selection_is_explicit = true;
         self.selection.selected = self
             .matcher
             .matches
@@ -541,7 +542,7 @@ impl Menu {
              * horizontal) shape, so installing a new Layout and leaving the
              * old page boundary alive is never valid. Drawing and hit-testing
              * both consume this boundary. */
-            self.recalc_paging();
+            self.ensure_selection_visible();
         }
     }
 }

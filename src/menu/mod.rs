@@ -110,8 +110,10 @@ pub struct Menu {
     frecency_dirty: bool,
     pending_output: Vec<String>,
     has_shortcuts: bool,
-    /// Installed by run(); setup uses the pure matcher before event polling.
+    selection_is_explicit: bool,
+    /// Created only after an interactive search exhausts its inline budget.
     search: Option<search::SearchWorker>,
+    background_search_enabled: bool,
     deferred_events: std::collections::VecDeque<crate::backend::BackendEvent>,
     reject_snapshot: Option<(String, usize)>,
     /// EOF-only conclusions wait for a completed current-query result.
@@ -182,7 +184,9 @@ impl Menu {
             frecency_dirty: false,
             pending_output: Vec::new(),
             has_shortcuts: false,
+            selection_is_explicit: false,
             search: None,
+            background_search_enabled: false,
             deferred_events: std::collections::VecDeque::new(),
             reject_snapshot: None,
             finalize_search_pending: false,
@@ -333,22 +337,23 @@ impl Menu {
     /// Run the matcher for the current text and select the best match.
     /// The C version printed and exited from inside match(); those cases are
     /// transitions here. While items stream in, pick conclusions are
-    /// deferred (see [`Matcher::search`]) and an existing selection survives
-    /// the rematch — a batch landing under a user's arrow keys must not yank
-    /// the highlight back to the top. Once the corpus is final, typing means
-    /// "select whatever matches my query best": the selection resets to the
-    /// top and a resting pointer does not override it. Hover is
+    /// deferred (see [`Matcher::search`]). An explicit user choice survives
+    /// re-ranking together with its viewport, including at EOF. Automatic
+    /// selection follows the best result as better candidates arrive; a query
+    /// edit restores that automatic policy. A resting pointer does not
+    /// override it. Hover is
     /// change-detected on the pointer's row (see [`Menu::set_selection`]),
     /// so jitter around a resting pointer cannot fight the reset into
     /// alternating frames — the flicker an earlier pointer-authoritative
     /// rematch suffered from.
     pub(in crate::menu) fn do_match(&mut self) -> Transition {
         let complete = self.stream_complete();
-        let keep = (!complete)
-            .then_some(self.selection.selected)
-            .flatten()
-            .and_then(|pos| self.matcher.matches.get(pos))
-            .map(|&idx| self.matcher.items[idx].arrival_index);
+        let corpus = if complete {
+            matcher::CorpusState::Complete
+        } else {
+            matcher::CorpusState::Streaming
+        };
+        let keep = self.selection_anchor();
         let reordered = self.frecency_dirty && self.frecency.is_some();
         let old_order = (reordered && self.search.is_some()).then(|| {
             self.matcher
@@ -378,32 +383,95 @@ impl Menu {
                 .collect();
         }
         if let Some(search) = &mut self.search {
-            search.request(&self.matcher, &self.editor.text, complete, reordered);
+            let order = if reordered {
+                search::ItemOrder::Changed
+            } else {
+                search::ItemOrder::Unchanged
+            };
+            search.request(&self.matcher, &self.editor.text, corpus, order);
             return Transition::Nop;
         }
-        let result = self.matcher.search(&self.editor.text, complete);
+        let result = if self.background_search_enabled {
+            let started = std::time::Instant::now();
+            let cancelled = || started.elapsed() >= std::time::Duration::from_millis(1);
+            let result = self.matcher.search_controlled(
+                &self.editor.text,
+                corpus,
+                matcher::SearchControl {
+                    cancelled: &cancelled,
+                    progress: None,
+                },
+            );
+            match result {
+                Some(result) => result,
+                None => {
+                    // Resume the same query/cache on the worker. Do not score
+                    // the initial inline prefix a second time.
+                    let state = self.matcher.take_search_state();
+                    let mut search = match search::SearchWorker::new(state, &self.editor.text) {
+                        Ok(search) => search,
+                        Err(error) => {
+                            eprintln!("instantmenu: cannot start search worker: {error}");
+                            return Transition::Exit(ExitStatus::Failure);
+                        }
+                    };
+                    search.request(
+                        &self.matcher,
+                        &self.editor.text,
+                        corpus,
+                        search::ItemOrder::Unchanged,
+                    );
+                    self.search = Some(search);
+                    return Transition::Nop;
+                }
+            }
+        } else {
+            self.matcher.search(&self.editor.text, corpus)
+        };
         self.install_matches(result, keep)
     }
 
-    fn install_matches(&mut self, result: MatchResult, keep: Option<usize>) -> Transition {
+    fn selection_anchor(&self) -> Option<paging::SelectionAnchor> {
+        if !self.selection_is_explicit {
+            return None;
+        }
+        let id_at = |position: usize| {
+            self.matcher
+                .matches
+                .get(position)
+                .map(|&index| self.matcher.items[index].arrival_index)
+        };
+        Some(paging::SelectionAnchor {
+            selected_id: id_at(self.selection.selected?)?,
+            page_start_id: self.selection.page_start.and_then(id_at),
+        })
+    }
+
+    fn install_matches(
+        &mut self,
+        result: MatchResult,
+        keep: Option<paging::SelectionAnchor>,
+    ) -> Transition {
         match result {
             MatchResult::Listed => {
-                let keep = keep.and_then(|id| {
+                let position_of = |id| {
                     self.matcher
                         .matches
                         .iter()
                         .position(|&idx| self.matcher.items[idx].arrival_index == id)
-                });
-                self.selection = Selection {
-                    selected: self.matcher.first_selectable_match(),
-                    page_start: (!self.matcher.matches.is_empty()).then_some(0),
                 };
-                if let Some(pos) = keep {
-                    if self.matcher.match_is_selectable(pos) {
-                        self.selection.selected = Some(pos);
-                    }
-                }
-                self.recalc_paging();
+                let selected = keep
+                    .and_then(|anchor| position_of(anchor.selected_id))
+                    .filter(|&pos| self.matcher.match_is_selectable(pos));
+                let page = keep
+                    .and_then(|anchor| anchor.page_start_id)
+                    .and_then(position_of);
+                self.selection_is_explicit = selected.is_some();
+                self.selection = Selection {
+                    selected: selected.or_else(|| self.matcher.first_selectable_match()),
+                    page_start: page.or_else(|| (!self.matcher.matches.is_empty()).then_some(0)),
+                };
+                self.ensure_selection_visible();
                 Transition::Nop
             }
             MatchResult::AutoConfirm(idx) => self.accept(AcceptTarget::Item(idx), AcceptMode::Exit),
@@ -416,6 +484,12 @@ impl Menu {
 
     /// Move the selection one item forward, paging when it crosses `next`.
     pub(in crate::menu) fn select_next(&mut self) {
+        self.selection_is_explicit = true;
+        if self.selection.selected.is_none() {
+            self.selection.selected = self.matcher.first_selectable_match();
+            self.ensure_selection_visible();
+            return;
+        }
         loop {
             let (sel, turned) =
                 paging::advance(&self.selection, self.matcher.matches.len(), &self.paging);
@@ -438,6 +512,12 @@ impl Menu {
 
     /// Move the selection one item backward, paging when it crosses `prev`.
     pub(in crate::menu) fn select_prev(&mut self) {
+        self.selection_is_explicit = true;
+        if self.selection.selected.is_none() {
+            self.selection.selected = self.matcher.first_selectable_match();
+            self.ensure_selection_visible();
+            return;
+        }
         loop {
             let (sel, turned) = paging::retreat(&self.selection, &self.paging);
             if sel == self.selection {
@@ -460,6 +540,7 @@ impl Menu {
     /// Start a page at `pos` and select its first selectable item. A trailing
     /// heading cannot trap selection: fall back to the preceding action.
     pub(in crate::menu) fn select_page(&mut self, pos: usize) {
+        self.selection_is_explicit = true;
         let selected = (pos..self.matcher.matches.len())
             .find(|&candidate| self.matcher.match_is_selectable(candidate))
             .or_else(|| {
@@ -488,6 +569,20 @@ impl Menu {
         );
     }
 
+    /// Selection and viewport are one invariant: a selected result must be
+    /// visible after both result replacement and a layout change.
+    fn ensure_selection_visible(&mut self) {
+        self.recalc_paging();
+        if let Some(pos) = self.selection.selected {
+            let start = self.selection.page_start.unwrap_or(0);
+            let end = self.paging.next.unwrap_or(self.matcher.matches.len());
+            if pos < start || pos >= end {
+                self.selection.page_start = Some(pos);
+                self.recalc_paging();
+            }
+        }
+    }
+
     /// --preselect: highlight the first selectable match whose output value
     /// equals the configured value, walking the selection there so paging
     /// turns pages exactly like repeated Down presses. The comparison is
@@ -504,6 +599,7 @@ impl Menu {
         }) else {
             return;
         };
+        self.selection_is_explicit = true;
         self.selection = Selection {
             selected: self.matcher.first_selectable_match(),
             page_start: (!self.matcher.matches.is_empty()).then_some(0),

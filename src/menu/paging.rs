@@ -14,6 +14,14 @@ pub(super) struct Selection {
     pub page_start: Option<usize>,
 }
 
+/// Stable item identities for carrying an explicit choice and its viewport
+/// across reordered search results. These are not positions in `matches`.
+#[derive(Clone, Copy)]
+pub(super) struct SelectionAnchor {
+    pub selected_id: usize,
+    pub page_start_id: Option<usize>,
+}
+
 impl Selection {
     /// After a re-match the list restarts at the top: page_start = 0 when there
     /// are matches, and the selection follows.

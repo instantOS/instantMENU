@@ -50,6 +50,7 @@ impl Menu {
         self.hovered = item;
         match item {
             Some(item) if self.selection.selected != Some(item) => {
+                self.selection_is_explicit = true;
                 self.selection.selected = Some(item);
                 Transition::Redraw
             }
@@ -144,6 +145,7 @@ impl Menu {
     /// anything. Shared by the wheel and PageDown at the end of the list, so
     /// the two routes to the end of a long list cannot drift apart.
     pub(super) fn select_last_item(&mut self) -> bool {
+        self.selection_is_explicit = true;
         let Some(last) = self.last_selectable_match() else {
             return false;
         };
@@ -182,6 +184,7 @@ impl Menu {
         // a plain Nop rather than a second opinion.
         self.hovered = Some(item);
         self.selection.selected = Some(item);
+        self.selection_is_explicit = true;
     }
 
     /// Apply a burst of repaint-only events and redraw once.
@@ -289,6 +292,7 @@ impl Menu {
             && header.left_arrow.contains(pos)
         {
             self.selection = paging::scroll_up(&self.selection, &self.paging);
+            self.selection_is_explicit = true;
             self.recalc_paging();
             return Transition::Redraw;
         }

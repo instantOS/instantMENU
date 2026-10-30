@@ -68,6 +68,7 @@ impl Menu {
             return Transition::Nop;
         }
         self.selection.selected = Some(pos);
+        self.selection_is_explicit = true;
         self.animate_selection();
         self.accept(AcceptTarget::Item(self.matcher.matches[pos]), mode)
     }

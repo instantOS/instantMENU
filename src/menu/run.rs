@@ -24,13 +24,9 @@ impl Menu {
         if let Some(toast) = self.cfg.toast {
             return self.run_toast(toast);
         }
-        self.search = match super::search::SearchWorker::new(&self.matcher, &self.editor.text) {
-            Ok(search) => Some(search),
-            Err(error) => {
-                eprintln!("instantmenu: cannot start search worker: {error}");
-                return ExitStatus::Failure;
-            }
-        };
+        // Small searches complete inline. Only a search that exhausts its
+        // event-loop time slice creates a worker and its notification socket.
+        self.background_search_enabled = true;
 
         /* with a complete (non-streamed) corpus, --preselect applies before
          * the first event; streaming defers it to EOF against the full list */
@@ -53,7 +49,9 @@ impl Menu {
                         return status;
                     }
                 } else {
-                    self.settle_stream();
+                    if let Some(status) = self.settle_stream() {
+                        return status;
+                    }
                 }
             }
 
@@ -63,12 +61,15 @@ impl Menu {
                 self.draw_menu();
             }
 
-            let mut extra: Vec<RawFd> = Vec::with_capacity(2);
+            let mut extra: [RawFd; 2] = [-1; 2];
+            let mut extra_len = 0;
             if self.stream_active() {
-                extra.push(self.stream_fd);
+                extra[extra_len] = self.stream_fd;
+                extra_len += 1;
             }
             if let Some(fd) = self.search.as_ref().and_then(|search| search.fd()) {
-                extra.push(fd);
+                extra[extra_len] = fd;
+                extra_len += 1;
             }
             let timeout = self.stream_poll_budget(Instant::now());
 
@@ -79,7 +80,7 @@ impl Menu {
             };
             let ev = match deferred
                 .map(EventPoll::Event)
-                .unwrap_or_else(|| self.backend.poll_event(timeout, &extra))
+                .unwrap_or_else(|| self.backend.poll_event(timeout, &extra[..extra_len]))
             {
                 EventPoll::Event(ev) => ev,
                 EventPoll::Readable(_) => continue,

@@ -90,6 +90,10 @@ def exercise(binary, env, root, label, text, key):
                 # proves the menu has consumed tens of thousands of paths.
                 wait_for(ready.exists, menu, label)
             time.sleep(.3)
+            if label == "slow":
+                # Opening a simple menu must not allocate a search thread.
+                names = [p.read_text().strip() for p in Path(f"/proc/{menu.pid}/task").glob("*/comm")]
+                assert not any(name.startswith("instantmenu-sea") for name in names), names
             if not label.startswith("large-loaded"):
                 assert producer.poll() is None, "producer ended before interaction"
             started = time.monotonic()

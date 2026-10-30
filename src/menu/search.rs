@@ -10,22 +10,28 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
-use super::matcher::{Item, MatchResult, Matcher};
+use super::matcher::{CorpusState, Item, MatchResult, Matcher, SearchControl, SearchProgress};
+
+#[derive(Clone, Copy)]
+pub(super) enum ItemOrder {
+    Unchanged,
+    Changed,
+}
 
 struct Request {
     generation: u64,
     text: String,
     insensitive: bool,
-    complete: bool,
+    corpus: CorpusState,
 }
 
 pub(super) struct Response {
     generation: u64,
-    pub complete: bool,
+    pub corpus: CorpusState,
     count: usize,
     pub matches: Vec<usize>,
     pub result: MatchResult,
-    pub finished: bool,
+    pub scan_finished: bool,
 }
 
 #[derive(Default)]
@@ -45,7 +51,7 @@ pub(super) struct SearchWorker {
     text: String,
     insensitive: bool,
     count: usize,
-    complete: bool,
+    corpus: CorpusState,
     applied: u64,
     applied_count: usize,
     query_ready: bool,
@@ -53,7 +59,7 @@ pub(super) struct SearchWorker {
 }
 
 impl SearchWorker {
-    pub fn new(policy: &Matcher, text: &str) -> std::io::Result<Self> {
+    pub fn new(mut matcher: Matcher, text: &str) -> std::io::Result<Self> {
         let (wake, mut notify) = UnixStream::pair()?;
         wake.set_nonblocking(true)?;
         notify.set_nonblocking(true)?;
@@ -61,7 +67,7 @@ impl SearchWorker {
         let generation = Arc::new(AtomicU64::new(0));
         let shared_worker = Arc::clone(&shared);
         let generation_worker = Arc::clone(&generation);
-        let mut matcher = policy.policy_only();
+        let insensitive = matcher.insensitive;
         let handle = thread::Builder::new()
             .name("instantmenu-search".into())
             .spawn(move || {
@@ -86,29 +92,31 @@ impl SearchWorker {
                         matcher.invalidate();
                     }
                     matcher.items.extend(append);
-                    matcher.set_insensitive(request.insensitive);
+                    matcher.insensitive = request.insensitive;
                     let cancelled =
                         || generation_worker.load(Ordering::Relaxed) != request.generation;
                     let mut publish = |response| {
                         shared_worker.0.lock().unwrap().result = Some(response);
                         let _ = notify.write(&[1]);
                     };
-                    let Some(result) = matcher.search_progressively(
+                    let Some(result) = matcher.search_controlled(
                         &request.text,
-                        request.complete,
-                        cancelled,
-                        Some(&mut |matches, count| {
-                            if !cancelled() {
-                                publish(Response {
-                                    generation: request.generation,
-                                    complete: false,
-                                    count,
-                                    matches,
-                                    result: MatchResult::Listed,
-                                    finished: false,
-                                });
-                            }
-                        }),
+                        request.corpus,
+                        SearchControl {
+                            cancelled: &cancelled,
+                            progress: Some(&mut |SearchProgress { matches, scanned }| {
+                                if !cancelled() {
+                                    publish(Response {
+                                        generation: request.generation,
+                                        corpus: request.corpus,
+                                        count: scanned,
+                                        matches,
+                                        result: MatchResult::Listed,
+                                        scan_finished: false,
+                                    });
+                                }
+                            }),
+                        },
                     ) else {
                         continue;
                     };
@@ -117,11 +125,11 @@ impl SearchWorker {
                     }
                     let response = Response {
                         generation: request.generation,
-                        complete: request.complete,
+                        corpus: request.corpus,
                         count: matcher.items.len(),
                         matches: std::mem::take(&mut matcher.matches),
                         result,
-                        finished: true,
+                        scan_finished: true,
                     };
                     // A full notification socket already contains a wakeup. The
                     // result lives in the mailbox, so notifications may coalesce.
@@ -134,9 +142,9 @@ impl SearchWorker {
             wake,
             thread: Some(handle),
             text: text.to_string(),
-            insensitive: policy.insensitive(),
+            insensitive,
             count: 0,
-            complete: false,
+            corpus: CorpusState::Streaming,
             applied: 0,
             applied_count: 0,
             query_ready: true,
@@ -144,11 +152,10 @@ impl SearchWorker {
         })
     }
 
-    pub fn request(&mut self, source: &Matcher, text: &str, complete: bool, reordered: bool) {
-        let replace = reordered || source.items.len() < self.count;
-        let changed = self.text != text || self.insensitive != source.insensitive() || replace;
-        if !changed && self.count == source.items.len() && self.complete == complete && self.waiting
-        {
+    pub fn request(&mut self, source: &Matcher, text: &str, corpus: CorpusState, order: ItemOrder) {
+        let replace = matches!(order, ItemOrder::Changed) || source.items.len() < self.count;
+        let changed = self.text != text || self.insensitive != source.insensitive || replace;
+        if !changed && self.count == source.items.len() && self.corpus == corpus && self.waiting {
             return;
         }
         if changed {
@@ -161,9 +168,9 @@ impl SearchWorker {
         };
         let replacement = replace.then(|| source.items.clone());
         self.text = text.to_string();
-        self.insensitive = source.insensitive();
+        self.insensitive = source.insensitive;
         self.count = source.items.len();
-        self.complete = complete;
+        self.corpus = corpus;
         self.waiting = true;
         let (lock, ready) = &*self.shared;
         let mut mailbox = lock.lock().unwrap();
@@ -176,7 +183,7 @@ impl SearchWorker {
             generation: self.generation.load(Ordering::Relaxed),
             text: self.text.clone(),
             insensitive: self.insensitive,
-            complete,
+            corpus,
         });
         ready.notify_one();
     }
@@ -213,10 +220,10 @@ impl SearchWorker {
         // An empty partial result does not establish "no match". In
         // particular, Return must not print raw input before a later chunk
         // has had the opportunity to produce a selectable result.
-        self.query_ready = response.finished || !response.matches.is_empty();
-        self.waiting = !response.finished
+        self.query_ready = response.scan_finished || !response.matches.is_empty();
+        self.waiting = !response.scan_finished
             || response.count != self.count
-            || response.complete != self.complete;
+            || response.corpus != self.corpus;
         Ok(Some(response))
     }
 }
@@ -300,7 +307,6 @@ impl Menu {
     }
 
     pub(super) fn poll_search(&mut self) -> Option<ExitStatus> {
-        let was_pending = self.search_pending();
         let response = match self.search.as_mut()?.take_result() {
             Ok(Some(response)) => response,
             Ok(None) => return None,
@@ -310,7 +316,7 @@ impl Menu {
             }
         };
         if let Some((text, cursor)) = response
-            .finished
+            .scan_finished
             .then(|| self.reject_snapshot.take())
             .flatten()
         {
@@ -322,11 +328,7 @@ impl Menu {
                 return None;
             }
         }
-        let keep = (!was_pending || !self.stream_complete())
-            .then_some(self.selection.selected)
-            .flatten()
-            .and_then(|pos| self.matcher.matches.get(pos))
-            .map(|&idx| self.matcher.items[idx].arrival_index);
+        let keep = self.selection_anchor();
         self.matcher.matches = response.matches;
         let t = self.install_matches(response.result, keep);
         if let Some(status) = self.perform(t) {
@@ -340,12 +342,14 @@ impl Menu {
                 .position(|&i| self.matcher.items[i].arrival_index == target)
             {
                 self.selection.selected = Some(pos);
+                self.selection_is_explicit = true;
                 self.selection.page_start = Some(pos);
                 self.recalc_paging();
             }
         }
         if self.finalize_search_pending
-            && response.complete
+            && response.scan_finished
+            && response.corpus.is_complete()
             && self
                 .search
                 .as_ref()
@@ -385,7 +389,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             if let Some(response) = worker.take_result().unwrap() {
-                if response.finished {
+                if response.scan_finished {
                     return response;
                 }
             }
@@ -403,17 +407,32 @@ mod tests {
             vec![Item::new("alpha"), Item::new("beta")],
             &Config::default(),
         );
-        let mut worker = SearchWorker::new(&source, "").unwrap();
-        worker.request(&source, "alpha", false, false);
+        let mut worker = SearchWorker::new(source.take_search_state(), "").unwrap();
+        worker.request(
+            &source,
+            "alpha",
+            CorpusState::Streaming,
+            ItemOrder::Unchanged,
+        );
         source.items.push(Item::new("gamma"));
-        worker.request(&source, "beta", false, false);
+        worker.request(
+            &source,
+            "beta",
+            CorpusState::Streaming,
+            ItemOrder::Unchanged,
+        );
         source
             .items
             .push(Item::new("{match=target value=result} chosen"));
-        worker.request(&source, "target", true, false);
+        worker.request(
+            &source,
+            "target",
+            CorpusState::Complete,
+            ItemOrder::Unchanged,
+        );
         let response = finished(&mut worker);
         assert_eq!(response.matches, vec![3]);
-        assert!(response.complete);
+        assert!(response.corpus.is_complete());
         assert!(!worker.pending_query());
         assert!(worker.fd().is_none());
     }
@@ -424,14 +443,24 @@ mod tests {
             vec![Item::new("UPPER"), Item::new("upper")],
             &Config::default(),
         );
-        let mut worker = SearchWorker::new(&source, "").unwrap();
-        worker.request(&source, "UPPER", true, false);
+        let mut worker = SearchWorker::new(source.take_search_state(), "").unwrap();
+        worker.request(
+            &source,
+            "UPPER",
+            CorpusState::Complete,
+            ItemOrder::Unchanged,
+        );
         assert_eq!(finished(&mut worker).matches, vec![0]);
         source.items.swap(0, 1);
-        worker.request(&source, "UPPER", true, true);
+        worker.request(&source, "UPPER", CorpusState::Complete, ItemOrder::Changed);
         assert_eq!(finished(&mut worker).matches, vec![1]);
-        source.set_insensitive(true);
-        worker.request(&source, "UPPER", true, false);
+        source.insensitive = true;
+        worker.request(
+            &source,
+            "UPPER",
+            CorpusState::Complete,
+            ItemOrder::Unchanged,
+        );
         assert_eq!(finished(&mut worker).matches.len(), 2);
     }
 
@@ -444,13 +473,28 @@ mod tests {
                 ..Config::default()
             },
         );
-        let mut worker = SearchWorker::new(&source, "").unwrap();
-        worker.request(&source, "target", false, false);
+        let mut worker = SearchWorker::new(source.take_search_state(), "").unwrap();
+        worker.request(
+            &source,
+            "target",
+            CorpusState::Streaming,
+            ItemOrder::Unchanged,
+        );
         assert_eq!(finished(&mut worker).result, MatchResult::Listed);
         source.items.push(Item::new("target two"));
-        worker.request(&source, "target", true, false);
+        worker.request(
+            &source,
+            "target",
+            CorpusState::Complete,
+            ItemOrder::Unchanged,
+        );
         assert_eq!(finished(&mut worker).result, MatchResult::Listed);
-        worker.request(&source, "target two", true, false);
+        worker.request(
+            &source,
+            "target two",
+            CorpusState::Complete,
+            ItemOrder::Unchanged,
+        );
         assert_eq!(finished(&mut worker).result, MatchResult::AutoConfirm(1));
     }
 }

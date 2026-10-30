@@ -270,14 +270,18 @@ impl Menu {
     /// fontconfig pass, install the layout derived from the grown corpus,
     /// re-match/paginate against that layout, and redraw once. Pick
     /// conclusions stay deferred while the corpus is incomplete.
-    pub(super) fn settle_stream(&mut self) {
+    pub(super) fn settle_stream(&mut self) -> Option<ExitStatus> {
         let chars = std::mem::take(&mut self.pending_chars);
         self.renderer.add_fallbacks(&chars);
         self.reflow();
-        let _ = self.do_match();
+        let transition = self.do_match();
+        if let Some(status) = self.perform(transition) {
+            return Some(status);
+        }
         self.draw_menu();
         self.gate.reset();
         self.stream_dirty = false;
+        None
     }
 
     /// EOF settled: the corpus is final, so the deferred conclusions fire

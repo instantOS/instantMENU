@@ -189,6 +189,7 @@ impl Menu {
             s if s == ks::KEY_k => {
                 /* delete right */
                 self.editor.truncate_to_cursor();
+                self.selection_is_explicit = false;
                 let t = self.do_match();
                 return KeyPath::Done(t.at_least_redraw());
             }
@@ -256,7 +257,8 @@ impl Menu {
             if self.select_prev_position(s).is_none() {
                 // wrap to the last item
                 self.selection.selected = self.last_selectable_match();
-                self.recalc_paging();
+                self.selection_is_explicit = true;
+                self.ensure_selection_visible();
             } else {
                 self.select_prev();
             }
@@ -351,6 +353,7 @@ impl Menu {
                     .at_least_redraw(),
             )
         } else if sym == ks::KEY_End || sym == ks::KEY_KP_End {
+            self.selection_is_explicit = true;
             if self.editor.cursor < self.editor.text.len() {
                 self.editor.cursor = self.editor.text.len();
             } else if self.paging.next.is_some() {
@@ -367,6 +370,7 @@ impl Menu {
                 );
             }
             self.selection.selected = self.last_selectable_match();
+            self.ensure_selection_visible();
             Some(Transition::Redraw)
         } else if sym == ks::KEY_Escape {
             Some(Transition::Exit(ExitStatus::Failure))
@@ -440,6 +444,7 @@ impl Menu {
                 };
                 let selected_text = self.matcher.text_of_match(s).to_string();
                 self.editor.set_text(&selected_text);
+                self.selection_is_explicit = false;
                 return self.do_match().at_least_redraw();
             }
             /* plain Tab in alt-tab mode marks a cycle, so the next release
@@ -486,6 +491,7 @@ impl Menu {
                 return Transition::Nop;
             };
             self.selection.selected = Some(temp_selection);
+            self.selection_is_explicit = true;
             if offscreen {
                 self.selection.page_start = Some(self.paging.prev);
                 self.recalc_paging();
@@ -537,6 +543,7 @@ impl Menu {
                 return Transition::Nop;
             };
             self.selection.selected = Some(temp_selection);
+            self.selection_is_explicit = true;
             if offscreen {
                 self.selection.page_start = self.paging.next;
                 self.recalc_paging();

@@ -22,6 +22,7 @@ impl Menu {
         if !self.editor.apply(op) {
             return Transition::Nop;
         }
+        self.selection_is_explicit = false;
         self.matcher.note_uppercase(&self.editor.text);
 
         let t = self.do_match();
