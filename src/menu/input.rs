@@ -22,11 +22,11 @@ impl Menu {
         if !self.editor.apply(op) {
             return Transition::Nop;
         }
-        self.selection_is_explicit = false;
+        self.use_automatic_selection();
         self.matcher.note_uppercase(&self.editor.text);
 
         let t = self.do_match();
-        if self.search.is_some() {
+        if self.search.as_ref().is_some_and(|worker| worker.is_busy()) {
             self.reject_snapshot = last;
             return t;
         }

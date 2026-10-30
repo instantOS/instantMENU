@@ -67,8 +67,8 @@ impl Menu {
                 extra[extra_len] = self.stream_fd;
                 extra_len += 1;
             }
-            if let Some(fd) = self.search.as_ref().and_then(|search| search.fd()) {
-                extra[extra_len] = fd;
+            if let Some(search) = self.search.as_ref().filter(|search| search.is_busy()) {
+                extra[extra_len] = search.fd();
                 extra_len += 1;
             }
             let timeout = self.stream_poll_budget(Instant::now());
@@ -88,10 +88,6 @@ impl Menu {
                 EventPoll::Timeout => continue,
                 EventPoll::Closed => return ExitStatus::Failure,
             };
-            if self.defer_for_search(&ev) {
-                self.deferred_events.push_back(ev);
-                continue;
-            }
 
             let t = match ev {
                 /* Wheel detents and pointer motion both only ever ask for a

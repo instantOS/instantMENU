@@ -7,7 +7,7 @@ use super::layout::Layout;
 use super::Menu;
 use crate::backend::{Backend, MonitorInfo};
 use crate::config::{MonitorChoice, Position, Width};
-use crate::enums::{EditOp, ExitStatus, Scheme};
+use crate::enums::{ExitStatus, Scheme};
 use crate::geom::{Point, Rect, Size};
 
 impl Menu {
@@ -388,55 +388,6 @@ impl Menu {
             layout.menu_height = monitor.h - self.cfg.border_width * 2 - 32;
             layout.lines = (layout.menu_height / layout.bar_height - 1 - layout.hint_rows).max(0);
         }
-    }
-
-    /// Prematch: select the item that first matched the pretyped text. Runs
-    /// once, and only against a complete corpus — mid-stream the winning
-    /// item may not have arrived yet. When the corpus completes after the
-    /// menu opened (streaming), it only fires while the input still holds
-    /// the untouched `-it` seed; editing the text opts out.
-    pub(in crate::menu) fn apply_pre_match(&mut self) -> Option<ExitStatus> {
-        if !self.cfg.pre_match
-            || self.pre_match_applied
-            || !self.stream_complete()
-            || self.matcher.matches.is_empty()
-            || self.editor.text.is_empty()
-            || self.initial_seed.as_deref() != Some(self.editor.text.as_str())
-        {
-            return None;
-        }
-        self.pre_match_applied = true;
-        // remember the item that was the first match for the pretyped text
-        let first_match_item = self.matcher.matches[0];
-        let t = self.insert(EditOp::Delete(self.editor.cursor));
-        if let Some(status) = self.settle(t) {
-            return Some(status);
-        }
-        if self
-            .search
-            .as_ref()
-            .is_some_and(|search| search.pending_query())
-        {
-            self.pre_match_target = Some(self.matcher.items[first_match_item].arrival_index);
-            return None;
-        }
-        // selected = that item (find its position in the rebuilt match list)
-        self.selection_is_explicit = true;
-        self.selection.selected = self
-            .matcher
-            .matches
-            .iter()
-            .position(|&it| it == first_match_item);
-        if let Some(next_pos) = self.paging.next {
-            for pos in next_pos..self.matcher.matches.len() {
-                if self.matcher.matches[pos] == first_match_item {
-                    self.selection.page_start = self.selection.selected;
-                    break;
-                }
-            }
-        }
-        self.recalc_paging();
-        None
     }
 
     /// Create the window, set the title, map it and draw the first frame.

@@ -1,58 +1,14 @@
-//! Keyboard handling: the keypress switch, alt-tab release handling and list
-//! navigation helpers.
-//!
-//! Handlers return [`Transition`]; they never draw, print or exit on their
-//! own. The C fallthrough tricks (a Ctrl key "handled" by re-entering the
-//! main switch with a control-character text that then gets skipped) are
-//! made explicit here.
-
-use xkbcommon::xkb::keysyms as ks;
-
-use super::measure::TextMeasurer;
-use super::paging;
-use super::transition::Transition;
-use super::{AltTab, Menu};
-use crate::backend::Modifiers;
-use crate::enums::{Direction, EditOp, ExitStatus, Side};
-
-/// How a modifier-prefixed key continues into the main switch.
-enum KeyPath {
-    /// fall through with the (possibly remapped) sym/modifiers
-    Continue(u32, Modifiers),
-    /// fully handled; carry the transition to the event loop
-    Done(Transition),
-}
+//! Execute semantic keyboard actions. Key decoding and search dependencies
+//! live in actions.rs; this module never reinterprets raw key bindings.
 
 use super::accept::{AcceptMode, AcceptTarget};
+use super::actions::KeyAction;
+use super::{AltTab, Menu, Transition};
+use crate::backend::{BackendEvent, Modifiers};
+use crate::enums::{Direction, EditOp, ExitStatus};
+use xkbcommon::xkb::keysyms as ks;
 
 impl Menu {
-    /// select_number — Ctrl-1..9 select the n-th item and hit Return.
-    fn select_number(&mut self, number: usize, mut mods: Modifiers) -> Transition {
-        self.selection.selected = self.matcher.first_selectable_match();
-        for _ in 0..number {
-            self.select_next();
-        }
-        mods.ctrl = false;
-        self.handle_return(mods)
-    }
-
-    /// The Return key branch, shared with select_number and the Ctrl-j/m
-    /// remaps.
-    fn handle_return(&mut self, mods: Modifiers) -> Transition {
-        if self.selected_is_heading() {
-            return Transition::Nop;
-        }
-
-        let mode = AcceptMode::from_ctrl(mods.ctrl);
-        // Raw input is an explicit keyboard action, never inferred by the
-        // shared item acceptance code (in particular, not by Shift-click).
-        if mods.shift && !self.cfg.reject_no_match {
-            self.accept(AcceptTarget::Input, mode)
-        } else {
-            self.confirm_selection(mode)
-        }
-    }
-
     /// key_release — alt-tab release handling. Unlike every other confirm
     /// path this does not redraw afterwards (the C event loop called
     /// keyrelease outside the drawing branch).
@@ -77,6 +33,11 @@ impl Menu {
                 if !is_alt_key(sym) || mods.shift || self.selected_is_heading() {
                     return Transition::Nop;
                 }
+                if self.search_pending() {
+                    self.deferred_events
+                        .push_back(BackendEvent::KeyRelease { sym, mods });
+                    return Transition::Nop;
+                }
                 self.confirm_selection(AcceptMode::from_ctrl(mods.ctrl))
             }
         }
@@ -91,511 +52,174 @@ impl Menu {
         }
     }
 
-    /// key_press — remap modifier prefixes, then run the unmodified key
-    /// switch.
-    pub(super) fn key_press(&mut self, sym: u32, mods: Modifiers, buf: &str) -> Transition {
-        if let Some(binding) = self
-            .cfg
-            .bindings
-            .iter()
-            .find(|binding| binding.matches(sym, mods))
+    pub(super) fn key_press(&mut self, sym: u32, mods: Modifiers, text: &str) -> Transition {
+        let key = self.decode_key(sym, mods, text);
+        let serial_edit = self.cfg.reject_no_match && self.stream_complete();
+        if self.search_pending()
+            && (key.wait_for_shortcut
+                || (!matches!(&key.action, KeyAction::Cancel)
+                    && (serial_edit || key.action.needs_results())))
         {
-            let mode = AcceptMode::Bound(binding.key.clone());
-            return self.accept(self.selected_target(), mode);
+            self.deferred_events.push_back(BackendEvent::KeyPress {
+                sym,
+                mods,
+                text: text.to_owned(),
+            });
+            return Transition::Nop;
         }
-        if self.has_shortcuts
-            && !self.cfg.single_key
-            && !self.cfg.input_only
-            && !self.cfg.password
-            && self.cfg.toast.is_none()
-        {
-            // Only activate current matches. Duplicate shortcuts resolve by
-            // arrival order, independent of fuzzy/frecency ranking and paging.
-            let target = self
-                .matcher
-                .matches
-                .iter()
-                .copied()
-                .filter(|&index| {
-                    let item = &self.matcher.items[index];
-                    item.is_selectable()
-                        && item
-                            .entry
-                            .shortcut
-                            .is_some_and(|key| key.matches(sym, mods))
-                })
-                .min_by_key(|&index| self.matcher.items[index].arrival_index);
-            if let Some(index) = target {
-                return self.accept(AcceptTarget::Item(index), AcceptMode::Exit);
-            }
+        if key.disable_alt_tab {
+            self.alt_tab = AltTab::Off;
         }
-        let (sym, mods) = if mods.ctrl {
-            match self.ctrl_key(sym, mods) {
-                KeyPath::Continue(sym, mods) => (sym, mods),
-                KeyPath::Done(t) => return t,
-            }
-        } else if mods.shift {
-            // Shift+Tab runs the alt-tab wrap-around selection and still
-            // falls through with the original sym (the C switch)
-            self.shift_key(sym);
-            (sym, mods)
-        } else if mods.alt {
-            match self.mod1_key(sym, mods) {
-                KeyPath::Continue(sym, mods) => (sym, mods),
-                KeyPath::Done(t) => return t,
-            }
-        } else if mods.logo {
-            match self.mod4_key(sym, mods) {
-                KeyPath::Continue(sym, mods) => (sym, mods),
-                KeyPath::Done(t) => return t,
-            }
-        } else {
-            (sym, mods)
-        };
-
-        self.main_key(sym, mods, buf)
+        self.execute_key(key.action)
     }
 
-    /// Ctrl-prefixed keys: remap letters to editing keys, or run an action.
-    fn ctrl_key(&mut self, sym: u32, mut mods: Modifiers) -> KeyPath {
-        let mut sym = sym;
-        match sym {
-            s if s == ks::KEY_a => sym = ks::KEY_Home,
-            s if s == ks::KEY_b => sym = ks::KEY_Left,
-            s if s == ks::KEY_c => sym = ks::KEY_Escape,
-            s if s == ks::KEY_d => sym = ks::KEY_Delete,
-            s if s == ks::KEY_e => sym = ks::KEY_End,
-            s if s == ks::KEY_f => sym = ks::KEY_Right,
-            s if s == ks::KEY_g => sym = ks::KEY_Escape,
-            s if s == ks::KEY_h => sym = ks::KEY_BackSpace,
-            s if s == ks::KEY_i => sym = ks::KEY_Tab,
-            s if s == ks::KEY_j || s == ks::KEY_J || s == ks::KEY_m || s == ks::KEY_M => {
-                sym = ks::KEY_Return;
-                mods.ctrl = false;
-            }
-            s if s == ks::KEY_n => sym = ks::KEY_Down,
-            s if s == ks::KEY_p => sym = ks::KEY_Up,
-            s if s == ks::KEY_s => {
-                /* insert ".*"; the C fallthrough re-entered the switch with
-                 * a control-character text, netting a bare redraw */
-                let t = self.insert(EditOp::Insert(".*"));
-                return KeyPath::Done(t.at_least_redraw());
-            }
-            s if s == ks::KEY_v => {
-                /* paste clipboard */
-                self.request_paste(mods);
-                return KeyPath::Done(Transition::Redraw);
-            }
-            s if s == ks::KEY_k => {
-                /* delete right */
+    fn execute_key(&mut self, action: KeyAction<'_>) -> Transition {
+        use KeyAction::*;
+        match action {
+            Ignore => Transition::Nop,
+            Redraw => Transition::Redraw,
+            Cancel => Transition::Exit(ExitStatus::Failure),
+            Insert(text) => self.insert(EditOp::Insert(text)).at_least_redraw(),
+            Backspace => self.delete_character(Direction::Backward),
+            Delete => self.delete_character(Direction::Forward),
+            TruncateRight => {
                 self.editor.truncate_to_cursor();
-                self.selection_is_explicit = false;
-                let t = self.do_match();
-                return KeyPath::Done(t.at_least_redraw());
+                self.use_automatic_selection();
+                self.do_match().at_least_redraw()
             }
-            s if s == ks::KEY_u => {
-                /* delete left */
-                let t = self.insert(EditOp::Delete(self.editor.cursor));
-                return KeyPath::Done(t.at_least_redraw());
-            }
-            s if s == ks::KEY_w => {
-                /* delete the word to the left of the cursor */
+            DeleteLeft => self
+                .insert(EditOp::Delete(self.editor.cursor))
+                .at_least_redraw(),
+            DeleteWord => {
                 let target = self.editor.word_delete_target(&self.cfg.word_delimiters);
-                if target != self.editor.cursor {
-                    let t = self.insert(EditOp::Delete(self.editor.cursor - target));
-                    return KeyPath::Done(t.at_least_redraw());
+                if target == self.editor.cursor {
+                    return Transition::Redraw;
                 }
-                return KeyPath::Done(Transition::Redraw);
+                self.insert(EditOp::Delete(self.editor.cursor - target))
+                    .at_least_redraw()
             }
-            s if s == ks::KEY_y || s == ks::KEY_Y => {
-                /* paste selection */
+            Word(direction) => {
+                self.editor
+                    .move_word_edge(direction, &self.cfg.word_delimiters);
+                Transition::Redraw
+            }
+            Paste { mods, redraw } => {
                 self.request_paste(mods);
-                return KeyPath::Done(Transition::Nop);
-            }
-            s if s == ks::KEY_Left || s == ks::KEY_KP_Left => {
-                self.editor
-                    .move_word_edge(Direction::Backward, &self.cfg.word_delimiters);
-                return KeyPath::Done(Transition::Redraw);
-            }
-            s if s == ks::KEY_Right || s == ks::KEY_KP_Right => {
-                self.editor
-                    .move_word_edge(Direction::Forward, &self.cfg.word_delimiters);
-                return KeyPath::Done(Transition::Redraw);
-            }
-            s if s == ks::KEY_Return || s == ks::KEY_KP_Enter => {
-                // fall through to the main switch with Return
-            }
-            s if (ks::KEY_1..=ks::KEY_9).contains(&s) => {
-                let t = self.select_number((s - ks::KEY_1) as usize, mods);
-                return KeyPath::Done(t.at_least_redraw());
-            }
-            s if s == ks::KEY_bracketleft => {
-                return KeyPath::Done(Transition::Exit(ExitStatus::Failure));
-            }
-            _ => return KeyPath::Done(Transition::Nop),
-        }
-        KeyPath::Continue(sym, mods)
-    }
-
-    /// Shift+Tab in alt-tab mode: move the selection back one item, wrapping
-    /// to the last. Any shifted key still falls through to the main switch.
-    /// The C branch ran the wrap for *every* shifted key — typing a capital
-    /// letter moved the selection too; only Tab is bound now.
-    ///
-    /// ISO_Left_Tab must be matched here: the standard xkb keymap defines
-    /// `key <TAB> { [ Tab, ISO_Left_Tab ] }`, so with Shift held the backends'
-    /// `key_get_one_sym` reports ISO_Left_Tab and KEY_Tab never arrives (the
-    /// bare-Tab arm only fires on exotic keymaps).
-    fn shift_key(&mut self, sym: u32) {
-        if self.alt_tab == AltTab::Off {
-            return;
-        }
-        if !matches!(sym, ks::KEY_ISO_Left_Tab | ks::KEY_Tab | ks::KEY_KP_Tab) {
-            return;
-        }
-        if let Some(s) = self.selection.selected {
-            if self.select_prev_position(s).is_none() {
-                // wrap to the last item
-                self.selection.selected = self.last_selectable_match();
-                self.selection_is_explicit = true;
-                self.ensure_selection_visible();
-            } else {
-                self.select_prev();
-            }
-        }
-    }
-
-    /// Alt-prefixed keys: remap to navigation keys, or run an action.
-    fn mod1_key(&mut self, sym: u32, mods: Modifiers) -> KeyPath {
-        let mut sym = sym;
-        match sym {
-            s if s == ks::KEY_F4 => return KeyPath::Done(Transition::Exit(ExitStatus::Failure)),
-            s if s == ks::KEY_b => {
-                self.editor
-                    .move_word_edge(Direction::Backward, &self.cfg.word_delimiters);
-                return KeyPath::Done(Transition::Redraw);
-            }
-            s if s == ks::KEY_f => {
-                self.editor
-                    .move_word_edge(Direction::Forward, &self.cfg.word_delimiters);
-                return KeyPath::Done(Transition::Redraw);
-            }
-            s if s == ks::KEY_g => sym = ks::KEY_Home,
-            s if s == ks::KEY_G => sym = ks::KEY_End,
-            s if s == ks::KEY_h => sym = ks::KEY_Up,
-            s if s == ks::KEY_j => sym = ks::KEY_Next,
-            s if s == ks::KEY_k => sym = ks::KEY_Prior,
-            s if s == ks::KEY_l => sym = ks::KEY_Down,
-            s if s == ks::KEY_space => {
-                if self.alt_tab != AltTab::Off {
-                    self.alt_tab = AltTab::Off;
-                }
-            }
-            s if s == ks::KEY_Tab => {
-                /* Alt+Tab advances the selection and starts a cycle: its own
-                 * release is absorbed and re-arms (repeat presses keep
-                 * advancing). Without the mode it falls through to the main
-                 * switch, where Tab completes the selection. The C version
-                 * compounded the two paths, advancing the selection *and*
-                 * completing the selected item's text. */
-                if self.alt_tab != AltTab::Off {
-                    if self.alt_tab == AltTab::Armed {
-                        self.alt_tab = AltTab::Tabbed;
-                    }
-
-                    if let Some(s) = self.selection.selected {
-                        if self.select_next_position(s).is_none() {
-                            self.select_page(0);
-                            self.recalc_paging();
-                        } else {
-                            self.select_next();
-                        }
-                    }
-                }
-            }
-            _ => return KeyPath::Done(Transition::Nop),
-        }
-        KeyPath::Continue(sym, mods)
-    }
-
-    /// Logo-prefixed keys: only logo+q is bound (quit); anything else falls
-    /// through to the main switch like the C version.
-    fn mod4_key(&mut self, sym: u32, mods: Modifiers) -> KeyPath {
-        if sym == ks::KEY_q {
-            return KeyPath::Done(Transition::Exit(ExitStatus::Failure));
-        }
-        KeyPath::Continue(sym, mods)
-    }
-
-    /// Editing keys handled before list navigation.
-    fn edit_key(&mut self, sym: u32) -> Option<Transition> {
-        if sym == ks::KEY_Delete || sym == ks::KEY_KP_Delete {
-            if self.editor.cursor >= self.editor.text.len() {
-                return Some(Transition::Nop);
-            }
-            self.editor.cursor = self.editor.next_rune(Direction::Forward);
-            // fallthrough to BackSpace
-            if self.editor.cursor == 0 {
-                return Some(Transition::Nop);
-            }
-            let next_rune_pos = self.editor.next_rune(Direction::Backward);
-            Some(
-                self.insert(EditOp::Delete(self.editor.cursor - next_rune_pos))
-                    .at_least_redraw(),
-            )
-        } else if sym == ks::KEY_BackSpace {
-            if self.editor.cursor == 0 {
-                return Some(Transition::Nop);
-            }
-            let next_rune_pos = self.editor.next_rune(Direction::Backward);
-            Some(
-                self.insert(EditOp::Delete(self.editor.cursor - next_rune_pos))
-                    .at_least_redraw(),
-            )
-        } else if sym == ks::KEY_End || sym == ks::KEY_KP_End {
-            self.selection_is_explicit = true;
-            if self.editor.cursor < self.editor.text.len() {
-                self.editor.cursor = self.editor.text.len();
-            } else if self.paging.next.is_some() {
-                let mut m = TextMeasurer::new(
-                    &mut self.renderer,
-                    self.cfg.single_key,
-                    self.layout.bar_height,
-                );
-                self.selection = paging::jump_to_end(
-                    &self.matcher.items,
-                    &self.matcher.matches,
-                    &self.layout,
-                    &mut m,
-                );
-            }
-            self.selection.selected = self.last_selectable_match();
-            self.ensure_selection_visible();
-            Some(Transition::Redraw)
-        } else if sym == ks::KEY_Escape {
-            Some(Transition::Exit(ExitStatus::Failure))
-        } else if sym == ks::KEY_Home || sym == ks::KEY_KP_Home {
-            if (self.selection.selected.is_none() && self.matcher.matches.is_empty())
-                || self.selection.selected == Some(0)
-            {
-                self.editor.cursor = 0;
-            } else {
-                self.select_page(0);
-                self.recalc_paging();
-            }
-            Some(Transition::Redraw)
-        } else {
-            None
-        }
-    }
-
-    /// The unmodified key switch.
-    fn main_key(&mut self, sym: u32, mods: Modifiers, buf: &str) -> Transition {
-        if let Some(t) = self.edit_key(sym) {
-            return t;
-        }
-        self.nav_key(sym, mods, buf)
-    }
-
-    /// List navigation, actions and raw insertion.
-    fn nav_key(&mut self, sym: u32, mods: Modifiers, buf: &str) -> Transition {
-        if sym == ks::KEY_Left || sym == ks::KEY_KP_Left {
-            self.move_left(mods)
-        } else if sym == ks::KEY_Up || sym == ks::KEY_KP_Up {
-            self.nav_up();
-            Transition::Redraw
-        } else if sym == ks::KEY_Next || sym == ks::KEY_KP_Next {
-            let Some(next) = self.paging.next else {
-                /* On the last page there is no page left to turn, so the key
-                 * would be dead exactly where the user wants it most: at the
-                 * end of a long list. Go to the end instead, the same place one
-                 * more wheel detent goes, so both routes agree. */
-                return if self.select_last_item() {
+                if redraw {
                     Transition::Redraw
                 } else {
                     Transition::Nop
-                };
-            };
-            /* Keyboard paging selects the page top rather than the row under
-             * the pointer. The wheel's cursor-following rule has nothing to
-             * follow here, and a keypress should not depend on where the
-             * pointer happens to be parked. */
-            self.select_page(next);
-            self.recalc_paging();
-            Transition::Redraw
-        } else if sym == ks::KEY_Prior || sym == ks::KEY_KP_Prior {
-            if self.selection.page_start.is_none() {
-                return Transition::Nop;
+                }
             }
-            self.select_page(self.paging.prev);
-            self.recalc_paging();
-            Transition::Redraw
-        } else if sym == ks::KEY_Return || sym == ks::KEY_KP_Enter {
-            self.handle_return(mods).at_least_redraw()
-        } else if sym == ks::KEY_Right || sym == ks::KEY_KP_Right {
-            self.move_right(mods)
-        } else if sym == ks::KEY_Down || sym == ks::KEY_KP_Down {
-            self.nav_down();
-            Transition::Redraw
-        } else if sym == ks::KEY_Tab {
-            if self.alt_tab == AltTab::Off {
-                let Some(s) = self.selection.selected else {
+            Cursor(direction) => {
+                self.editor.cursor = self.editor.next_rune(direction);
+                Transition::Redraw
+            }
+            CursorHome => {
+                self.editor.cursor = 0;
+                Transition::Redraw
+            }
+            Home => {
+                self.select_page(0);
+                Transition::Redraw
+            }
+            End => {
+                if self.editor.cursor < self.editor.text.len() {
+                    self.editor.cursor = self.editor.text.len();
+                }
+                self.select_end();
+                Transition::Redraw
+            }
+            Column(direction) => {
+                self.select_column(direction);
+                Transition::Redraw
+            }
+            Previous => {
+                self.move_selection(Direction::Backward);
+                Transition::Redraw
+            }
+            Next => {
+                self.move_selection(Direction::Forward);
+                Transition::Redraw
+            }
+            Page(Direction::Backward) => {
+                if self.selection.page_start.is_none() {
+                    return Transition::Nop;
+                }
+                self.select_page(self.paging.prev);
+                Transition::Redraw
+            }
+            Page(Direction::Forward) => {
+                if let Some(next) = self.paging.next {
+                    self.select_page(next);
+                    Transition::Redraw
+                } else if self.select_last_item() {
+                    Transition::Redraw
+                } else {
+                    Transition::Nop
+                }
+            }
+            Command(side) => self.trigger_command(side),
+            Confirm(mods) => self.handle_return(mods).at_least_redraw(),
+            Complete => {
+                let Some(text) = self.selected_text_ref().map(str::to_owned) else {
                     return Transition::Nop;
                 };
-                let selected_text = self.matcher.text_of_match(s).to_string();
-                self.editor.set_text(&selected_text);
-                self.selection_is_explicit = false;
-                return self.do_match().at_least_redraw();
+                self.editor.set_text(&text);
+                self.use_automatic_selection();
+                self.do_match().at_least_redraw()
             }
-            /* plain Tab in alt-tab mode marks a cycle, so the next release
-             * is absorbed (the C main switch did the same) */
-            if self.alt_tab == AltTab::Armed {
-                self.alt_tab = AltTab::Tabbed;
-            }
-            Transition::Redraw
-        } else if sym == ks::KEY_space && self.cfg.space_confirm {
-            self.handle_return(mods).at_least_redraw()
-        } else {
-            // insert: composed string from the input method
-            if let Some(first) = buf.bytes().next() {
-                if !first.is_ascii_control() {
-                    return self.insert(EditOp::Insert(buf)).at_least_redraw();
+            Cycle {
+                direction,
+                absorb_release,
+            } => {
+                if absorb_release && self.alt_tab == AltTab::Armed {
+                    self.alt_tab = AltTab::Tabbed;
                 }
+                if let Some(direction) = direction {
+                    self.cycle_selection(direction);
+                }
+                Transition::Redraw
             }
-            Transition::Redraw
+            Number { offset, mut mods } => {
+                self.select_page(0);
+                for _ in 0..offset {
+                    self.move_selection(Direction::Forward);
+                }
+                mods.ctrl = false;
+                self.handle_return(mods).at_least_redraw()
+            }
+            Binding(key) => self.accept(self.selected_target(), AcceptMode::Bound(key)),
+            Entry(index) => self.accept(AcceptTarget::Item(index), AcceptMode::Exit),
         }
     }
 
-    /// Left arrow: move a column left, move the cursor, or run the left
-    /// command.
-    fn move_left(&mut self, mods: Modifiers) -> Transition {
-        if self.layout.columns > 1 {
-            let Some(s) = self.selection.selected else {
-                return Transition::Nop;
-            };
-            let mut temp_selection = s;
-            let mut offscreen = false;
-            for _ in 0..self.layout.lines {
-                if temp_selection == 0 {
-                    return Transition::Nop;
-                }
-                if self.selection.page_start == Some(temp_selection) {
-                    offscreen = true;
-                }
-                temp_selection -= 1;
+    fn delete_character(&mut self, direction: Direction) -> Transition {
+        match direction {
+            Direction::Forward if self.editor.cursor >= self.editor.text.len() => {
+                return Transition::Nop
             }
-            let Some(temp_selection) = (0..=temp_selection)
-                .rev()
-                .find(|&pos| self.matcher.match_is_selectable(pos))
-            else {
-                return Transition::Nop;
-            };
-            self.selection.selected = Some(temp_selection);
-            self.selection_is_explicit = true;
-            if offscreen {
-                self.selection.page_start = Some(self.paging.prev);
-                self.recalc_paging();
-            }
-            Transition::Redraw
-        } else {
-            if (mods.shift || mods.logo)
-                && (self.cfg.left_command.is_some() || self.cfg.right_command.is_some())
-            {
-                return self.trigger_command(Side::Left);
-            }
-            if self.editor.cursor > 0
-                && (self.selection.selected.is_none()
-                    || self.selection.selected == Some(0)
-                    || self.layout.lines > 0)
-            {
-                self.editor.cursor = self.editor.next_rune(Direction::Backward);
-            } else if self.layout.lines > 0 {
-                return Transition::Nop;
-            } else {
-                // fallthrough to Up
-                self.nav_up();
-            }
-            Transition::Redraw
+            Direction::Backward if self.editor.cursor == 0 => return Transition::Nop,
+            Direction::Forward => self.editor.cursor = self.editor.next_rune(Direction::Forward),
+            Direction::Backward => {}
         }
+        let previous = self.editor.next_rune(Direction::Backward);
+        self.insert(EditOp::Delete(self.editor.cursor - previous))
+            .at_least_redraw()
     }
 
-    /// Right arrow: move a column right, move the cursor, or run the right
-    /// command.
-    fn move_right(&mut self, mods: Modifiers) -> Transition {
-        if self.layout.columns > 1 {
-            let Some(s) = self.selection.selected else {
-                return Transition::Nop;
-            };
-            let mut temp_selection = s;
-            let mut offscreen = false;
-            for _ in 0..self.layout.lines {
-                if temp_selection + 1 >= self.matcher.matches.len() {
-                    return Transition::Nop;
-                }
-                temp_selection += 1;
-                if self.paging.next == Some(temp_selection) {
-                    offscreen = true;
-                }
-            }
-            let Some(temp_selection) = (temp_selection..self.matcher.matches.len())
-                .find(|&pos| self.matcher.match_is_selectable(pos))
-            else {
-                return Transition::Nop;
-            };
-            self.selection.selected = Some(temp_selection);
-            self.selection_is_explicit = true;
-            if offscreen {
-                self.selection.page_start = self.paging.next;
-                self.recalc_paging();
-            }
-            Transition::Redraw
-        } else {
-            if (mods.shift || mods.logo)
-                && (self.cfg.right_command.is_some() || self.cfg.left_command.is_some())
-            {
-                return self.trigger_command(Side::Right);
-            }
-            if self.editor.cursor < self.editor.text.len() {
-                self.editor.cursor = self.editor.next_rune(Direction::Forward);
-            } else if self.layout.lines > 0 {
-                return Transition::Nop;
-            } else {
-                // fallthrough to Down
-                self.nav_down();
-            }
-            Transition::Redraw
+    fn handle_return(&mut self, mods: Modifiers) -> Transition {
+        if self.selected_is_heading() {
+            return Transition::Nop;
         }
-    }
-
-    /// Up navigation shared by XK_Up and the XK_Left fallthrough.
-    fn nav_up(&mut self) {
-        self.select_prev();
-    }
-
-    /// Down navigation shared by XK_Down and the XK_Right fallthrough.
-    fn nav_down(&mut self) {
-        self.select_next();
-    }
-
-    pub(super) fn last_selectable_match(&self) -> Option<usize> {
-        (0..self.matcher.matches.len())
-            .rev()
-            .find(|&pos| self.matcher.match_is_selectable(pos))
-    }
-
-    fn select_prev_position(&self, from: usize) -> Option<usize> {
-        (0..from)
-            .rev()
-            .find(|&pos| self.matcher.match_is_selectable(pos))
-    }
-
-    fn select_next_position(&self, from: usize) -> Option<usize> {
-        (from + 1..self.matcher.matches.len()).find(|&pos| self.matcher.match_is_selectable(pos))
+        if mods.shift && !self.cfg.reject_no_match {
+            self.accept(AcceptTarget::Input, AcceptMode::from_ctrl(mods.ctrl))
+        } else {
+            self.confirm_selection(AcceptMode::from_ctrl(mods.ctrl))
+        }
     }
 }
 
-/// The keysyms the standard xkb compat rules map to Mod1 (Alt) — the C
-/// version detected them through the Mod1Mask bit instead.
 fn is_alt_key(sym: u32) -> bool {
     matches!(
         sym,

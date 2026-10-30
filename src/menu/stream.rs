@@ -239,8 +239,7 @@ impl Menu {
                 // An asynchronous result may still display the provisional
                 // empty item. No visible index may outlive its candidate.
                 self.matcher.matches.clear();
-                self.selection = Default::default();
-                self.paging = Default::default();
+                self.clear_selection();
             }
             self.stream_dirty = true;
         }
@@ -290,6 +289,7 @@ impl Menu {
     /// preselection — followed by the final layout pass and draw.
     pub(super) fn finalize_stream(&mut self) -> Option<ExitStatus> {
         self.stream_finalization_started = true;
+        self.finalize_search_pending = true;
         let chars = std::mem::take(&mut self.pending_chars);
         self.renderer.add_fallbacks(&chars);
         /* Layout precedes every consumer derived from it. In particular,
@@ -297,27 +297,15 @@ impl Menu {
          * cross them; neither may run against the initial empty layout. */
         self.reflow();
         let t = self.do_match();
-        if self.search.is_some() {
-            self.finalize_search_pending = true;
-            self.stream_dirty = false;
-            return None;
-        }
         if let Some(status) = self.perform(t) {
             return Some(status);
         }
-        if let Some(status) = self.apply_pre_match() {
+        if let Some(status) = self.finish_corpus() {
             return Some(status);
         }
-        self.apply_deferred_preselect();
         self.draw_menu();
         self.stream_dirty = false;
         None
-    }
-
-    /// --preselect at EOF, when the first-event application ran before any
-    /// items existed.
-    fn apply_deferred_preselect(&mut self) {
-        self.apply_preselect();
     }
 }
 

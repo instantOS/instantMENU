@@ -3058,21 +3058,21 @@ fn run_settles_eof_then_behaves_like_a_loaded_menu() {
 
 fn force_search_worker(menu: &mut Menu) {
     let state = menu.matcher.take_search_state();
-    menu.search = Some(super::search::SearchWorker::new(state, &menu.editor.text).unwrap());
+    menu.search = Some(super::search::SearchWorker::new(state).unwrap());
 }
 
 fn finish_background_search(menu: &mut Menu) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         assert_eq!(menu.poll_search(), None);
-        let Some(fd) = menu.search.as_ref().and_then(|search| search.fd()) else {
+        let Some(worker) = menu.search.as_ref().filter(|worker| worker.is_busy()) else {
             break;
         };
         assert!(
             std::time::Instant::now() < deadline,
             "search did not finish"
         );
-        let mut fds = [crate::backend::poll::poll_in(fd)];
+        let mut fds = [crate::backend::poll::poll_in(worker.fd())];
         let _ = crate::backend::poll::poll_fds(&mut fds, 100);
     }
 }
@@ -3187,6 +3187,109 @@ fn run_accepts_the_latest_query_instead_of_stale_results() {
     stub.key(ks::KEY_Return, M_NONE, "\r");
     assert_eq!(menu.run(), ExitStatus::Success);
     assert_eq!(out.contents(), "beta\n");
+}
+
+#[test]
+fn space_confirm_waits_for_current_query_results() {
+    let cfg = Config {
+        space_confirm: true,
+        ..Config::default()
+    };
+    let (mut menu, _, out) = menu_with(cfg, &["alpha", "beta"]);
+    force_search_worker(&mut menu);
+    menu.key_press(0, M_NONE, "bet");
+    assert!(menu.search_pending());
+    assert_eq!(menu.key_press(ks::KEY_space, M_NONE, " "), Transition::Nop);
+    assert_eq!(menu.deferred_events.len(), 1);
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert_eq!(out.contents(), "beta\n");
+}
+
+#[test]
+fn editing_and_cancellation_aliases_do_not_wait_for_search_results() {
+    let (mut menu, _, _) = menu_with(Config::default(), &["alpha", "beta"]);
+    force_search_worker(&mut menu);
+    menu.key_press(0, M_NONE, "bet");
+    assert!(menu.search_pending());
+    key(&mut menu, ks::KEY_s, M_CTRL);
+    assert_eq!(menu.editor.text, "bet.*");
+    assert!(menu.deferred_events.is_empty());
+    assert_eq!(
+        key(&mut menu, ks::KEY_bracketleft, M_CTRL),
+        Transition::Exit(ExitStatus::Failure)
+    );
+}
+
+#[test]
+fn eof_hooks_have_the_same_order_inline_and_on_a_worker() {
+    for background in [false, true] {
+        let cfg = Config {
+            pre_match: true,
+            preselect: Some("gamma".into()),
+            ..Config::default()
+        };
+        let (mut menu, _, _) = menu_with(cfg, &[]);
+        menu.initial_text("beta");
+        if background {
+            force_search_worker(&mut menu);
+        }
+        let pipe = TestPipe::new();
+        menu.begin_stream(pipe.read_fd);
+        pipe.write(b"alpha\nbeta\ngamma\n");
+        pipe.close_write();
+        assert!(menu.drain_stdin());
+        assert_eq!(menu.finalize_stream(), None);
+        if background {
+            finish_background_search(&mut menu);
+        }
+        assert_eq!(menu.editor.text, "");
+        assert_eq!(menu.selected_text_ref(), Some("gamma"));
+        assert!(menu.pre_match_applied);
+        assert!(!menu.finalize_search_pending);
+        assert!(menu.pre_match_target.is_none());
+    }
+}
+
+#[test]
+fn a_cached_worker_result_does_not_leave_a_deferred_rejection_snapshot() {
+    let cfg = Config {
+        reject_no_match: true,
+        ..Config::default()
+    };
+    let (mut menu, _, _) = menu_with(cfg, &["alpha", "beta"]);
+    force_search_worker(&mut menu);
+    menu.insert(EditOp::Insert("b"));
+    finish_background_search(&mut menu);
+    menu.insert(EditOp::Delete(0)); // same query: reconcile without new work
+    assert!(!menu.search.as_ref().unwrap().is_busy());
+    assert!(menu.reject_snapshot.is_none());
+    assert_eq!(menu.selected_text_ref(), Some("beta"));
+}
+
+#[test]
+fn navigation_never_selects_a_heading_at_either_boundary() {
+    let (mut menu, _, _) = menu_with(
+        Config::default(),
+        &[
+            "{heading} First",
+            "alpha",
+            "{heading} Middle",
+            "beta",
+            "{heading} Last",
+        ],
+    );
+    menu.layout.lines = 3;
+    let _ = menu.do_match();
+    key(&mut menu, ks::KEY_Up, M_NONE);
+    assert_eq!(menu.selected_text_ref(), Some("alpha"));
+    key(&mut menu, ks::KEY_Down, M_NONE);
+    assert_eq!(menu.selected_text_ref(), Some("beta"));
+    key(&mut menu, ks::KEY_Down, M_NONE);
+    assert_eq!(menu.selected_text_ref(), Some("beta"));
+    assert!(!menu.selected_is_heading());
+    menu.select_page(4); // a page consisting only of a trailing heading
+    assert_eq!(menu.selected_text_ref(), Some("beta"));
+    assert!(menu.selection.selected.unwrap() >= menu.selection.page_start.unwrap());
 }
 
 #[test]

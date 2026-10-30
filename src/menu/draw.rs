@@ -27,10 +27,7 @@ impl Menu {
         } else {
             self.show_match_counter = false;
         }
-        let searching = self
-            .search
-            .as_ref()
-            .is_some_and(|search| search.fd().is_some());
+        let searching = self.search.as_ref().is_some_and(|search| search.is_busy());
         self.show_match_counter |= searching;
         self.match_counter_text = if searching {
             format!("{match_count}…/{item_count}")

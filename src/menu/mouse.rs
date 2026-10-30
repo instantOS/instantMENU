@@ -50,8 +50,7 @@ impl Menu {
         self.hovered = item;
         match item {
             Some(item) if self.selection.selected != Some(item) => {
-                self.selection_is_explicit = true;
-                self.selection.selected = Some(item);
+                self.select_result(item);
                 Transition::Redraw
             }
             _ => Transition::Nop,
@@ -120,13 +119,11 @@ impl Menu {
                     .page_start
                     .unwrap_or(0);
                 self.select_page(page);
-                self.recalc_paging();
                 self.select_hovered_row();
                 return true;
             }
         } else if let Some(next) = self.paging.next {
             self.select_page(next);
-            self.recalc_paging();
             self.select_hovered_row();
             return true;
         } else if delta > 0 {
@@ -139,21 +136,6 @@ impl Menu {
             return self.select_last_item();
         }
         false
-    }
-
-    /// Select the last selectable match, reporting whether that changed
-    /// anything. Shared by the wheel and PageDown at the end of the list, so
-    /// the two routes to the end of a long list cannot drift apart.
-    pub(super) fn select_last_item(&mut self) -> bool {
-        self.selection_is_explicit = true;
-        let Some(last) = self.last_selectable_match() else {
-            return false;
-        };
-        if self.selection.selected == Some(last) {
-            return false;
-        }
-        self.selection.selected = Some(last);
-        true
     }
 
     /// After a wheel page turn, put the selection back on whatever row the
@@ -183,8 +165,7 @@ impl Menu {
         // recorded as hovered" survives the turn and the next motion event is
         // a plain Nop rather than a second opinion.
         self.hovered = Some(item);
-        self.selection.selected = Some(item);
-        self.selection_is_explicit = true;
+        self.select_result(item);
     }
 
     /// Apply a burst of repaint-only events and redraw once.
@@ -291,9 +272,7 @@ impl Menu {
         if (self.paging.prev != 0 || self.selection.page_start.map(|c| c > 0).unwrap_or(false))
             && header.left_arrow.contains(pos)
         {
-            self.selection = paging::scroll_up(&self.selection, &self.paging);
-            self.selection_is_explicit = true;
-            self.recalc_paging();
+            self.select_page(self.paging.prev);
             return Transition::Redraw;
         }
         for (item, rect) in self.horizontal_item_rects(header.content_x) {
@@ -305,7 +284,6 @@ impl Menu {
         if self.paging.next.is_some() && header.right_arrow.contains(pos) {
             let next = self.paging.next.unwrap();
             self.select_page(next);
-            self.recalc_paging();
             return Transition::Redraw;
         }
         Transition::Nop
@@ -313,6 +291,13 @@ impl Menu {
 
     /// paste — insert selection text.
     pub(super) fn paste(&mut self, text: &str) -> Transition {
+        if self.search_pending() && self.cfg.reject_no_match && self.stream_complete() {
+            self.deferred_events
+                .push_back(BackendEvent::SelectionNotify {
+                    text: text.to_owned(),
+                });
+            return Transition::Nop;
+        }
         /* we have been given the current selection, now insert it into input */
         let line = text.split('\n').next().unwrap_or("");
         self.insert(EditOp::Insert(line)).at_least_redraw()
