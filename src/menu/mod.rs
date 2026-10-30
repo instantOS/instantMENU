@@ -21,6 +21,7 @@ mod measure;
 mod mouse;
 mod paging;
 mod run;
+mod search;
 mod slide;
 mod stream;
 mod transition;
@@ -108,6 +109,11 @@ pub struct Menu {
     pub(in crate::menu) frecency: Option<Frecency>,
     frecency_dirty: bool,
     pending_output: Vec<String>,
+    search: Option<search::SearchWorker>,
+    deferred_events: std::collections::VecDeque<crate::backend::BackendEvent>,
+    reject_snapshot: Option<(String, usize)>,
+    finalize_search_pending: bool,
+    pre_match_target: Option<usize>,
 
     /* ── streaming stdin ──────────────────────────────────────────────── */
     /// fd of the streaming stdin pipe, -1 when items are not streamed (no
@@ -171,6 +177,11 @@ impl Menu {
             frecency,
             frecency_dirty: false,
             pending_output: Vec::new(),
+            search: None,
+            deferred_events: std::collections::VecDeque::new(),
+            reject_snapshot: None,
+            finalize_search_pending: false,
+            pre_match_target: None,
             stream_fd: -1,
             stream_eof: false,
             stream_finalized: false,
@@ -332,13 +343,44 @@ impl Menu {
             .flatten()
             .and_then(|pos| self.matcher.matches.get(pos))
             .map(|&idx| self.matcher.items[idx].arrival_index);
+        let reordered = self.frecency_dirty && self.frecency.is_some();
+        let old_order = (reordered && self.search.is_some()).then(|| {
+            self.matcher
+                .matches
+                .iter()
+                .map(|&i| self.matcher.items[i].arrival_index)
+                .collect::<Vec<_>>()
+        });
         if self.frecency_dirty {
             if let Some(f) = self.frecency.as_ref() {
                 f.rank(&mut self.matcher.items, SystemTime::now());
+                self.matcher.invalidate();
             }
             self.frecency_dirty = false;
         }
-        match self.matcher.search(&self.editor.text, complete) {
+        if let Some(old_order) = old_order {
+            let indices: std::collections::HashMap<_, _> = self
+                .matcher
+                .items
+                .iter()
+                .enumerate()
+                .map(|(i, item)| (item.arrival_index, i))
+                .collect();
+            self.matcher.matches = old_order
+                .into_iter()
+                .filter_map(|id| indices.get(&id).copied())
+                .collect();
+        }
+        if let Some(search) = &mut self.search {
+            search.request(&self.matcher, &self.editor.text, complete, reordered);
+            return Transition::Nop;
+        }
+        let result = self.matcher.search(&self.editor.text, complete);
+        self.install_matches(result, keep)
+    }
+
+    fn install_matches(&mut self, result: MatchResult, keep: Option<usize>) -> Transition {
+        match result {
             MatchResult::Listed => {
                 let keep = keep.and_then(|id| {
                     self.matcher

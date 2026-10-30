@@ -288,6 +288,11 @@ impl Menu {
          * cross them; neither may run against the initial empty layout. */
         self.reflow();
         let t = self.do_match();
+        if self.search.is_some() {
+            self.finalize_search_pending = true;
+            self.stream_dirty = false;
+            return None;
+        }
         if let Some(status) = self.perform(t) {
             return Some(status);
         }

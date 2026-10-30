@@ -412,6 +412,14 @@ impl Menu {
         if let Some(status) = self.settle(t) {
             return Some(status);
         }
+        if self
+            .search
+            .as_ref()
+            .is_some_and(|search| search.pending_query())
+        {
+            self.pre_match_target = Some(self.matcher.items[first_match_item].arrival_index);
+            return None;
+        }
         // selected = that item (find its position in the rebuilt match list)
         self.selection.selected = self
             .matcher

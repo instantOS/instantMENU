@@ -139,9 +139,20 @@ impl Backend for TestBackend {
         self.state.lock().unwrap().resizes.push(rect);
     }
 
-    fn poll_event(&mut self, timeout: Option<Duration>, _extra: &[RawFd]) -> EventPoll {
+    fn poll_event(&mut self, timeout: Option<Duration>, extra: &[RawFd]) -> EventPoll {
         if let Some(ev) = self.feed.lock().unwrap().pop_front() {
             return EventPoll::Event(ev);
+        }
+        if !extra.is_empty() {
+            let mut fds: Vec<_> = extra.iter().copied().map(super::poll::poll_in).collect();
+            let timeout_ms = timeout.map_or(-1, |d| d.as_millis().min(i32::MAX as u128) as i32);
+            return match super::poll::poll_fds(&mut fds, timeout_ms) {
+                super::poll::PollOutcome::Ready => {
+                    super::poll::first_ready(&fds, 0).map_or(EventPoll::Closed, EventPoll::Readable)
+                }
+                super::poll::PollOutcome::Timeout => EventPoll::Timeout,
+                super::poll::PollOutcome::Closed => EventPoll::Closed,
+            };
         }
         match timeout {
             Some(timeout) => {

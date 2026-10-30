@@ -25,6 +25,10 @@ impl Menu {
         self.matcher.note_uppercase(&self.editor.text);
 
         let t = self.do_match();
+        if self.search.is_some() {
+            self.reject_snapshot = last;
+            return t;
+        }
         if matches!(t, Transition::Nop) && reject && self.matcher.matches.is_empty() {
             /* revert to last text value if theres no match */
             let (text, cursor) = last.expect("reject_no_match snapshot");

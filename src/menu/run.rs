@@ -24,11 +24,21 @@ impl Menu {
         if let Some(toast) = self.cfg.toast {
             return self.run_toast(toast);
         }
+        self.search = match super::search::SearchWorker::new(&self.matcher, &self.editor.text) {
+            Ok(search) => Some(search),
+            Err(error) => {
+                eprintln!("instantmenu: cannot start search worker: {error}");
+                return ExitStatus::Failure;
+            }
+        };
 
         /* with a complete (non-streamed) corpus, --preselect applies before
          * the first event; streaming defers it to EOF against the full list */
         let mut preselect_pending = self.cfg.preselect.is_some() && self.stream_fd < 0;
         loop {
+            if let Some(status) = self.poll_search() {
+                return status;
+            }
             /* One bounded input turn per iteration, even when backend events
              * are continuously queued. Backend polling must in turn service
              * ready display events before reporting stdin readiness. Neither
@@ -53,21 +63,34 @@ impl Menu {
                 self.draw_menu();
             }
 
-            let extra_fds = [self.stream_fd];
-            let extra: &[RawFd] = if self.stream_active() {
-                &extra_fds
-            } else {
-                &[]
-            };
+            let mut extra: Vec<RawFd> = Vec::with_capacity(2);
+            if self.stream_active() {
+                extra.push(self.stream_fd);
+            }
+            if let Some(fd) = self.search.as_ref().and_then(|search| search.fd()) {
+                extra.push(fd);
+            }
             let timeout = self.stream_poll_budget(Instant::now());
 
-            let ev = match self.backend.poll_event(timeout, extra) {
+            let deferred = if !self.search_pending() {
+                self.deferred_events.pop_front()
+            } else {
+                None
+            };
+            let ev = match deferred
+                .map(EventPoll::Event)
+                .unwrap_or_else(|| self.backend.poll_event(timeout, &extra))
+            {
                 EventPoll::Event(ev) => ev,
                 EventPoll::Readable(_) => continue,
                 /* window closed: loop back and settle what arrived */
                 EventPoll::Timeout => continue,
                 EventPoll::Closed => return ExitStatus::Failure,
             };
+            if self.defer_for_search(&ev) {
+                self.deferred_events.push_back(ev);
+                continue;
+            }
 
             let t = match ev {
                 /* Wheel detents and pointer motion both only ever ask for a

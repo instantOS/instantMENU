@@ -82,6 +82,18 @@ pub(super) struct Matcher {
     auto_confirm: bool,
     insensitive: bool,
     smart_case: bool,
+    fuzzy_cache: Option<FuzzyCache>,
+}
+
+/// Scores stay in corpus order. Appending candidates under the same query
+/// only scores the new suffix; sorting a copy leaves the cache appendable.
+#[derive(Debug, Clone)]
+struct FuzzyCache {
+    query: String,
+    insensitive: bool,
+    scanned: usize,
+    matcher: frizbee::Matcher,
+    scores: Vec<frizbee::Match>,
 }
 
 impl Matcher {
@@ -94,6 +106,7 @@ impl Matcher {
             auto_confirm: cfg.auto_confirm,
             insensitive: cfg.smart_case || cfg.insensitive,
             smart_case: cfg.smart_case,
+            fuzzy_cache: None,
         }
     }
 
@@ -108,13 +121,57 @@ impl Matcher {
     /// from fuzzy/token matching: only explicitly keyed items participate,
     /// and one complete Unicode character activates the matching key.
     pub fn search(&mut self, text: &str, complete: bool) -> MatchResult {
+        self.search_cancellable(text, complete, || false).unwrap()
+    }
+
+    pub(super) fn policy_only(&self) -> Self {
+        Self {
+            items: Vec::new(),
+            matches: Vec::new(),
+            mode: self.mode,
+            single_key: self.single_key,
+            auto_confirm: self.auto_confirm,
+            insensitive: self.insensitive,
+            smart_case: self.smart_case,
+            fuzzy_cache: None,
+        }
+    }
+
+    pub(super) fn insensitive(&self) -> bool {
+        self.insensitive
+    }
+
+    pub(super) fn set_insensitive(&mut self, insensitive: bool) {
+        self.insensitive = insensitive;
+    }
+
+    pub(super) fn invalidate(&mut self) {
+        self.fuzzy_cache = None;
+    }
+
+    pub(super) fn search_cancellable(
+        &mut self,
+        text: &str,
+        complete: bool,
+        cancelled: impl Fn() -> bool,
+    ) -> Option<MatchResult> {
+        self.search_progressively(text, complete, cancelled, |_, _| {})
+    }
+
+    pub(super) fn search_progressively(
+        &mut self,
+        text: &str,
+        complete: bool,
+        cancelled: impl Fn() -> bool,
+        progress: impl FnMut(Vec<usize>, usize),
+    ) -> Option<MatchResult> {
         if self.single_key {
-            return self.single_key_search(text, complete);
+            return Some(self.single_key_search(text, complete));
         }
         if self.mode == MatchMode::Fuzzy {
-            self.fuzzy_search(text, complete)
+            self.fuzzy_search(text, complete, cancelled, progress)
         } else {
-            self.token_search(text, complete)
+            self.token_search(text, complete, cancelled)
         }
     }
 
@@ -218,7 +275,12 @@ impl Matcher {
     /// Every whitespace-separated token must occur in the prepared search
     /// text. Exact/prefix ranking uses only the visible label, so hidden
     /// keywords never make a label lose its natural rank.
-    fn token_search(&mut self, text: &str, complete: bool) -> MatchResult {
+    fn token_search(
+        &mut self,
+        text: &str,
+        complete: bool,
+        cancelled: impl Fn() -> bool,
+    ) -> Option<MatchResult> {
         let tokens: Vec<&str> = text.split(' ').filter(|t| !t.is_empty()).collect();
         let first_token = tokens.first().copied().unwrap_or("");
         let len = first_token.len();
@@ -229,6 +291,9 @@ impl Matcher {
         let textsize = text.len() + 1;
 
         for (i, item) in self.items.iter().enumerate() {
+            if i % 256 == 0 && cancelled() {
+                return None;
+            }
             // Headings structure the unfiltered list; they are not results.
             if !tokens.is_empty() && !item.is_selectable() {
                 continue;
@@ -252,14 +317,20 @@ impl Matcher {
         self.matches = exact;
         self.matches.extend(prefix);
         self.matches.extend(substr);
-        self.auto_confirm_result(complete)
+        Some(self.auto_confirm_result(complete))
     }
 
-    fn fuzzy_search(&mut self, text: &str, complete: bool) -> MatchResult {
+    fn fuzzy_search(
+        &mut self,
+        text: &str,
+        complete: bool,
+        cancelled: impl Fn() -> bool,
+        mut progress: impl FnMut(Vec<usize>, usize),
+    ) -> Option<MatchResult> {
         if text.is_empty() {
             self.matches.clear();
             self.matches.extend(0..self.items.len());
-            return self.auto_confirm_result(complete);
+            return Some(self.auto_confirm_result(complete));
         }
 
         let max_typos = if self.auto_confirm {
@@ -274,23 +345,60 @@ impl Matcher {
             } else {
                 frizbee::CaseMatching::Respect
             });
-        let mut fuzzy = frizbee::Matcher::new(text, &config);
-        let candidates: Vec<(usize, &str)> = self
-            .items
-            .iter()
-            .enumerate()
-            .filter(|(_, item)| item.is_selectable())
-            .map(|(index, item)| (index, item.searchable_text()))
-            .collect();
-        let haystacks: Vec<&str> = candidates.iter().map(|(_, text)| *text).collect();
-        self.matches.clear();
-        self.matches.extend(
-            fuzzy
-                .match_list(&haystacks)
-                .into_iter()
-                .map(|matched| candidates[matched.index as usize].0),
-        );
-        self.auto_confirm_result(complete)
+        if self.fuzzy_cache.as_ref().is_none_or(|cache| {
+            cache.query != text
+                || cache.insensitive != self.insensitive
+                || cache.scanned > self.items.len()
+        }) {
+            self.fuzzy_cache = Some(FuzzyCache {
+                query: text.to_string(),
+                insensitive: self.insensitive,
+                scanned: 0,
+                matcher: frizbee::Matcher::new(text, &config.sort(frizbee::SortStrategy::IndexAsc)),
+                scores: Vec::new(),
+            });
+        }
+        let cache = self.fuzzy_cache.as_mut().unwrap();
+        let mut interval = std::time::Duration::from_millis(16);
+        let mut published = std::time::Instant::now();
+        while cache.scanned < self.items.len() {
+            if cancelled() {
+                return None;
+            }
+            let end = (cache.scanned + 256).min(self.items.len());
+            let candidates: Vec<_> = self.items[cache.scanned..end]
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| item.is_selectable())
+                .map(|(offset, item)| (cache.scanned + offset, item.searchable_text()))
+                .collect();
+            let haystacks: Vec<_> = candidates.iter().map(|(_, text)| *text).collect();
+            cache.scores.extend(
+                cache
+                    .matcher
+                    .match_list(&haystacks)
+                    .into_iter()
+                    .map(|mut m| {
+                        m.index = candidates[m.index as usize].0 as u32;
+                        m
+                    }),
+            );
+            cache.scanned = end;
+            if end < self.items.len() && published.elapsed() >= interval {
+                let mut sorted = cache.scores.clone();
+                frizbee::radix_sort_matches(&mut sorted);
+                progress(sorted.into_iter().map(|m| m.index as usize).collect(), end);
+                published = std::time::Instant::now();
+                interval = (interval * 2).min(std::time::Duration::from_millis(128));
+            }
+        }
+        if cancelled() {
+            return None;
+        }
+        let mut sorted = cache.scores.clone();
+        frizbee::radix_sort_matches(&mut sorted);
+        self.matches = sorted.into_iter().map(|m| m.index as usize).collect();
+        Some(self.auto_confirm_result(complete))
     }
 
     /// Auto-confirm counts selectable results, not structural headings.
@@ -313,6 +421,30 @@ impl Matcher {
 mod tests {
     use super::*;
     use crate::config::Config;
+
+    #[test]
+    #[ignore = "benchmark"]
+    fn bench_large_path_search() {
+        let items = (0..90_000)
+            .map(|i| {
+                Item::new(format!(
+                    "/home/user/workspace/project-{}/src/components/directory-{}/file-{i:06}.rs",
+                    i % 117,
+                    i % 53
+                ))
+            })
+            .collect();
+        let mut matcher = Matcher::new(items, &Config::default());
+        for query in ["f", "fi", "file", "file-042", "components", "zzzz"] {
+            let start = std::time::Instant::now();
+            matcher.search(query, true);
+            println!(
+                "{query:?}: {:?}, {} matches",
+                start.elapsed(),
+                matcher.matches.len()
+            );
+        }
+    }
 
     fn matcher(cfg_mut: impl FnOnce(&mut Config), items: &[&str]) -> Matcher {
         let mut cfg = Config::default();
