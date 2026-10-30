@@ -9,10 +9,14 @@
 //!   stripped per line, cut at the first NUL, invalid UTF-8 dropped).
 //! - [`Gate`] decides when accumulated arrivals are worth a rematch + redraw
 //!   ("settle"): after 1 ms of quiet, or 16 ms after the first arrival of a
-//!   window, whichever comes first. A fast producer that writes everything
-//!   within one window therefore produces exactly one settle — the same
-//!   single rematch + redraw the blocking version did — while a slow
-//!   trickle still updates the menu at least every [`Gate::MAX_AGE`].
+//!   window, whichever comes first. Small bursts coalesce into one settle;
+//!   sustained arrivals cannot postpone it until EOF. These are scheduling
+//!   deadlines, not hard latency guarantees: matching and drawing take time.
+//!
+//! Input consumption yields after a byte or time budget. The menu gives
+//! stdin one turn per iteration, then the backend services ready display
+//! events before reporting more input. Neither side needs the other to go
+//! quiet before it can make progress.
 
 use std::time::{Duration, Instant};
 
@@ -143,10 +147,13 @@ use super::matcher::Item;
 use super::Menu;
 use crate::enums::ExitStatus;
 
-/// Keep startup work bounded even when stdin is continuously writable. One
-/// pipe-sized chunk is enough to avoid the empty-layout flash for ordinary
-/// producers; anything beyond it is consumed by the event loop.
-const PRELOAD_MAX_BYTES: usize = 64 * 1024;
+/// Every input turn, including preload, must yield to the display and keys.
+/// A byte cap bounds parsing work; a time slice also yields early on slower
+/// machines. Check time between small reads, including retries and partial
+/// lines. Leaving bytes in the pipe supplies backpressure to the producer.
+const INPUT_MAX_BYTES: usize = 64 * 1024;
+const INPUT_SLICE: Duration = Duration::from_millis(2);
+const READ_CHUNK: usize = 4 * 1024;
 
 impl Menu {
     /// Opportunistic preload before the first layout: if the producer has
@@ -163,7 +170,7 @@ impl Menu {
         if self.stream_fd < 0 {
             return;
         }
-        self.drain_stdin_up_to(PRELOAD_MAX_BYTES);
+        self.drain_stdin();
         if !self.pending_chars.is_empty() {
             let chars = std::mem::take(&mut self.pending_chars);
             self.renderer.add_fallbacks(&chars);
@@ -174,26 +181,18 @@ impl Menu {
         }
     }
 
-    /// Read everything currently available from the streaming stdin
-    /// (O_NONBLOCK: read until it would block), parse complete lines and
-    /// append them as items. Returns true when EOF was reached. Bytes are
-    /// never held back: a producer blocked on a full pipe is unblocked by
-    /// this drain, and the coalescing gate decides when the batch becomes
-    /// visible.
+    /// Consume one bounded turn of nonblocking stdin, parse complete lines,
+    /// and append them as items. Returns true only when EOF was reached.
+    /// Readability is a wakeup, not permission to drain an unlimited stream:
+    /// a producer can refill the pipe faster than items can be parsed.
     pub(crate) fn drain_stdin(&mut self) -> bool {
-        self.drain_stdin_up_to(usize::MAX)
-    }
-
-    /// Drain at most `max_bytes`, leaving a readable descriptor for the event
-    /// loop when the budget is exhausted. The cap is essential before setup:
-    /// a producer such as `yes` may otherwise prevent window creation forever.
-    fn drain_stdin_up_to(&mut self, max_bytes: usize) -> bool {
         let fd = self.stream_fd;
+        let started = Instant::now();
         let mut eof = false;
         let mut bytes_read = 0usize;
+        let mut buf = [0u8; READ_CHUNK];
         loop {
-            let mut buf = [0u8; 64 * 1024];
-            let remaining = max_bytes.saturating_sub(bytes_read);
+            let remaining = INPUT_MAX_BYTES - bytes_read;
             if remaining == 0 {
                 break;
             }
@@ -217,13 +216,16 @@ impl Menu {
                 }
                 _ => {
                     match std::io::Error::last_os_error().kind() {
-                        ErrorKind::Interrupted => continue,
+                        ErrorKind::Interrupted => {}
                         /* EAGAIN/EWOULDBLOCK: drained for now; anything else
                          * is treated the same rather than killing the menu
                          * over a dead pipe */
                         _ => break,
                     }
                 }
+            }
+            if started.elapsed() >= INPUT_SLICE {
+                break;
             }
         }
         if eof && !self.stream_eof {

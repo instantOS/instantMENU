@@ -25,16 +25,17 @@ impl Menu {
             return self.run_toast(toast);
         }
 
-        /* whatever is already buffered lands before the first wait; for a
-         * fast producer this is usually the whole corpus plus EOF */
-        if self.stream_active() {
-            self.drain_stdin();
-        }
-
         /* with a complete (non-streamed) corpus, --preselect applies before
          * the first event; streaming defers it to EOF against the full list */
         let mut preselect_pending = self.cfg.preselect.is_some() && self.stream_fd < 0;
         loop {
+            /* One bounded input turn per iteration, even when backend events
+             * are continuously queued. Backend polling must in turn service
+             * ready display events before reporting stdin readiness. Neither
+             * a busy producer nor a busy pointer can monopolize the loop. */
+            if self.stream_active() {
+                self.drain_stdin();
+            }
             let now = Instant::now();
             if self.stream_settle_due(now) {
                 if self.stream_eof {
@@ -58,14 +59,11 @@ impl Menu {
             } else {
                 &[]
             };
-            let timeout = self.stream_poll_budget(now);
+            let timeout = self.stream_poll_budget(Instant::now());
 
             let ev = match self.backend.poll_event(timeout, extra) {
                 EventPoll::Event(ev) => ev,
-                EventPoll::Readable(_) => {
-                    self.drain_stdin();
-                    continue;
-                }
+                EventPoll::Readable(_) => continue,
                 /* window closed: loop back and settle what arrived */
                 EventPoll::Timeout => continue,
                 EventPoll::Closed => return ExitStatus::Failure,
