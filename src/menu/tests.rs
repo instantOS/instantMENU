@@ -3050,6 +3050,66 @@ fn run_settles_eof_then_behaves_like_a_loaded_menu() {
     assert_eq!(out.contents(), "alpha\n"); // first item selected after EOF
 }
 
+#[test]
+fn run_accepts_the_latest_query_instead_of_stale_results() {
+    let (mut menu, stub, out) = menu_with(Config::default(), &["alpha", "beta", "gamma"]);
+    for c in "bet".chars() {
+        stub.key(0, M_NONE, &c.to_string());
+    }
+    stub.key(ks::KEY_Return, M_NONE, "\r");
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert_eq!(out.contents(), "beta\n");
+}
+
+#[test]
+fn run_rejects_edits_serially_without_losing_the_last_valid_query() {
+    let cfg = Config {
+        reject_no_match: true,
+        ..Config::default()
+    };
+    let (mut menu, stub, out) = menu_with(cfg, &["alpha", "beta"]);
+    for c in "bz".chars() {
+        stub.key(0, M_NONE, &c.to_string());
+    }
+    stub.key(ks::KEY_Return, M_NONE, "\r");
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert_eq!(menu.editor.text, "b");
+    assert_eq!(out.contents(), "beta\n");
+}
+
+#[test]
+fn run_finishes_deferred_pre_match_before_return() {
+    let cfg = Config {
+        pre_match: true,
+        ..Config::default()
+    };
+    let (mut menu, stub, out) = menu_with(cfg, &[]);
+    menu.initial_text("beta");
+    let pipe = TestPipe::new();
+    pipe.write(b"alpha\nbeta\ngamma\n");
+    pipe.close_write();
+    menu.begin_stream(pipe.read_fd);
+    stub.key(ks::KEY_Return, M_NONE, "\r");
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert_eq!(out.contents(), "beta\n");
+}
+
+#[test]
+fn run_applies_final_preselection_before_queued_return() {
+    let cfg = Config {
+        preselect: Some("gamma".into()),
+        ..Config::default()
+    };
+    let (mut menu, stub, out) = menu_with(cfg, &[]);
+    let pipe = TestPipe::new();
+    pipe.write(b"alpha\nbeta\ngamma\n");
+    pipe.close_write();
+    menu.begin_stream(pipe.read_fd);
+    stub.key(ks::KEY_Return, M_NONE, "\r");
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert_eq!(out.contents(), "gamma\n");
+}
+
 /// Auto-confirm mode must not conclude from a partial corpus: a single match
 /// mid-stream stays listed, and only fires once EOF settled.
 #[test]

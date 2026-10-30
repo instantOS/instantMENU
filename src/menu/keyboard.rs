@@ -103,7 +103,8 @@ impl Menu {
             let mode = AcceptMode::Bound(binding.key.clone());
             return self.accept(self.selected_target(), mode);
         }
-        if !self.cfg.single_key
+        if self.has_shortcuts
+            && !self.cfg.single_key
             && !self.cfg.input_only
             && !self.cfg.password
             && self.cfg.toast.is_none()

@@ -155,7 +155,7 @@ impl Matcher {
         complete: bool,
         cancelled: impl Fn() -> bool,
     ) -> Option<MatchResult> {
-        self.search_progressively(text, complete, cancelled, |_, _| {})
+        self.search_progressively(text, complete, cancelled, None)
     }
 
     pub(super) fn search_progressively(
@@ -163,7 +163,7 @@ impl Matcher {
         text: &str,
         complete: bool,
         cancelled: impl Fn() -> bool,
-        progress: impl FnMut(Vec<usize>, usize),
+        progress: Option<&mut dyn FnMut(Vec<usize>, usize)>,
     ) -> Option<MatchResult> {
         if self.single_key {
             return Some(self.single_key_search(text, complete));
@@ -325,7 +325,7 @@ impl Matcher {
         text: &str,
         complete: bool,
         cancelled: impl Fn() -> bool,
-        mut progress: impl FnMut(Vec<usize>, usize),
+        mut progress: Option<&mut dyn FnMut(Vec<usize>, usize)>,
     ) -> Option<MatchResult> {
         if text.is_empty() {
             self.matches.clear();
@@ -384,7 +384,10 @@ impl Matcher {
                     }),
             );
             cache.scanned = end;
-            if end < self.items.len() && published.elapsed() >= interval {
+            if let Some(progress) = progress
+                .as_mut()
+                .filter(|_| end < self.items.len() && published.elapsed() >= interval)
+            {
                 let mut sorted = cache.scores.clone();
                 frizbee::radix_sort_matches(&mut sorted);
                 progress(sorted.into_iter().map(|m| m.index as usize).collect(), end);
@@ -423,6 +426,56 @@ mod tests {
     use crate::config::Config;
 
     #[test]
+    fn appended_fuzzy_candidates_reuse_scores_and_preserve_global_order() {
+        let mut matcher = Matcher::new(
+            vec![
+                Item::new("{heading} section"),
+                Item::new("file.rs"),
+                Item::new("profile"),
+                Item::new("{match=file} hidden"),
+            ],
+            &Config::default(),
+        );
+        matcher.search("file", false);
+        let cached = matcher.fuzzy_cache.as_ref().unwrap().scores.clone();
+        matcher.items.extend([
+            Item::new("file"),
+            Item::new("a/file"),
+            Item::new("éléphant"),
+        ]);
+        matcher.search("file", true);
+        assert_eq!(
+            &matcher.fuzzy_cache.as_ref().unwrap().scores[..cached.len()],
+            &cached
+        );
+        let mut fresh = Matcher::new(matcher.items.clone(), &Config::default());
+        fresh.search("file", true);
+        assert_eq!(matcher.matches, fresh.matches);
+    }
+
+    #[test]
+    fn cancelled_scoring_does_not_install_a_partial_result() {
+        let mut matcher = Matcher::new(
+            (0..1000).map(|i| Item::new(format!("file-{i}"))).collect(),
+            &Config::default(),
+        );
+        matcher.search("", false);
+        let visible = matcher.matches.clone();
+        let calls = std::cell::Cell::new(0);
+        assert_eq!(
+            matcher.search_cancellable("file", false, || {
+                calls.set(calls.get() + 1);
+                calls.get() > 1
+            }),
+            None
+        );
+        assert_eq!(matcher.matches, visible);
+        assert_eq!(matcher.fuzzy_cache.as_ref().unwrap().scanned, 256);
+        matcher.search("999", true);
+        assert_eq!(matcher.matches, vec![999]);
+    }
+
+    #[test]
     #[ignore = "benchmark"]
     fn bench_large_path_search() {
         let items = (0..90_000)
@@ -443,6 +496,12 @@ mod tests {
                 start.elapsed(),
                 matcher.matches.len()
             );
+            matcher
+                .items
+                .push(Item::new(format!("/workspace/new/{query}/file.rs")));
+            let start = std::time::Instant::now();
+            matcher.search(query, true);
+            println!("{query:?} + one arrival: {:?}", start.elapsed());
         }
     }
 

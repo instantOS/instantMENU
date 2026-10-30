@@ -48,6 +48,7 @@ pub(super) struct SearchWorker {
     complete: bool,
     applied: u64,
     applied_count: usize,
+    query_ready: bool,
     waiting: bool,
 }
 
@@ -96,7 +97,7 @@ impl SearchWorker {
                         &request.text,
                         request.complete,
                         cancelled,
-                        |matches, count| {
+                        Some(&mut |matches, count| {
                             if !cancelled() {
                                 publish(Response {
                                     generation: request.generation,
@@ -107,7 +108,7 @@ impl SearchWorker {
                                     finished: false,
                                 });
                             }
-                        },
+                        }),
                     ) else {
                         continue;
                     };
@@ -138,6 +139,7 @@ impl SearchWorker {
             complete: false,
             applied: 0,
             applied_count: 0,
+            query_ready: true,
             waiting: false,
         })
     }
@@ -182,25 +184,40 @@ impl SearchWorker {
     pub fn pending_query(&self) -> bool {
         self.applied != self.generation.load(Ordering::Relaxed)
             || (self.applied_count == 0 && self.count > 0)
+            || !self.query_ready
     }
 
     pub fn fd(&self) -> Option<RawFd> {
         self.waiting.then(|| self.wake.as_raw_fd())
     }
 
-    pub fn take_result(&mut self) -> Option<Response> {
+    pub fn take_result(&mut self) -> std::io::Result<Option<Response>> {
         let mut buffer = [0; 256];
-        while self.wake.read(&mut buffer).is_ok_and(|n| n > 0) {}
-        let response = self.shared.0.lock().unwrap().result.take()?;
+        loop {
+            match self.wake.read(&mut buffer) {
+                Ok(0) => return Err(std::io::Error::other("search worker disconnected")),
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        let Some(response) = self.shared.0.lock().unwrap().result.take() else {
+            return Ok(None);
+        };
         if response.generation != self.generation.load(Ordering::Relaxed) {
-            return None;
+            return Ok(None);
         }
         self.applied = response.generation;
         self.applied_count = response.count;
+        // An empty partial result does not establish "no match". In
+        // particular, Return must not print raw input before a later chunk
+        // has had the opportunity to produce a selectable result.
+        self.query_ready = response.finished || !response.matches.is_empty();
         self.waiting = !response.finished
             || response.count != self.count
             || response.complete != self.complete;
-        Some(response)
+        Ok(Some(response))
     }
 }
 
@@ -239,6 +256,15 @@ impl Menu {
                 {
                     return true;
                 }
+                if self.has_shortcuts
+                    && self.matcher.items.iter().any(|item| {
+                        item.entry
+                            .shortcut
+                            .is_some_and(|key| key.matches(*sym, *mods))
+                    })
+                {
+                    return true;
+                }
                 if !mods.ctrl && !mods.alt && !mods.logo {
                     return !text.chars().any(|c| !c.is_control())
                         && !matches!(
@@ -266,13 +292,23 @@ impl Menu {
                     ))
             }
             BackendEvent::KeyRelease { sym, .. } => matches!(*sym, ks::KEY_Alt_L | ks::KEY_Alt_R),
+            BackendEvent::SelectionNotify { .. } => {
+                self.cfg.reject_no_match && self.stream_complete()
+            }
             _ => false,
         }
     }
 
     pub(super) fn poll_search(&mut self) -> Option<ExitStatus> {
         let was_pending = self.search_pending();
-        let response = self.search.as_mut()?.take_result()?;
+        let response = match self.search.as_mut()?.take_result() {
+            Ok(Some(response)) => response,
+            Ok(None) => return None,
+            Err(error) => {
+                eprintln!("instantmenu: search failed: {error}");
+                return Some(ExitStatus::Failure);
+            }
+        };
         if let Some((text, cursor)) = response
             .finished
             .then(|| self.reject_snapshot.take())
@@ -336,5 +372,85 @@ impl Drop for SearchWorker {
         if let Some(handle) = self.thread.take() {
             let _ = handle.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use std::time::{Duration, Instant};
+
+    fn finished(worker: &mut SearchWorker) -> Response {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(response) = worker.take_result().unwrap() {
+                if response.finished {
+                    return response;
+                }
+            }
+            assert!(Instant::now() < deadline, "search did not finish");
+            let mut fd = [crate::backend::poll::poll_in(
+                worker.fd().expect("pending search"),
+            )];
+            let _ = crate::backend::poll::poll_fds(&mut fd, 100);
+        }
+    }
+
+    #[test]
+    fn worker_keeps_appends_when_queries_are_superseded() {
+        let mut source = Matcher::new(
+            vec![Item::new("alpha"), Item::new("beta")],
+            &Config::default(),
+        );
+        let mut worker = SearchWorker::new(&source, "").unwrap();
+        worker.request(&source, "alpha", false, false);
+        source.items.push(Item::new("gamma"));
+        worker.request(&source, "beta", false, false);
+        source
+            .items
+            .push(Item::new("{match=target value=result} chosen"));
+        worker.request(&source, "target", true, false);
+        let response = finished(&mut worker);
+        assert_eq!(response.matches, vec![3]);
+        assert!(response.complete);
+        assert!(!worker.pending_query());
+        assert!(worker.fd().is_none());
+    }
+
+    #[test]
+    fn worker_invalidates_scores_after_reordering_or_case_change() {
+        let mut source = Matcher::new(
+            vec![Item::new("UPPER"), Item::new("upper")],
+            &Config::default(),
+        );
+        let mut worker = SearchWorker::new(&source, "").unwrap();
+        worker.request(&source, "UPPER", true, false);
+        assert_eq!(finished(&mut worker).matches, vec![0]);
+        source.items.swap(0, 1);
+        worker.request(&source, "UPPER", true, true);
+        assert_eq!(finished(&mut worker).matches, vec![1]);
+        source.set_insensitive(true);
+        worker.request(&source, "UPPER", true, false);
+        assert_eq!(finished(&mut worker).matches.len(), 2);
+    }
+
+    #[test]
+    fn automatic_conclusions_use_the_final_corpus() {
+        let mut source = Matcher::new(
+            vec![Item::new("target")],
+            &Config {
+                auto_confirm: true,
+                ..Config::default()
+            },
+        );
+        let mut worker = SearchWorker::new(&source, "").unwrap();
+        worker.request(&source, "target", false, false);
+        assert_eq!(finished(&mut worker).result, MatchResult::Listed);
+        source.items.push(Item::new("target two"));
+        worker.request(&source, "target", true, false);
+        assert_eq!(finished(&mut worker).result, MatchResult::Listed);
+        worker.request(&source, "target two", true, false);
+        assert_eq!(finished(&mut worker).result, MatchResult::AutoConfirm(1));
     }
 }

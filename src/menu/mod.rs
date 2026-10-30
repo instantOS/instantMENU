@@ -109,9 +109,12 @@ pub struct Menu {
     pub(in crate::menu) frecency: Option<Frecency>,
     frecency_dirty: bool,
     pending_output: Vec<String>,
+    has_shortcuts: bool,
+    /// Installed by run(); setup uses the pure matcher before event polling.
     search: Option<search::SearchWorker>,
     deferred_events: std::collections::VecDeque<crate::backend::BackendEvent>,
     reject_snapshot: Option<(String, usize)>,
+    /// EOF-only conclusions wait for a completed current-query result.
     finalize_search_pending: bool,
     pre_match_target: Option<usize>,
 
@@ -122,8 +125,9 @@ pub struct Menu {
     /// stdin reached end-of-file: the corpus is final and pick conclusions
     /// (auto-confirm/single-key/pre-match) may fire.
     stream_eof: bool,
-    /// EOF has been settled (rematch + final draw done) exactly once.
-    stream_finalized: bool,
+    /// EOF finalization has started exactly once. A background search may
+    /// still be completing its deferred conclusions.
+    stream_finalization_started: bool,
     /// Items arrived since the last settle.
     stream_dirty: bool,
     parser: LineParser,
@@ -177,6 +181,7 @@ impl Menu {
             frecency,
             frecency_dirty: false,
             pending_output: Vec::new(),
+            has_shortcuts: false,
             search: None,
             deferred_events: std::collections::VecDeque::new(),
             reject_snapshot: None,
@@ -184,7 +189,7 @@ impl Menu {
             pre_match_target: None,
             stream_fd: -1,
             stream_eof: false,
-            stream_finalized: false,
+            stream_finalization_started: false,
             stream_dirty: false,
             parser: LineParser::default(),
             gate: Gate::default(),
@@ -215,6 +220,7 @@ impl Menu {
             return;
         }
         for item in &items {
+            self.has_shortcuts |= item.entry.shortcut.is_some();
             self.pending_chars.extend(item.text.chars());
             if let Some(icon) = item.entry.icon {
                 self.pending_chars.insert(icon);

@@ -18,8 +18,20 @@ import time
 
 PRODUCER = """
 import sys, time
+from pathlib import Path
 slow = sys.argv[1] == 'slow'
 i = 0
+if sys.argv[1].startswith('large-'):
+    limit = 90000 if sys.argv[1].startswith('large-loaded') else 50000
+    for start in range(0, limit, 256):
+        sys.stdout.write(''.join(
+            '/workspace/project-%d/src/components/directory-%d/file-%08d.rs\\n' % (n % 117, n % 53, n)
+            for n in range(start, min(start + 256, limit))))
+        sys.stdout.flush()
+    Path(sys.argv[2]).touch()
+    if limit == 90000:
+        sys.exit(0)
+    i = limit
 while True:
     count = 1 if slow else 256
     sys.stdout.write(''.join('/workspace/file-%08d\\n' % n
@@ -57,7 +69,7 @@ def exercise(binary, env, root, label, text, key):
     with log_path.open("w") as log:
         try:
             producer = subprocess.Popen(
-                [sys.executable, "-c", PRODUCER, label],
+                [sys.executable, "-c", PRODUCER, label, str(root / f"{label}.ready")],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             )
             menu = subprocess.Popen(
@@ -72,8 +84,14 @@ def exercise(binary, env, root, label, text, key):
                 lambda: re.search(r"damage_buffer\(0, 0, 1280,", log_path.read_text()),
                 menu, label,
             )
+            if label.startswith("large-"):
+                ready = root / f"{label}.ready"
+                # The pipe cannot buffer this corpus: reaching the marker
+                # proves the menu has consumed tens of thousands of paths.
+                wait_for(ready.exists, menu, label)
             time.sleep(.3)
-            assert producer.poll() is None, "producer ended before interaction"
+            if not label.startswith("large-loaded"):
+                assert producer.poll() is None, "producer ended before interaction"
             started = time.monotonic()
             # Give the virtual keyboard time to establish focus before pressing
             # keys. Otherwise its first press can become wl_keyboard.enter's
@@ -81,6 +99,10 @@ def exercise(binary, env, root, label, text, key):
             command = ["wtype", "-s", "200"]
             if text:
                 command.append(text)
+                if label.startswith("large-"):
+                    # Exercise interaction during an active expensive query,
+                    # rather than only canceling before the worker starts it.
+                    command.extend(["-s", "200"])
             command.extend(["-k", key, "-s", "100"])
             subprocess.run(command, env=env, check=True, timeout=3)
             output, _ = menu.communicate(timeout=2)
@@ -92,7 +114,7 @@ def exercise(binary, env, root, label, text, key):
             if key == "Escape":
                 assert output == b"", output
             else:
-                assert output.startswith(b"/workspace/file-"), output
+                assert output.startswith(b"/workspace/"), output
                 assert (text or "00000000").encode() in output, output
             print(f"PASS {label}: {elapsed:.3f}s including keyboard setup")
         except Exception:
@@ -141,6 +163,10 @@ def main():
                     ("busy-select", "", "Return"),
                     ("busy-type", "42", "Return"),
                     ("busy-cancel", "", "Escape"),
+                    ("large-stream-type", "components", "Return"),
+                    ("large-stream-cancel", "components", "Escape"),
+                    ("large-loaded-type", "components", "Return"),
+                    ("large-loaded-cancel", "components", "Escape"),
                 ):
                     exercise(binary, env, root, label, text, key)
             finally:

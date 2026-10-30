@@ -236,6 +236,11 @@ impl Menu {
             }
             if self.parser.spurious_lone_newline() {
                 self.matcher.items.pop();
+                // An asynchronous result may still display the provisional
+                // empty item. No visible index may outlive its candidate.
+                self.matcher.matches.clear();
+                self.selection = Default::default();
+                self.paging = Default::default();
             }
             self.stream_dirty = true;
         }
@@ -245,7 +250,7 @@ impl Menu {
     /// A settle is due: EOF has not been finalized yet, or items arrived
     /// and the coalescing window closed.
     pub(super) fn stream_settle_due(&self, now: std::time::Instant) -> bool {
-        (self.stream_fd >= 0 && self.stream_eof && !self.stream_finalized)
+        (self.stream_fd >= 0 && self.stream_eof && !self.stream_finalization_started)
             || (self.stream_dirty && self.gate.expired(now))
     }
 
@@ -280,7 +285,7 @@ impl Menu {
     /// may auto-confirm and exit), then pre-match, then the deferred
     /// preselection — followed by the final layout pass and draw.
     pub(super) fn finalize_stream(&mut self) -> Option<ExitStatus> {
-        self.stream_finalized = true;
+        self.stream_finalization_started = true;
         let chars = std::mem::take(&mut self.pending_chars);
         self.renderer.add_fallbacks(&chars);
         /* Layout precedes every consumer derived from it. In particular,
