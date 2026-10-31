@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.2.1](https://github.com/instantOS/instantMENU/compare/v5.2.0...v5.2.1) - 2026-10-31
+
+### Fixed
+
+- keep streaming input responsive under sustained load
+- keep progressive search interactive for large lists
+- preserve visible streamed selections and defer search workers
+- unify menu input and search state transitions
+
+### Other
+
+- deprecate the smartrun script
+- Merge branch 'main' of github.com:instantOS/instantMENU
+- Merge branch 'main' into dev
+- try to get better search performance for long lists
+
 ## [5.2.0](https://github.com/instantOS/instantMENU/compare/v5.1.5...v5.2.0) - 2026-10-24
 
 ### Added
