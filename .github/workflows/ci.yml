@@ -42,6 +42,9 @@ jobs:
         run: cargo build --locked --bins
       - name: Test streaming interaction on headless Wayland
         run: |
+          # Arch gives sway CAP_SYS_NICE, which Docker's capability bounding set
+          # blocks at exec. The headless pixman test needs no elevated scheduling.
+          setcap -r /usr/bin/sway
           useradd -m streaming-test
           runuser -u streaming-test -- python3 scripts/test-streaming-wayland.py
       - name: Check command-line interfaces
