@@ -8,6 +8,7 @@
 //! are noted in the code and pinned by the test suite.
 
 mod accept;
+mod actions;
 mod animate;
 mod draw;
 mod editor;
@@ -21,6 +22,8 @@ mod measure;
 mod mouse;
 mod paging;
 mod run;
+mod search;
+mod selection;
 mod slide;
 mod stream;
 mod transition;
@@ -36,10 +39,9 @@ use crate::enums::ExitStatus;
 use crate::geom::{Point, Rect};
 use crate::render::{Canvas, Painter, Renderer};
 
-use accept::{AcceptMode, AcceptTarget};
 use frecency::Frecency;
 use layout::{Header, Layout};
-use matcher::{Item, MatchResult, Matcher};
+use matcher::{Item, Matcher};
 use measure::{Measure, TextMeasurer};
 use paging::{Paging, Selection};
 use slide::Slider;
@@ -108,6 +110,16 @@ pub struct Menu {
     pub(in crate::menu) frecency: Option<Frecency>,
     frecency_dirty: bool,
     pending_output: Vec<String>,
+    has_shortcuts: bool,
+    selection_is_explicit: bool,
+    /// Created only after an interactive search exhausts its inline budget.
+    search: Option<search::SearchWorker>,
+    background_search_enabled: bool,
+    deferred_events: std::collections::VecDeque<crate::backend::BackendEvent>,
+    reject_snapshot: Option<(String, usize)>,
+    /// EOF-only conclusions wait for a completed current-query result.
+    finalize_search_pending: bool,
+    pre_match_target: Option<usize>,
 
     /* ── streaming stdin ──────────────────────────────────────────────── */
     /// fd of the streaming stdin pipe, -1 when items are not streamed (no
@@ -116,8 +128,9 @@ pub struct Menu {
     /// stdin reached end-of-file: the corpus is final and pick conclusions
     /// (auto-confirm/single-key/pre-match) may fire.
     stream_eof: bool,
-    /// EOF has been settled (rematch + final draw done) exactly once.
-    stream_finalized: bool,
+    /// EOF finalization has started exactly once. A background search may
+    /// still be completing its deferred conclusions.
+    stream_finalization_started: bool,
     /// Items arrived since the last settle.
     stream_dirty: bool,
     parser: LineParser,
@@ -171,9 +184,17 @@ impl Menu {
             frecency,
             frecency_dirty: false,
             pending_output: Vec::new(),
+            has_shortcuts: false,
+            selection_is_explicit: false,
+            search: None,
+            background_search_enabled: false,
+            deferred_events: std::collections::VecDeque::new(),
+            reject_snapshot: None,
+            finalize_search_pending: false,
+            pre_match_target: None,
             stream_fd: -1,
             stream_eof: false,
-            stream_finalized: false,
+            stream_finalization_started: false,
             stream_dirty: false,
             parser: LineParser::default(),
             gate: Gate::default(),
@@ -204,6 +225,7 @@ impl Menu {
             return;
         }
         for item in &items {
+            self.has_shortcuts |= item.entry.shortcut.is_some();
             self.pending_chars.extend(item.text.chars());
             if let Some(icon) = item.entry.icon {
                 self.pending_chars.insert(icon);
@@ -312,176 +334,6 @@ impl Menu {
     }
 
     /* ── re-matching and selection ─────────────────────────────────────── */
-
-    /// Run the matcher for the current text and select the best match.
-    /// The C version printed and exited from inside match(); those cases are
-    /// transitions here. While items stream in, pick conclusions are
-    /// deferred (see [`Matcher::search`]) and an existing selection survives
-    /// the rematch — a batch landing under a user's arrow keys must not yank
-    /// the highlight back to the top. Once the corpus is final, typing means
-    /// "select whatever matches my query best": the selection resets to the
-    /// top and a resting pointer does not override it. Hover is
-    /// change-detected on the pointer's row (see [`Menu::set_selection`]),
-    /// so jitter around a resting pointer cannot fight the reset into
-    /// alternating frames — the flicker an earlier pointer-authoritative
-    /// rematch suffered from.
-    pub(in crate::menu) fn do_match(&mut self) -> Transition {
-        let complete = self.stream_complete();
-        let keep = (!complete)
-            .then_some(self.selection.selected)
-            .flatten()
-            .and_then(|pos| self.matcher.matches.get(pos))
-            .map(|&idx| self.matcher.items[idx].arrival_index);
-        if self.frecency_dirty {
-            if let Some(f) = self.frecency.as_ref() {
-                f.rank(&mut self.matcher.items, SystemTime::now());
-            }
-            self.frecency_dirty = false;
-        }
-        match self.matcher.search(&self.editor.text, complete) {
-            MatchResult::Listed => {
-                let keep = keep.and_then(|id| {
-                    self.matcher
-                        .matches
-                        .iter()
-                        .position(|&idx| self.matcher.items[idx].arrival_index == id)
-                });
-                self.selection = Selection {
-                    selected: self.matcher.first_selectable_match(),
-                    page_start: (!self.matcher.matches.is_empty()).then_some(0),
-                };
-                if let Some(pos) = keep {
-                    if self.matcher.match_is_selectable(pos) {
-                        self.selection.selected = Some(pos);
-                    }
-                }
-                self.recalc_paging();
-                Transition::Nop
-            }
-            MatchResult::AutoConfirm(idx) => self.accept(AcceptTarget::Item(idx), AcceptMode::Exit),
-            MatchResult::SingleKeyPick(pick) => match pick {
-                Some(idx) => self.accept(AcceptTarget::Item(idx), AcceptMode::Exit),
-                None => Transition::Exit(ExitStatus::Success),
-            },
-        }
-    }
-
-    /// Move the selection one item forward, paging when it crosses `next`.
-    pub(in crate::menu) fn select_next(&mut self) {
-        loop {
-            let (sel, turned) =
-                paging::advance(&self.selection, self.matcher.matches.len(), &self.paging);
-            if sel == self.selection {
-                break;
-            }
-            self.selection = sel;
-            if turned {
-                self.recalc_paging();
-            }
-            if self
-                .selection
-                .selected
-                .is_some_and(|pos| self.matcher.match_is_selectable(pos))
-            {
-                break;
-            }
-        }
-    }
-
-    /// Move the selection one item backward, paging when it crosses `prev`.
-    pub(in crate::menu) fn select_prev(&mut self) {
-        loop {
-            let (sel, turned) = paging::retreat(&self.selection, &self.paging);
-            if sel == self.selection {
-                break;
-            }
-            self.selection = sel;
-            if turned {
-                self.recalc_paging();
-            }
-            if self
-                .selection
-                .selected
-                .is_some_and(|pos| self.matcher.match_is_selectable(pos))
-            {
-                break;
-            }
-        }
-    }
-
-    /// Start a page at `pos` and select its first selectable item. A trailing
-    /// heading cannot trap selection: fall back to the preceding action.
-    pub(in crate::menu) fn select_page(&mut self, pos: usize) {
-        let selected = (pos..self.matcher.matches.len())
-            .find(|&candidate| self.matcher.match_is_selectable(candidate))
-            .or_else(|| {
-                (0..pos)
-                    .rev()
-                    .find(|&candidate| self.matcher.match_is_selectable(candidate))
-            });
-        self.selection = Selection {
-            selected,
-            page_start: (!self.matcher.matches.is_empty()).then_some(pos),
-        };
-    }
-
-    pub(in crate::menu) fn recalc_paging(&mut self) {
-        let mut m = TextMeasurer::new(
-            &mut self.renderer,
-            self.cfg.single_key,
-            self.layout.bar_height,
-        );
-        self.paging = paging::calc_paging(
-            &self.selection,
-            &self.matcher.items,
-            &self.matcher.matches,
-            &self.layout,
-            &mut m,
-        );
-    }
-
-    /// --preselect: highlight the first selectable match whose output value
-    /// equals the configured value, walking the selection there so paging
-    /// turns pages exactly like repeated Down presses. The comparison is
-    /// exact; without a match the selection stays where the match left it.
-    /// While stdin streams in this runs deferred at EOF (`finalize_stream`),
-    /// since the target may not have arrived yet.
-    pub(in crate::menu) fn apply_preselect(&mut self) {
-        let Some(target) = self.cfg.preselect.as_deref() else {
-            return;
-        };
-        let Some(found) = self.matcher.matches.iter().position(|&index| {
-            let item = &self.matcher.items[index];
-            item.is_selectable() && item.output() == target
-        }) else {
-            return;
-        };
-        self.selection = Selection {
-            selected: self.matcher.first_selectable_match(),
-            page_start: (!self.matcher.matches.is_empty()).then_some(0),
-        };
-        while self.selection.selected != Some(found) {
-            self.select_next();
-        }
-    }
-
-    /* ── selection helpers ─────────────────────────────────────────────── */
-
-    pub(in crate::menu) fn selected_text_ref(&self) -> Option<&str> {
-        self.selection
-            .selected
-            .map(|pos| self.matcher.text_of_match(pos))
-    }
-
-    fn selected_text(&self) -> Option<String> {
-        self.selected_text_ref().map(str::to_owned)
-    }
-
-    pub(in crate::menu) fn selected_is_heading(&self) -> bool {
-        self.selection
-            .selected
-            .is_some_and(|pos| !self.matcher.match_is_selectable(pos))
-    }
 
     /// Ask the backend for the primary selection (clipboard when Shift is
     /// held) — shared by Ctrl-v/Ctrl-y and middle-click paste.

@@ -67,7 +67,7 @@ impl Menu {
         if !self.matcher.match_is_selectable(pos) {
             return Transition::Nop;
         }
-        self.selection.selected = Some(pos);
+        self.select_result(pos);
         self.animate_selection();
         self.accept(AcceptTarget::Item(self.matcher.matches[pos]), mode)
     }

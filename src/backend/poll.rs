@@ -1,10 +1,9 @@
 //! Shared fd-polling scaffolding for the backends.
 //!
 //! Both the X11 and the Wayland event loops wait on their connection fd plus
-//! caller-owned extras with `libc::poll`, retry on EINTR, and prioritize the
-//! extras (a blocked pipe producer is more time-critical than an
-//! already-queued backend event). This module is that one behavior, kept in
-//! one place.
+//! caller-owned extras with `libc::poll` and retry on EINTR. When both sources
+//! are ready, the backends service the display first; the menu gives stdin
+//! its own bounded turn before each backend poll.
 
 use std::os::fd::RawFd;
 

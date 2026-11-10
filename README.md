@@ -39,6 +39,17 @@ bump can also be selected manually from the workflow dispatch form.
 - streamed input: the menu opens instantly and items appear as stdin produces them
 - Catppuccin, classic and Gruvbox themes (`--theme`)
 
+Large fuzzy searches update results progressively while the menu remains interactive.
+Small searches finish inline; a background worker starts only when a search
+exhausts its event-loop time budget.
+An ellipsis in the match counter means the result list is still being searched;
+ranking can improve as more candidates are scored. Enter accepts the current
+selection, and Escape cancels immediately. New input replaces an unfinished
+query instead of queuing searches for every intermediate keystroke.
+Automatic selection follows the best result. Once you navigate or hover to
+choose a result, incoming items preserve that choice and keep it visible,
+including when input finishes. Editing the query selects the best match again.
+
 ## Appearance configuration
 
 instantmenu reads one optional file: `$XDG_CONFIG_HOME/instantmenu/config.toml`,
@@ -133,6 +144,21 @@ shortcuts; duplicates select the first matching entry in input order. Global
 `--bind` actions take precedence on conflicts. Headings cannot have shortcuts,
 and shortcuts are inactive in `--single-key`, input-only, password, and toast
 modes. `{key=q}` remains the separate single-character `--single-key` interface.
+
+## Testing
+
+Run `cargo test --all-targets` for the unit and CLI tests. With `sway` and
+`wtype` installed, also run:
+
+```sh
+cargo build --bin instantmenu
+python3 scripts/test-streaming-wayland.py
+```
+
+The interaction test starts an isolated headless compositor and checks selection,
+typing, and cancellation while producers continue writing to real pipes. It also
+types expensive queries after 50,000 streamed paths and after a complete corpus
+of 90,000 paths. It runs against the debug binary by default.
 
 --------
 ### instantOS is still in early beta, contributions always welcome

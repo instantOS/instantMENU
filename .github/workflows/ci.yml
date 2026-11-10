@@ -19,6 +19,8 @@ jobs:
         uses: actions/checkout@v7
       - name: Setup Arch container
         uses: ./.github/actions/setup-arch
+        with:
+          packages: sway wtype
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -38,6 +40,10 @@ jobs:
         run: cargo test --locked --all-targets --verbose
       - name: Build debug binaries
         run: cargo build --locked --bins
+      - name: Test streaming interaction on headless Wayland
+        run: |
+          useradd -m streaming-test
+          runuser -u streaming-test -- python3 scripts/test-streaming-wayland.py
       - name: Check command-line interfaces
         run: |
           ./target/debug/instantmenu --help > /dev/null

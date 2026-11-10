@@ -11,7 +11,7 @@ use crate::backend::{
     Backend, BackendEvent, InputSource, MenuCursor, Modifiers, MonitorInfo, MouseButton,
 };
 use crate::config::{Config, SlideSettings, Width};
-use crate::enums::{ExitStatus, Scheme};
+use crate::enums::{EditOp, ExitStatus, Scheme};
 use crate::geom::{Point, Rect, Size};
 use crate::render::{Color, Renderer};
 use std::collections::HashSet;
@@ -317,10 +317,12 @@ fn acceptance_paths_share_item_output_contract() {
             "auto-confirm",
             "bound",
         ] {
-            let mut cfg = Config::default();
-            cfg.single_key = path == "single-key";
-            cfg.auto_confirm = path == "auto-confirm";
-            cfg.alt_tab = path == "alt-release";
+            let mut cfg = Config {
+                single_key: path == "single-key",
+                auto_confirm: path == "auto-confirm",
+                alt_tab: path == "alt-release",
+                ..Config::default()
+            };
             if path == "bound" {
                 cfg.bindings = bound_config().bindings;
             }
@@ -587,7 +589,7 @@ fn frecency_ranks_across_batches_and_preserves_item_identity() {
     menu.matcher.items[1].already_output = true;
 
     menu.add_items(vec![Item::new("unseen"), Item::new("favorite")]);
-    menu.settle_stream();
+    assert!(menu.settle_stream().is_none());
     let texts: Vec<_> = menu.matcher.items.iter().map(Item::label).collect();
     assert_eq!(texts, ["favorite", "duplicate", "duplicate", "unseen"]);
     assert_eq!(menu.selection.selected, Some(2));
@@ -596,7 +598,9 @@ fn frecency_ranks_across_batches_and_preserves_item_identity() {
 
     menu.stream_eof = true;
     assert_eq!(menu.finalize_stream(), None);
-    assert_eq!(menu.selected_text_ref(), Some("favorite"));
+    assert_eq!(menu.selected_text_ref(), Some("duplicate"));
+    let selected = menu.matcher.matches[menu.selection.selected.unwrap()];
+    assert!(menu.matcher.items[selected].already_output);
     let _ = std::fs::remove_file(path);
 }
 
@@ -628,7 +632,7 @@ fn frecency_streaming_matches_single_load_across_heading_boundaries() {
     streamed.begin_stream(pipe.read_fd);
     for item in &items[..items.len() - 1] {
         streamed.add_items(vec![Item::new(*item)]);
-        streamed.settle_stream();
+        assert!(streamed.settle_stream().is_none());
     }
     // The highest score arrives with EOF, without an intermediate settle.
     streamed.add_items(vec![Item::new("best")]);
@@ -2924,10 +2928,9 @@ impl Drop for TestPipe {
     }
 }
 
-/// Startup only consumes a bounded prefix. In particular, a producer that
-/// never reaches EOF cannot hold window creation hostage.
-#[test]
-fn stream_preload_leaves_a_large_remainder_for_the_event_loop() {
+/// A regular file is always readable up to EOF, making continuous input
+/// deterministic without a writer thread racing the reader.
+fn stream_file(bytes: &[u8]) -> std::fs::File {
     let path = std::env::temp_dir().join(format!(
         "instantmenu-preload-{}-{:?}",
         std::process::id(),
@@ -2939,21 +2942,83 @@ fn stream_preload_leaves_a_large_remainder_for_the_event_loop() {
         .create_new(true)
         .open(&path)
         .unwrap();
-    let item_count = 100_000;
-    file.write_all(&b"x\n".repeat(item_count)).unwrap();
+    std::fs::remove_file(path).unwrap();
+    file.write_all(bytes).unwrap();
     file.seek(SeekFrom::Start(0)).unwrap();
+    file
+}
+
+/// Startup only consumes a bounded prefix. In particular, a producer that
+/// never reaches EOF cannot hold window creation hostage.
+#[test]
+fn stream_preload_leaves_a_large_remainder_for_the_event_loop() {
+    let item_count = 100_000;
+    let file = stream_file(&b"x\n".repeat(item_count));
 
     let (mut menu, _stub, _out) = menu_with(Config::default(), &[]);
     menu.begin_stream(file.as_raw_fd());
     menu.preload_available();
 
-    assert_eq!(menu.matcher.items.len(), 32_768);
+    assert!(!menu.matcher.items.is_empty());
+    assert!(menu.matcher.items.len() <= 32_768);
     assert!(menu.stream_active(), "the byte budget stopped before EOF");
-    assert!(menu.drain_stdin(), "the event-loop drain reaches EOF");
+    while !menu.drain_stdin() {}
     assert_eq!(menu.matcher.items.len(), item_count);
+}
 
-    drop(file);
-    std::fs::remove_file(path).unwrap();
+/// The event loop has the same bounded-input contract as startup. Include
+/// incomplete lines: buffering an unterminated item must yield too.
+#[test]
+fn stream_input_turn_yields_while_more_bytes_are_readable() {
+    for input in [b"x\n".repeat(100_000), vec![b'x'; 200_000]] {
+        let mut file = stream_file(&input);
+        let (mut menu, _, _) = menu_with(Config::default(), &[]);
+        menu.begin_stream(file.as_raw_fd());
+
+        assert!(!menu.drain_stdin(), "one turn must stop before EOF");
+        let consumed = file.stream_position().unwrap();
+        assert!(consumed > 0 && consumed <= 64 * 1024);
+        assert!(menu.stream_active());
+
+        while !menu.drain_stdin() {}
+        if input.contains(&b'\n') {
+            assert_eq!(menu.matcher.items.len(), 100_000);
+        } else {
+            assert_eq!(menu.matcher.items.len(), 1);
+            assert_eq!(menu.matcher.items[0].text.len(), input.len());
+        }
+    }
+}
+
+#[test]
+fn stream_accepts_visible_selection_before_consuming_continuous_input() {
+    let mut file = stream_file(&b"incoming\n".repeat(100_000));
+    let (mut menu, stub, out) = menu_with(Config::default(), &["visible"]);
+    menu.begin_stream(file.as_raw_fd());
+    stub.key(ks::KEY_Return, M_NONE, "");
+
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert_eq!(out.contents(), "visible\n");
+    assert!(menu.stream_active(), "selection must not require EOF");
+    assert!(file.stream_position().unwrap() < file.metadata().unwrap().len());
+}
+
+/// Display events cannot starve input either: every loop iteration advances
+/// stdin even if poll_event can return a queued backend event immediately.
+#[test]
+fn stream_progresses_while_backend_events_are_queued() {
+    let mut file = stream_file(&b"incoming\n".repeat(100_000));
+    let (mut menu, stub, _) = menu_with(Config::default(), &[]);
+    menu.begin_stream(file.as_raw_fd());
+    for _ in 0..64 {
+        stub.push(BackendEvent::Expose);
+    }
+    stub.key(ks::KEY_Escape, M_NONE, "");
+
+    assert_eq!(menu.run(), ExitStatus::Failure);
+    // Expose's present() call does not consume stdin; these bytes were read
+    // by separate bounded input turns in the menu loop.
+    assert!(file.stream_position().unwrap() > 64 * 1024);
 }
 
 /// Items stream in batch by batch; the menu keeps running until EOF, which
@@ -3004,6 +3069,298 @@ fn run_settles_eof_then_behaves_like_a_loaded_menu() {
     stub.key(ks::KEY_Return, M_NONE, "");
     assert_eq!(menu.run(), ExitStatus::Success);
     assert_eq!(out.contents(), "alpha\n"); // first item selected after EOF
+    assert!(
+        menu.search.is_none(),
+        "small empty-query startup needs no worker"
+    );
+}
+
+fn force_search_worker(menu: &mut Menu) {
+    let state = menu.matcher.take_search_state();
+    menu.search = Some(super::search::SearchWorker::new(state).unwrap());
+}
+
+fn finish_background_search(menu: &mut Menu) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        assert_eq!(menu.poll_search(), None);
+        let Some(worker) = menu.search.as_ref().filter(|worker| worker.is_busy()) else {
+            break;
+        };
+        assert!(
+            std::time::Instant::now() < deadline,
+            "search did not finish"
+        );
+        let mut fds = [crate::backend::poll::poll_in(worker.fd())];
+        let _ = crate::backend::poll::poll_fds(&mut fds, 100);
+    }
+}
+
+#[test]
+fn progressive_arrivals_select_the_best_match_without_manual_navigation() {
+    let (mut menu, _, _) = menu_with(Config::default(), &["/old/path/file.rs"]);
+    let pipe = TestPipe::new();
+    menu.begin_stream(pipe.read_fd);
+    menu.editor.set_text("file");
+    force_search_worker(&mut menu);
+    let _ = menu.do_match();
+    finish_background_search(&mut menu);
+    menu.add_items((0..100).map(|_| Item::new("file")).collect());
+    let _ = menu.do_match();
+    finish_background_search(&mut menu);
+    assert_eq!(menu.selected_text_ref(), Some("file"));
+    menu.stream_eof = true;
+    assert_eq!(menu.finalize_stream(), None);
+    finish_background_search(&mut menu);
+    assert_eq!(menu.selected_text_ref(), Some("file"));
+}
+
+#[test]
+fn progressive_ranking_keeps_manual_selection_inside_the_visible_page() {
+    for (lines, columns) in [(0, 1), (3, 1), (3, 2)] {
+        let cfg = Config {
+            lines,
+            columns,
+            palette: crate::render::Palette {
+                selected: crate::render::SchemeColors::hex(0xFFFFFF, 0xFF00FF, 0xFFFFFF),
+                ..Config::default().palette
+            },
+            ..Config::default()
+        };
+        let labels: Vec<_> = (0..20)
+            .map(|i| format!("/old/path/file-{i:02}.rs"))
+            .collect();
+        let refs: Vec<_> = labels.iter().map(String::as_str).collect();
+        let (mut menu, _, _) = menu_with(cfg, &refs);
+        menu.layout.lines = lines;
+        menu.layout.columns = columns;
+        menu.canvas.resize(Size::new(600, 240));
+        let pipe = TestPipe::new();
+        menu.begin_stream(pipe.read_fd);
+        menu.editor.set_text("file");
+        force_search_worker(&mut menu);
+        let _ = menu.do_match();
+        finish_background_search(&mut menu);
+        key(&mut menu, ks::KEY_Down, M_NONE);
+        let chosen = menu.selected_text_ref().unwrap().to_owned();
+        menu.add_items((0..100).map(|_| Item::new("file")).collect());
+        let _ = menu.do_match();
+        finish_background_search(&mut menu);
+        assert_eq!(menu.selected_text_ref(), Some(chosen.as_str()));
+        let pos = menu.selection.selected.unwrap();
+        assert!(pos >= menu.selection.page_start.unwrap());
+        assert!(
+            pos < menu.paging.next.unwrap_or(menu.matcher.matches.len()),
+            "selection is offscreen"
+        );
+        assert!(
+            menu.canvas
+                .data
+                .as_chunks::<4>()
+                .0
+                .contains(&[255, 0, 255, 255]),
+            "the highlight must actually be painted"
+        );
+        menu.stream_eof = true;
+        assert_eq!(menu.finalize_stream(), None);
+        finish_background_search(&mut menu);
+        let pos = menu.selection.selected.unwrap();
+        assert!(pos >= menu.selection.page_start.unwrap());
+        assert!(pos < menu.paging.next.unwrap_or(menu.matcher.matches.len()));
+        assert!(menu
+            .canvas
+            .data
+            .as_chunks::<4>()
+            .0
+            .contains(&[255, 0, 255, 255]));
+        key(&mut menu, ks::KEY_Down, M_NONE);
+        assert_ne!(menu.selected_text_ref(), Some(chosen.as_str()));
+        let _ = menu.insert(EditOp::Delete(menu.editor.cursor));
+        let _ = menu.insert(EditOp::Insert("file"));
+        finish_background_search(&mut menu);
+        assert_eq!(
+            menu.selected_text_ref(),
+            Some("file"),
+            "a query edit returns to automatic selection"
+        );
+    }
+}
+
+#[test]
+fn arrow_keys_recover_a_missing_selection() {
+    for sym in [ks::KEY_Down, ks::KEY_Up] {
+        let (mut menu, _, _) = menu_with(Config::default(), &["alpha", "beta"]);
+        menu.selection.selected = None;
+        key(&mut menu, sym, M_NONE);
+        assert_eq!(menu.selected_text_ref(), Some("alpha"));
+    }
+}
+
+#[test]
+fn run_accepts_the_latest_query_instead_of_stale_results() {
+    let (mut menu, stub, out) = menu_with(Config::default(), &["alpha", "beta", "gamma"]);
+    force_search_worker(&mut menu);
+    for c in "bet".chars() {
+        stub.key(0, M_NONE, &c.to_string());
+    }
+    stub.key(ks::KEY_Return, M_NONE, "\r");
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert_eq!(out.contents(), "beta\n");
+}
+
+#[test]
+fn space_confirm_waits_for_current_query_results() {
+    let cfg = Config {
+        space_confirm: true,
+        ..Config::default()
+    };
+    let (mut menu, _, out) = menu_with(cfg, &["alpha", "beta"]);
+    force_search_worker(&mut menu);
+    menu.key_press(0, M_NONE, "bet");
+    assert!(menu.search_pending());
+    assert_eq!(menu.key_press(ks::KEY_space, M_NONE, " "), Transition::Nop);
+    assert_eq!(menu.deferred_events.len(), 1);
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert_eq!(out.contents(), "beta\n");
+}
+
+#[test]
+fn editing_and_cancellation_aliases_do_not_wait_for_search_results() {
+    let (mut menu, _, _) = menu_with(Config::default(), &["alpha", "beta"]);
+    force_search_worker(&mut menu);
+    menu.key_press(0, M_NONE, "bet");
+    assert!(menu.search_pending());
+    key(&mut menu, ks::KEY_s, M_CTRL);
+    assert_eq!(menu.editor.text, "bet.*");
+    assert!(menu.deferred_events.is_empty());
+    assert_eq!(
+        key(&mut menu, ks::KEY_bracketleft, M_CTRL),
+        Transition::Exit(ExitStatus::Failure)
+    );
+}
+
+#[test]
+fn eof_hooks_have_the_same_order_inline_and_on_a_worker() {
+    for background in [false, true] {
+        let cfg = Config {
+            pre_match: true,
+            preselect: Some("gamma".into()),
+            ..Config::default()
+        };
+        let (mut menu, _, _) = menu_with(cfg, &[]);
+        menu.initial_text("beta");
+        if background {
+            force_search_worker(&mut menu);
+        }
+        let pipe = TestPipe::new();
+        menu.begin_stream(pipe.read_fd);
+        pipe.write(b"alpha\nbeta\ngamma\n");
+        pipe.close_write();
+        assert!(menu.drain_stdin());
+        assert_eq!(menu.finalize_stream(), None);
+        if background {
+            finish_background_search(&mut menu);
+        }
+        assert_eq!(menu.editor.text, "");
+        assert_eq!(menu.selected_text_ref(), Some("gamma"));
+        assert!(menu.pre_match_applied);
+        assert!(!menu.finalize_search_pending);
+        assert!(menu.pre_match_target.is_none());
+    }
+}
+
+#[test]
+fn a_cached_worker_result_does_not_leave_a_deferred_rejection_snapshot() {
+    let cfg = Config {
+        reject_no_match: true,
+        ..Config::default()
+    };
+    let (mut menu, _, _) = menu_with(cfg, &["alpha", "beta"]);
+    force_search_worker(&mut menu);
+    menu.insert(EditOp::Insert("b"));
+    finish_background_search(&mut menu);
+    menu.insert(EditOp::Delete(0)); // same query: reconcile without new work
+    assert!(!menu.search.as_ref().unwrap().is_busy());
+    assert!(menu.reject_snapshot.is_none());
+    assert_eq!(menu.selected_text_ref(), Some("beta"));
+}
+
+#[test]
+fn navigation_never_selects_a_heading_at_either_boundary() {
+    let (mut menu, _, _) = menu_with(
+        Config::default(),
+        &[
+            "{heading} First",
+            "alpha",
+            "{heading} Middle",
+            "beta",
+            "{heading} Last",
+        ],
+    );
+    menu.layout.lines = 3;
+    let _ = menu.do_match();
+    key(&mut menu, ks::KEY_Up, M_NONE);
+    assert_eq!(menu.selected_text_ref(), Some("alpha"));
+    key(&mut menu, ks::KEY_Down, M_NONE);
+    assert_eq!(menu.selected_text_ref(), Some("beta"));
+    key(&mut menu, ks::KEY_Down, M_NONE);
+    assert_eq!(menu.selected_text_ref(), Some("beta"));
+    assert!(!menu.selected_is_heading());
+    menu.select_page(4); // a page consisting only of a trailing heading
+    assert_eq!(menu.selected_text_ref(), Some("beta"));
+    assert!(menu.selection.selected.unwrap() >= menu.selection.page_start.unwrap());
+}
+
+#[test]
+fn run_rejects_edits_serially_without_losing_the_last_valid_query() {
+    let cfg = Config {
+        reject_no_match: true,
+        ..Config::default()
+    };
+    let (mut menu, stub, out) = menu_with(cfg, &["alpha", "beta"]);
+    force_search_worker(&mut menu);
+    for c in "bz".chars() {
+        stub.key(0, M_NONE, &c.to_string());
+    }
+    stub.key(ks::KEY_Return, M_NONE, "\r");
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert_eq!(menu.editor.text, "b");
+    assert_eq!(out.contents(), "beta\n");
+}
+
+#[test]
+fn run_finishes_deferred_pre_match_before_return() {
+    let cfg = Config {
+        pre_match: true,
+        ..Config::default()
+    };
+    let (mut menu, stub, out) = menu_with(cfg, &[]);
+    menu.initial_text("beta");
+    force_search_worker(&mut menu);
+    let pipe = TestPipe::new();
+    pipe.write(b"alpha\nbeta\ngamma\n");
+    pipe.close_write();
+    menu.begin_stream(pipe.read_fd);
+    stub.key(ks::KEY_Return, M_NONE, "\r");
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert_eq!(out.contents(), "beta\n");
+}
+
+#[test]
+fn run_applies_final_preselection_before_queued_return() {
+    let cfg = Config {
+        preselect: Some("gamma".into()),
+        ..Config::default()
+    };
+    let (mut menu, stub, out) = menu_with(cfg, &[]);
+    force_search_worker(&mut menu);
+    let pipe = TestPipe::new();
+    pipe.write(b"alpha\nbeta\ngamma\n");
+    pipe.close_write();
+    menu.begin_stream(pipe.read_fd);
+    stub.key(ks::KEY_Return, M_NONE, "\r");
+    assert_eq!(menu.run(), ExitStatus::Success);
+    assert_eq!(out.contents(), "gamma\n");
 }
 
 /// Auto-confirm mode must not conclude from a partial corpus: a single match
@@ -3069,10 +3426,10 @@ fn streamed_batches_preserve_the_selection() {
     assert_eq!(menu.do_match(), Transition::Nop);
     assert_eq!(menu.selection.selected, Some(1), "selection survives");
 
-    // ...but resets once the corpus is final, like a fresh load always did
+    // EOF must not discard a choice the user made while items were arriving.
     menu.stream_eof = true;
     assert_eq!(menu.do_match(), Transition::Nop);
-    assert_eq!(menu.selection.selected, Some(0));
+    assert_eq!(menu.selection.selected, Some(1));
 }
 
 /// Reflow resizes the window when streamed items change the derived grid:

@@ -807,8 +807,11 @@ impl Backend for X11Backend {
                 PollOutcome::Ready => {}
             }
 
-            /* extras first: a blocked pipe producer is more time-critical
-             * than an X event that is already queued in the server */
+            /* Service the display when both sources are ready. The menu
+             * already consumes a bounded stdin turn before every call. */
+            if first_ready(&fds, 0) == Some(0) {
+                continue;
+            }
             if let Some(i) = first_ready(&fds, extra_start) {
                 return EventPoll::Readable(i - extra_start);
             }

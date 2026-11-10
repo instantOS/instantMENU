@@ -24,17 +24,24 @@ impl Menu {
         if let Some(toast) = self.cfg.toast {
             return self.run_toast(toast);
         }
-
-        /* whatever is already buffered lands before the first wait; for a
-         * fast producer this is usually the whole corpus plus EOF */
-        if self.stream_active() {
-            self.drain_stdin();
-        }
+        // Small searches complete inline. Only a search that exhausts its
+        // event-loop time slice creates a worker and its notification socket.
+        self.background_search_enabled = true;
 
         /* with a complete (non-streamed) corpus, --preselect applies before
          * the first event; streaming defers it to EOF against the full list */
         let mut preselect_pending = self.cfg.preselect.is_some() && self.stream_fd < 0;
         loop {
+            if let Some(status) = self.poll_search() {
+                return status;
+            }
+            /* One bounded input turn per iteration, even when backend events
+             * are continuously queued. Backend polling must in turn service
+             * ready display events before reporting stdin readiness. Neither
+             * a busy producer nor a busy pointer can monopolize the loop. */
+            if self.stream_active() {
+                self.drain_stdin();
+            }
             let now = Instant::now();
             if self.stream_settle_due(now) {
                 if self.stream_eof {
@@ -42,7 +49,9 @@ impl Menu {
                         return status;
                     }
                 } else {
-                    self.settle_stream();
+                    if let Some(status) = self.settle_stream() {
+                        return status;
+                    }
                 }
             }
 
@@ -52,20 +61,29 @@ impl Menu {
                 self.draw_menu();
             }
 
-            let extra_fds = [self.stream_fd];
-            let extra: &[RawFd] = if self.stream_active() {
-                &extra_fds
-            } else {
-                &[]
-            };
-            let timeout = self.stream_poll_budget(now);
+            let mut extra: [RawFd; 2] = [-1; 2];
+            let mut extra_len = 0;
+            if self.stream_active() {
+                extra[extra_len] = self.stream_fd;
+                extra_len += 1;
+            }
+            if let Some(search) = self.search.as_ref().filter(|search| search.is_busy()) {
+                extra[extra_len] = search.fd();
+                extra_len += 1;
+            }
+            let timeout = self.stream_poll_budget(Instant::now());
 
-            let ev = match self.backend.poll_event(timeout, extra) {
+            let deferred = if !self.search_pending() {
+                self.deferred_events.pop_front()
+            } else {
+                None
+            };
+            let ev = match deferred
+                .map(EventPoll::Event)
+                .unwrap_or_else(|| self.backend.poll_event(timeout, &extra[..extra_len]))
+            {
                 EventPoll::Event(ev) => ev,
-                EventPoll::Readable(_) => {
-                    self.drain_stdin();
-                    continue;
-                }
+                EventPoll::Readable(_) => continue,
                 /* window closed: loop back and settle what arrived */
                 EventPoll::Timeout => continue,
                 EventPoll::Closed => return ExitStatus::Failure,

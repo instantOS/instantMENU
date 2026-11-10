@@ -5,6 +5,31 @@
 use crate::config::{Config, MatchMode};
 use crate::entry::ItemEntry;
 
+/// Input completeness is independent of whether a search scan has finished.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CorpusState {
+    Streaming,
+    Complete,
+}
+
+impl CorpusState {
+    pub fn is_complete(self) -> bool {
+        self == Self::Complete
+    }
+}
+
+pub(super) struct SearchProgress {
+    pub matches: Vec<usize>,
+    pub scanned: usize,
+}
+
+/// A controlled search returns None only when interrupted, never to mean
+/// "no matches". Progress contains provisional rankings of the scanned prefix.
+pub(super) struct SearchControl<'a> {
+    pub cancelled: &'a dyn Fn() -> bool,
+    pub progress: Option<&'a mut dyn FnMut(SearchProgress)>,
+}
+
 /// One parsed candidate line from stdin.
 #[derive(Debug, Clone, Default)]
 pub struct Item {
@@ -80,8 +105,20 @@ pub(super) struct Matcher {
     mode: MatchMode,
     single_key: bool,
     auto_confirm: bool,
-    insensitive: bool,
+    pub(super) insensitive: bool,
     smart_case: bool,
+    fuzzy_cache: Option<FuzzyCache>,
+}
+
+/// Scores stay in corpus order. Appending candidates under the same query
+/// only scores the new suffix; sorting a copy leaves the cache appendable.
+#[derive(Debug, Clone)]
+struct FuzzyCache {
+    query: String,
+    insensitive: bool,
+    scanned: usize,
+    matcher: frizbee::Matcher,
+    scores: Vec<frizbee::Match>,
 }
 
 impl Matcher {
@@ -94,6 +131,7 @@ impl Matcher {
             auto_confirm: cfg.auto_confirm,
             insensitive: cfg.smart_case || cfg.insensitive,
             smart_case: cfg.smart_case,
+            fuzzy_cache: None,
         }
     }
 
@@ -104,17 +142,53 @@ impl Matcher {
         }
     }
 
-    /// Recompute visible matches. Single-key mode is deliberately separate
-    /// from fuzzy/token matching: only explicitly keyed items participate,
-    /// and one complete Unicode character activates the matching key.
-    pub fn search(&mut self, text: &str, complete: bool) -> MatchResult {
+    /// Run to completion without cancellation or provisional updates. Setup
+    /// uses this contract before an event loop exists to resume deferred work.
+    pub fn search(&mut self, text: &str, corpus: CorpusState) -> MatchResult {
+        self.search_controlled(
+            text,
+            corpus,
+            SearchControl {
+                cancelled: &|| false,
+                progress: None,
+            },
+        )
+        .expect("uninterrupted search must finish")
+    }
+
+    /// Move compiled query state and cached scores to an independently owned
+    /// matcher. Candidates are supplied by the worker's next request.
+    pub(super) fn take_search_state(&mut self) -> Self {
+        Self {
+            items: Vec::new(),
+            matches: Vec::new(),
+            mode: self.mode,
+            single_key: self.single_key,
+            auto_confirm: self.auto_confirm,
+            insensitive: self.insensitive,
+            smart_case: self.smart_case,
+            fuzzy_cache: self.fuzzy_cache.take(),
+        }
+    }
+
+    pub(super) fn invalidate(&mut self) {
+        self.fuzzy_cache = None;
+    }
+
+    pub(super) fn search_controlled(
+        &mut self,
+        text: &str,
+        corpus: CorpusState,
+        control: SearchControl<'_>,
+    ) -> Option<MatchResult> {
+        let complete = corpus.is_complete();
         if self.single_key {
-            return self.single_key_search(text, complete);
+            return Some(self.single_key_search(text, complete));
         }
         if self.mode == MatchMode::Fuzzy {
-            self.fuzzy_search(text, complete)
+            self.fuzzy_search(text, complete, control)
         } else {
-            self.token_search(text, complete)
+            self.token_search(text, complete, control.cancelled)
         }
     }
 
@@ -218,7 +292,12 @@ impl Matcher {
     /// Every whitespace-separated token must occur in the prepared search
     /// text. Exact/prefix ranking uses only the visible label, so hidden
     /// keywords never make a label lose its natural rank.
-    fn token_search(&mut self, text: &str, complete: bool) -> MatchResult {
+    fn token_search(
+        &mut self,
+        text: &str,
+        complete: bool,
+        cancelled: impl Fn() -> bool,
+    ) -> Option<MatchResult> {
         let tokens: Vec<&str> = text.split(' ').filter(|t| !t.is_empty()).collect();
         let first_token = tokens.first().copied().unwrap_or("");
         let len = first_token.len();
@@ -229,6 +308,9 @@ impl Matcher {
         let textsize = text.len() + 1;
 
         for (i, item) in self.items.iter().enumerate() {
+            if i % 256 == 0 && cancelled() {
+                return None;
+            }
             // Headings structure the unfiltered list; they are not results.
             if !tokens.is_empty() && !item.is_selectable() {
                 continue;
@@ -252,14 +334,23 @@ impl Matcher {
         self.matches = exact;
         self.matches.extend(prefix);
         self.matches.extend(substr);
-        self.auto_confirm_result(complete)
+        Some(self.auto_confirm_result(complete))
     }
 
-    fn fuzzy_search(&mut self, text: &str, complete: bool) -> MatchResult {
+    fn fuzzy_search(
+        &mut self,
+        text: &str,
+        complete: bool,
+        control: SearchControl<'_>,
+    ) -> Option<MatchResult> {
+        let SearchControl {
+            cancelled,
+            mut progress,
+        } = control;
         if text.is_empty() {
             self.matches.clear();
             self.matches.extend(0..self.items.len());
-            return self.auto_confirm_result(complete);
+            return Some(self.auto_confirm_result(complete));
         }
 
         let max_typos = if self.auto_confirm {
@@ -274,23 +365,66 @@ impl Matcher {
             } else {
                 frizbee::CaseMatching::Respect
             });
-        let mut fuzzy = frizbee::Matcher::new(text, &config);
-        let candidates: Vec<(usize, &str)> = self
-            .items
-            .iter()
-            .enumerate()
-            .filter(|(_, item)| item.is_selectable())
-            .map(|(index, item)| (index, item.searchable_text()))
-            .collect();
-        let haystacks: Vec<&str> = candidates.iter().map(|(_, text)| *text).collect();
-        self.matches.clear();
-        self.matches.extend(
-            fuzzy
-                .match_list(&haystacks)
-                .into_iter()
-                .map(|matched| candidates[matched.index as usize].0),
-        );
-        self.auto_confirm_result(complete)
+        if self.fuzzy_cache.as_ref().is_none_or(|cache| {
+            cache.query != text
+                || cache.insensitive != self.insensitive
+                || cache.scanned > self.items.len()
+        }) {
+            self.fuzzy_cache = Some(FuzzyCache {
+                query: text.to_string(),
+                insensitive: self.insensitive,
+                scanned: 0,
+                matcher: frizbee::Matcher::new(text, &config.sort(frizbee::SortStrategy::IndexAsc)),
+                scores: Vec::new(),
+            });
+        }
+        let cache = self.fuzzy_cache.as_mut().unwrap();
+        let mut interval = std::time::Duration::from_millis(16);
+        let mut published = std::time::Instant::now();
+        while cache.scanned < self.items.len() {
+            if cancelled() {
+                return None;
+            }
+            let end = (cache.scanned + 64).min(self.items.len());
+            let candidates: Vec<_> = self.items[cache.scanned..end]
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| item.is_selectable())
+                .map(|(offset, item)| (cache.scanned + offset, item.searchable_text()))
+                .collect();
+            let haystacks: Vec<_> = candidates.iter().map(|(_, text)| *text).collect();
+            cache.scores.extend(
+                cache
+                    .matcher
+                    .match_list(&haystacks)
+                    .into_iter()
+                    .map(|mut m| {
+                        m.index = candidates[m.index as usize].0 as u32;
+                        m
+                    }),
+            );
+            cache.scanned = end;
+            if let Some(progress) = progress
+                .as_mut()
+                .filter(|_| end < self.items.len() && published.elapsed() >= interval)
+            {
+                let mut sorted = cache.scores.clone();
+                frizbee::radix_sort_matches(&mut sorted);
+                progress(SearchProgress {
+                    matches: sorted.into_iter().map(|m| m.index as usize).collect(),
+                    scanned: end,
+                });
+                published = std::time::Instant::now();
+                interval = (interval * 2).min(std::time::Duration::from_millis(128));
+            }
+        }
+        if cancelled() {
+            return None;
+        }
+        let mut sorted = cache.scores.clone();
+        frizbee::radix_sort_matches(&mut sorted);
+        self.matches = sorted.into_iter().map(|m| m.index as usize).collect();
+        Some(self.auto_confirm_result(complete))
     }
 
     /// Auto-confirm counts selectable results, not structural headings.
@@ -314,6 +448,126 @@ mod tests {
     use super::*;
     use crate::config::Config;
 
+    #[test]
+    fn interrupted_search_moves_its_cache_without_copying_scores() {
+        let mut source = Matcher::new(
+            (0..1000).map(|i| Item::new(format!("file-{i}"))).collect(),
+            &Config::default(),
+        );
+        let calls = std::cell::Cell::new(0);
+        let cancelled = || {
+            calls.set(calls.get() + 1);
+            calls.get() > 1
+        };
+        assert_eq!(
+            source.search_controlled(
+                "file",
+                CorpusState::Streaming,
+                SearchControl {
+                    cancelled: &cancelled,
+                    progress: None
+                }
+            ),
+            None
+        );
+        let cache = source.fuzzy_cache.as_ref().unwrap();
+        let (scores, scanned) = (cache.scores.as_ptr(), cache.scanned);
+        let state = source.take_search_state();
+        assert!(source.fuzzy_cache.is_none());
+        assert_eq!(source.items.len(), 1000);
+        let moved = state.fuzzy_cache.as_ref().unwrap();
+        assert_eq!(moved.scores.as_ptr(), scores);
+        assert_eq!(moved.scanned, scanned);
+    }
+
+    #[test]
+    fn appended_fuzzy_candidates_reuse_scores_and_preserve_global_order() {
+        let mut matcher = Matcher::new(
+            vec![
+                Item::new("{heading} section"),
+                Item::new("file.rs"),
+                Item::new("profile"),
+                Item::new("{match=file} hidden"),
+            ],
+            &Config::default(),
+        );
+        matcher.search("file", CorpusState::Streaming);
+        let cached = matcher.fuzzy_cache.as_ref().unwrap().scores.clone();
+        matcher.items.extend([
+            Item::new("file"),
+            Item::new("a/file"),
+            Item::new("éléphant"),
+        ]);
+        matcher.search("file", CorpusState::Complete);
+        assert_eq!(
+            &matcher.fuzzy_cache.as_ref().unwrap().scores[..cached.len()],
+            &cached
+        );
+        let mut fresh = Matcher::new(matcher.items.clone(), &Config::default());
+        fresh.search("file", CorpusState::Complete);
+        assert_eq!(matcher.matches, fresh.matches);
+    }
+
+    #[test]
+    fn cancelled_scoring_does_not_install_a_partial_result() {
+        let mut matcher = Matcher::new(
+            (0..1000).map(|i| Item::new(format!("file-{i}"))).collect(),
+            &Config::default(),
+        );
+        matcher.search("", CorpusState::Streaming);
+        let visible = matcher.matches.clone();
+        let calls = std::cell::Cell::new(0);
+        assert_eq!(
+            matcher.search_controlled(
+                "file",
+                CorpusState::Streaming,
+                SearchControl {
+                    cancelled: &|| {
+                        calls.set(calls.get() + 1);
+                        calls.get() > 1
+                    },
+                    progress: None
+                }
+            ),
+            None
+        );
+        assert_eq!(matcher.matches, visible);
+        let scanned = matcher.fuzzy_cache.as_ref().unwrap().scanned;
+        assert!(scanned > 0 && scanned < matcher.items.len());
+        matcher.search("999", CorpusState::Complete);
+        assert_eq!(matcher.matches, vec![999]);
+    }
+
+    #[test]
+    #[ignore = "benchmark"]
+    fn bench_large_path_search() {
+        let items = (0..90_000)
+            .map(|i| {
+                Item::new(format!(
+                    "/home/user/workspace/project-{}/src/components/directory-{}/file-{i:06}.rs",
+                    i % 117,
+                    i % 53
+                ))
+            })
+            .collect();
+        let mut matcher = Matcher::new(items, &Config::default());
+        for query in ["f", "fi", "file", "file-042", "components", "zzzz"] {
+            let start = std::time::Instant::now();
+            matcher.search(query, CorpusState::Complete);
+            println!(
+                "{query:?}: {:?}, {} matches",
+                start.elapsed(),
+                matcher.matches.len()
+            );
+            matcher
+                .items
+                .push(Item::new(format!("/workspace/new/{query}/file.rs")));
+            let start = std::time::Instant::now();
+            matcher.search(query, CorpusState::Complete);
+            println!("{query:?} + one arrival: {:?}", start.elapsed());
+        }
+    }
+
     fn matcher(cfg_mut: impl FnOnce(&mut Config), items: &[&str]) -> Matcher {
         let mut cfg = Config::default();
         cfg_mut(&mut cfg);
@@ -334,7 +588,7 @@ mod tests {
             |c| c.match_mode = MatchMode::Dmenu,
             &["foobar", "foo", "xfoo", "barfoo"],
         );
-        assert_eq!(m.search("foo", true), MatchResult::Listed);
+        assert_eq!(m.search("foo", CorpusState::Complete), MatchResult::Listed);
         assert_eq!(m.matches, vec![1, 0, 2, 3]);
     }
 
@@ -344,7 +598,10 @@ mod tests {
             |c| c.match_mode = MatchMode::Dmenu,
             &["foo bar", "foo", "bar"],
         );
-        assert_eq!(m.search("bar foo", true), MatchResult::Listed);
+        assert_eq!(
+            m.search("bar foo", CorpusState::Complete),
+            MatchResult::Listed
+        );
         assert_eq!(m.matches, vec![0]);
     }
 
@@ -355,18 +612,18 @@ mod tests {
             &["{match='monitor screen'} Display", "monitor configuration"],
         );
         assert_eq!(m.items[0].label(), "Display");
-        m.search("Display", true);
+        m.search("Display", CorpusState::Complete);
         assert_eq!(m.matches, vec![0]);
-        m.search("monitor", true);
+        m.search("monitor", CorpusState::Complete);
         assert_eq!(m.matches, vec![1, 0]);
-        m.search("screen", true);
+        m.search("screen", CorpusState::Complete);
         assert_eq!(m.matches, vec![0]);
     }
 
     #[test]
     fn hidden_match_terms_participate_in_fuzzy_matching() {
         let mut m = matcher(|_| (), &["{match='monitor screen'} Display", "Terminal"]);
-        m.search("monitor", true);
+        m.search("monitor", CorpusState::Complete);
         assert_eq!(m.matches, vec![0]);
         assert_eq!(m.text_of_match(0), "Display");
     }
@@ -374,27 +631,27 @@ mod tests {
     #[test]
     fn insensitive_matches_across_case() {
         let mut m = matcher(|c| c.insensitive = true, &["foo", "bar"]);
-        assert_eq!(m.search("FOO", true), MatchResult::Listed);
+        assert_eq!(m.search("FOO", CorpusState::Complete), MatchResult::Listed);
         assert_eq!(m.matches, vec![0]);
     }
 
     #[test]
     fn smart_case_flips_once_and_never_resets() {
         let mut m = matcher(|c| c.smart_case = true, &["FOO", "foo"]);
-        m.search("foo", true);
+        m.search("foo", CorpusState::Complete);
         assert_eq!(m.matches, vec![1, 0]);
         m.note_uppercase("Foo");
-        m.search("foo", true);
+        m.search("foo", CorpusState::Complete);
         assert_eq!(m.matches, vec![1]);
         m.note_uppercase("foo");
-        m.search("foo", true);
+        m.search("foo", CorpusState::Complete);
         assert_eq!(m.matches, vec![1]);
     }
 
     #[test]
     fn default_matching_is_case_sensitive() {
         let mut m = matcher(|_| (), &["foo"]);
-        m.search("FOO", true);
+        m.search("FOO", CorpusState::Complete);
         assert!(m.matches.is_empty());
     }
 
@@ -404,20 +661,32 @@ mod tests {
             |c| c.single_key = true,
             &["{key=d} Display", "No key", "{key=λ} Lambda"],
         );
-        assert_eq!(m.search("", true), MatchResult::Listed);
+        assert_eq!(m.search("", CorpusState::Complete), MatchResult::Listed);
         assert_eq!(m.matches, vec![0, 2]);
-        assert_eq!(m.search("λ", true), MatchResult::SingleKeyPick(Some(2)));
+        assert_eq!(
+            m.search("λ", CorpusState::Complete),
+            MatchResult::SingleKeyPick(Some(2))
+        );
         assert_eq!(m.items[2].label(), "Lambda");
-        assert_eq!(m.search("x", true), MatchResult::SingleKeyPick(None));
-        assert_eq!(m.search("dd", true), MatchResult::SingleKeyPick(None));
+        assert_eq!(
+            m.search("x", CorpusState::Complete),
+            MatchResult::SingleKeyPick(None)
+        );
+        assert_eq!(
+            m.search("dd", CorpusState::Complete),
+            MatchResult::SingleKeyPick(None)
+        );
     }
 
     #[test]
     fn single_key_pick_waits_for_stream_completion() {
         let mut m = matcher(|c| c.single_key = true, &["{key=n} Network"]);
-        assert_eq!(m.search("n", false), MatchResult::Listed);
+        assert_eq!(m.search("n", CorpusState::Streaming), MatchResult::Listed);
         assert_eq!(m.matches, vec![0]);
-        assert_eq!(m.search("n", true), MatchResult::SingleKeyPick(Some(0)));
+        assert_eq!(
+            m.search("n", CorpusState::Complete),
+            MatchResult::SingleKeyPick(Some(0))
+        );
     }
 
     #[test]
@@ -426,18 +695,21 @@ mod tests {
             |c| c.single_key = true,
             &["{key=q} First", "{key=q} Second"],
         );
-        assert_eq!(m.search("q", true), MatchResult::SingleKeyPick(Some(0)));
+        assert_eq!(
+            m.search("q", CorpusState::Complete),
+            MatchResult::SingleKeyPick(Some(0))
+        );
     }
 
     #[test]
     fn headings_are_visible_only_before_filtering() {
         let mut m = matcher(|_| (), &["{heading} Applications", "Display", "Terminal"]);
-        m.search("", true);
+        m.search("", CorpusState::Complete);
         assert_eq!(m.matches, vec![0, 1, 2]);
         assert_eq!(m.first_selectable_match(), Some(1));
-        m.search("Application", true);
+        m.search("Application", CorpusState::Complete);
         assert!(m.matches.is_empty());
-        m.search("Display", true);
+        m.search("Display", CorpusState::Complete);
         assert_eq!(m.matches, vec![1]);
     }
 
@@ -447,7 +719,10 @@ mod tests {
             |c| c.auto_confirm = true,
             &["{heading} Applications", "Display"],
         );
-        assert_eq!(m.search("", true), MatchResult::AutoConfirm(1));
+        assert_eq!(
+            m.search("", CorpusState::Complete),
+            MatchResult::AutoConfirm(1)
+        );
     }
 
     #[test]
@@ -459,7 +734,10 @@ mod tests {
             },
             &["abc", "bcd"],
         );
-        assert_eq!(m.search("abc", true), MatchResult::AutoConfirm(0));
+        assert_eq!(
+            m.search("abc", CorpusState::Complete),
+            MatchResult::AutoConfirm(0)
+        );
     }
 
     #[test]
@@ -474,7 +752,10 @@ mod tests {
                 "{match=reboot icon=restart} Restart",
             ],
         );
-        assert_eq!(m.search("shutdown", true), MatchResult::AutoConfirm(0));
+        assert_eq!(
+            m.search("shutdown", CorpusState::Complete),
+            MatchResult::AutoConfirm(0)
+        );
     }
 
     #[test]
@@ -486,30 +767,33 @@ mod tests {
             },
             &["abc"],
         );
-        assert_eq!(m.search("abc", false), MatchResult::Listed);
-        assert_eq!(m.search("abc", true), MatchResult::AutoConfirm(0));
+        assert_eq!(m.search("abc", CorpusState::Streaming), MatchResult::Listed);
+        assert_eq!(
+            m.search("abc", CorpusState::Complete),
+            MatchResult::AutoConfirm(0)
+        );
     }
 
     #[test]
     fn fuzzy_ranks_tighter_matches_first() {
         let mut m = matcher(|_| (), &["foobar", "fobar"]);
-        m.search("fb", true);
+        m.search("fb", CorpusState::Complete);
         assert_eq!(m.matches, vec![1, 0]);
     }
 
     #[test]
     fn fuzzy_tolerates_typos() {
         let mut m = matcher(|_| (), &["firefox", "thunderbird"]);
-        m.search("firefx", true);
+        m.search("firefx", CorpusState::Complete);
         assert_eq!(m.matches, vec![0]);
-        m.search("firxyx", true);
+        m.search("firxyx", CorpusState::Complete);
         assert!(m.matches.is_empty());
     }
 
     #[test]
     fn fuzzy_ties_keep_input_order() {
         let mut m = matcher(|_| (), &["foo", "foo"]);
-        m.search("foo", true);
+        m.search("foo", CorpusState::Complete);
         assert_eq!(m.matches, vec![0, 1]);
     }
 
@@ -519,7 +803,7 @@ mod tests {
             |c| c.match_mode = MatchMode::Exact,
             &["foo", "foobar", "{match=foo} hidden"],
         );
-        m.search("foo", true);
+        m.search("foo", CorpusState::Complete);
         assert_eq!(m.matches, vec![0]);
     }
 
@@ -542,7 +826,7 @@ mod tests {
 
         // matcher output helpers distinguish duplicates
         let mut m = matcher(|_| (), &["{value=one} same", "{value=two} same"]);
-        m.search("same", true);
+        m.search("same", CorpusState::Complete);
         assert_eq!(m.matches, vec![0, 1]);
         assert_eq!(m.text_of_match(0), "same");
         assert_eq!(m.items[m.matches[0]].output(), "one");

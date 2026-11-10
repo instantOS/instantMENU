@@ -606,22 +606,34 @@ impl Backend for WaylandBackend {
                 PollOutcome::Closed => return EventPoll::Closed,
                 PollOutcome::Ready => {}
             }
-            /* extras first: a blocked pipe producer is more time-critical
-             * than already-queued compositor work */
-            if let Some(i) = first_ready(&fds, extra_start) {
-                drop(guard);
-                return EventPoll::Readable(i - extra_start);
-            }
+            let readable = first_ready(&fds, extra_start).map(|i| i - extra_start);
             /* read + dispatch only when the wayland socket is ready; when
              * only a selection pipe fired, drop the guard (cancels the
              * prepared read) and let pump_selection() drain it */
-            if first_ready(&fds, 0) == Some(0) && guard.read().is_err() {
-                return EventPoll::Closed;
+            if first_ready(&fds, 0) == Some(0) {
+                if guard.read().is_err() {
+                    return EventPoll::Closed;
+                }
+            } else {
+                drop(guard);
             }
             if self.queue.dispatch_pending(&mut self.state).is_err() {
                 return EventPoll::Closed;
             }
             let _ = self.connection.flush();
+            /* Dispatch the display even when stdin is also ready: keyboard,
+             * configure and buffer-release events must not wait for a gap in
+             * the producer. The menu consumes a bounded input turn before
+             * every call, so returning a backend event cannot starve stdin. */
+            if let Some(ev) = self.state.events.pop_front() {
+                return EventPoll::Event(ev);
+            }
+            if self.state.dead {
+                return EventPoll::Closed;
+            }
+            if let Some(i) = readable {
+                return EventPoll::Readable(i);
+            }
         }
     }
 

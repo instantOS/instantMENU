@@ -322,9 +322,9 @@ pub trait Backend {
     /// Poll for the next event, up to `timeout`. `None` waits indefinitely.
     /// `extra` fds are watched alongside the backend's own sources; when one
     /// becomes readable (or hangs up), `EventPoll::Readable` returns its
-    /// index without consuming anything — the caller owns those fds. Extras
-    /// are checked before queued backend events: a blocked pipe writer is
-    /// more time-critical than an already-queued event.
+    /// index without consuming anything — the caller owns those fds. Service
+    /// ready display events before reporting extras; the caller is responsible
+    /// for giving its input bounded turns even while backend events are queued.
     fn poll_event(&mut self, timeout: Option<std::time::Duration>, extra: &[RawFd]) -> EventPoll;
     /// Take the events still queued behind the one just returned by
     /// [`Backend::poll_event`] that can be folded into the same frame, in

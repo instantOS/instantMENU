@@ -22,9 +22,14 @@ impl Menu {
         if !self.editor.apply(op) {
             return Transition::Nop;
         }
+        self.use_automatic_selection();
         self.matcher.note_uppercase(&self.editor.text);
 
         let t = self.do_match();
+        if self.search.as_ref().is_some_and(|worker| worker.is_busy()) {
+            self.reject_snapshot = last;
+            return t;
+        }
         if matches!(t, Transition::Nop) && reject && self.matcher.matches.is_empty() {
             /* revert to last text value if theres no match */
             let (text, cursor) = last.expect("reject_no_match snapshot");

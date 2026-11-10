@@ -27,7 +27,13 @@ impl Menu {
         } else {
             self.show_match_counter = false;
         }
-        self.match_counter_text = format!("{match_count}/{item_count}");
+        let searching = self.search.as_ref().is_some_and(|search| search.is_busy());
+        self.show_match_counter |= searching;
+        self.match_counter_text = if searching {
+            format!("{match_count}…/{item_count}")
+        } else {
+            format!("{match_count}/{item_count}")
+        };
     }
 
     /// draw_item — draws one item in `cell`.
