@@ -35,7 +35,7 @@ bump can also be selected manually from the workflow dispatch form.
 - animations and hover over indicators
 - composable item metadata for icons, colors, headings, hidden match terms,
   and single-key menus
-- slider mode (`instantmenu slide 'brightnessctl s'`)
+- slider mode (`instantmenu slide --command 'brightnessctl s {}%'`)
 - streamed input: the menu opens instantly and items appear as stdin produces them
 - Catppuccin, classic and Gruvbox themes (`--theme`)
 

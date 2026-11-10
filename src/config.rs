@@ -178,9 +178,14 @@ pub struct SlideSettings {
     pub step: Option<i32>,
     /// Large step for up/down (`--big-step`, default max(range/10, 5)).
     pub big_step: Option<i32>,
-    /// Command run on every value change (`--command`), the value appended
-    /// as its last argument.
+    /// Command run on every value change (`--command`). Every `{}` is
+    /// replaced by the value; without a placeholder the value is appended as
+    /// the last argument.
     pub command: Option<String>,
+    /// Run the command once at startup with the initial value
+    /// (`--apply-initial`). Off by default so opening the slider does not
+    /// change the target.
+    pub apply_initial: bool,
 }
 
 impl Default for SlideSettings {
@@ -193,6 +198,7 @@ impl Default for SlideSettings {
             step: None,
             big_step: None,
             command: None,
+            apply_initial: false,
         }
     }
 }
