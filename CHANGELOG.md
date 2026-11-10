@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.2.2](https://github.com/instantOS/instantMENU/compare/v5.2.1...v5.2.2) - 2026-11-10
+
+### Fixed
+
+- improve placeholder thingy for slider
+
+### Other
+
+- Merge branch 'dev' of github.com:instantOS/instantMENU into dev
+- Merge branch 'dev'
+- bump
+- fix CI perms
+
 ## [5.2.1](https://github.com/instantOS/instantMENU/compare/v5.2.0...v5.2.1) - 2026-10-31
 
 ### Fixed
