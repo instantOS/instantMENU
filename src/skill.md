@@ -115,12 +115,25 @@ values. An action can fire with no selection and then prints only its key line.
 The label is a hint, not a shell command. Preserve that initial empty line when
 parsing; do not treat the whole response as an item ID.
 
-Slider mode appends the numeric value to its shell command. It runs the command
-at startup and on changes, detached; commands can overlap. Use an absolute setter
-that tolerates repeated calls, and do not assume Escape undoes changes. Return
-prints the final value; cancellation prints no final value. The command receives
-a bare number (for example `50`), so adapt it when the target tool requires units.
-For percentage volume, use a wrapper:
+Slider mode runs `--command` on every value change, detached; commands can
+overlap. It does not run at startup unless `--apply-initial` is given, so
+opening the slider does not alter the target. Use an absolute setter that
+tolerates repeated calls, and do not assume Escape undoes changes. Return
+prints the final value; cancellation prints no final value.
+
+The command is one shell string, not argv words: quote it. Every `{}` is
+replaced by the current value; if the command contains no `{}`, the value is
+appended as the last argument (a bare number, for example `50`). Put `{}`
+where the number belongs, including units:
+
+```sh
+instantmenu slide --command 'brightnessctl s {}%'
+instantmenu slide --command 'notify-send "Volume" "{}%" && pactl set-sink-volume @DEFAULT_SINK@ {}%'
+```
+
+If the target tool needs a different scale, pass `--min`/`--max`/`--value`;
+set `--value` to the current target value so the slider starts in sync.
+For logic beyond a single command, put a script on PATH and pass its name:
 
 ```sh
 #!/bin/sh
@@ -129,7 +142,7 @@ pactl set-sink-volume @DEFAULT_SINK@ "${1}%"
 ```
 
 ```sh
-instantmenu slide --min 0 --max 100 --value 50 set-volume
+instantmenu slide --min 0 --max 100 --value 50 --command set-volume
 ```
 
 Appearance belongs to the user's config by default. Add geometry or theme

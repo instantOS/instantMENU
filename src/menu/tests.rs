@@ -2499,6 +2499,25 @@ fn slide_changes_spawn_the_command() {
     assert_eq!(menu.slide_key(ks::KEY_Right, M_NONE), Transition::Redraw);
 }
 
+/// A `{}` placeholder puts the value anywhere in the command and suppresses
+/// the append-last fallback.
+#[test]
+fn slide_command_template_substitutes_the_value() {
+    let settings = SlideSettings {
+        command: Some("brightnessctl s {}%".into()),
+        ..SlideSettings::default()
+    };
+    let (mut menu, _stub, _out) = slide_with(settings);
+    assert_eq!(
+        menu.slide_key(ks::KEY_Right, M_NONE),
+        Transition::Spawn("brightnessctl s 51%".into())
+    );
+    assert_eq!(
+        menu.slide_key(ks::KEY_Left, M_NONE),
+        Transition::Spawn("brightnessctl s 50%".into())
+    );
+}
+
 /// Clicking sets the value at the pointer; dragging follows the pointer
 /// until the button is released.
 #[test]

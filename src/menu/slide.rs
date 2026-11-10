@@ -5,8 +5,9 @@
 //! the shell side — the event loop, key/mouse handlers and the drawing, all
 //! going through [`Transition`](super::transition::Transition) like the menu
 //! handlers do. islide's trailing quirks (any-key exit, the
-//! release-below-the-bar exit, `-a` suffix, multi-digit typing) are
-//! deliberately not ported; instantCLI's behaviour is the reference.
+//! release-below-the-bar exit, multi-digit typing) are deliberately not
+//! ported; the old `-a` suffix use case is covered by the `{}` command
+//! placeholder. instantCLI's behaviour is the reference.
 
 use super::animate::spawn_detached;
 use super::transition::Transition;
@@ -30,6 +31,8 @@ pub(in crate::menu) struct Slider {
     step: i32,
     big_step: i32,
     command: Option<String>,
+    /// Run the command once at startup with the initial value.
+    apply_initial: bool,
     /// A left button is held; motion snaps the value to the pointer.
     dragging: bool,
 }
@@ -47,6 +50,7 @@ impl Slider {
             step: s.resolved_step(),
             big_step: s.resolved_big_step(),
             command: s.command.clone(),
+            apply_initial: s.apply_initial,
             dragging: false,
         }
     }
@@ -108,13 +112,27 @@ fn digit_fraction(sym: u32) -> Option<f64> {
     }
 }
 
+/// Expand a slide command template for `value`. `{}` is replaced everywhere
+/// (the xargs/find/fzf placeholder convention); a template without `{}` gets
+/// the value appended as the last argument, the old islide default. The value
+/// is an integer, so it never needs shell quoting.
+fn render_command(template: &str, value: i32) -> String {
+    if template.contains("{}") {
+        template.replace("{}", &value.to_string())
+    } else {
+        format!("{template} {value}")
+    }
+}
+
 impl Menu {
     /* ── event loop ─────────────────────────────────────────────────────── */
 
     /// The slide-mode event loop. Driven from [`Menu::run`](super::Menu::run)
     /// when `self.slider` is set.
     pub(in crate::menu) fn run_slide(&mut self) -> ExitStatus {
-        self.dispatch_slide_command();
+        if self.slider.as_ref().is_some_and(|s| s.apply_initial) {
+            self.dispatch_slide_command();
+        }
 
         loop {
             let Some(ev) = self.backend.next_event() else {
@@ -184,19 +202,19 @@ impl Menu {
         }
         match &slider.command {
             // the shell runs the command, then redraws
-            Some(cmd) => Transition::Spawn(format!("{cmd} {}", slider.value)),
+            Some(cmd) => Transition::Spawn(render_command(cmd, slider.value)),
             None => Transition::Redraw,
         }
     }
 
-    /// Spawn --command with the current value (the initial dispatch at
-    /// startup, matching instantCLI).
+    /// Spawn --command with the current value. Only called at startup when
+    /// `--apply-initial` is set; ordinary changes go through `slide_edit`.
     fn dispatch_slide_command(&mut self) {
         let Some(slider) = self.slider.as_ref() else {
             return;
         };
         if let Some(cmd) = &slider.command {
-            spawn_detached(&format!("{cmd} {}", slider.value));
+            spawn_detached(&render_command(cmd, slider.value));
         }
     }
 
@@ -405,11 +423,39 @@ impl Menu {
 
 #[cfg(test)]
 mod tests {
-    use super::{digit_fraction, Slider};
+    use super::{digit_fraction, render_command, Slider};
     use crate::config::SlideSettings;
 
     fn slider(settings: SlideSettings) -> Slider {
         Slider::new(&settings)
+    }
+
+    #[test]
+    fn command_template_substitutes_or_appends() {
+        // no placeholder: the old append-last behaviour
+        assert_eq!(render_command("brightnessctl s", 50), "brightnessctl s 50");
+        // placeholder: mid-command placement and units
+        assert_eq!(
+            render_command("brightnessctl s {}%", 50),
+            "brightnessctl s 50%"
+        );
+        // every occurrence is replaced and nothing is appended
+        assert_eq!(
+            render_command("echo {} && notify-send '{}%'", 5),
+            "echo 5 && notify-send '5%'"
+        );
+        // negative values are safe shell words
+        assert_eq!(render_command("cmd {}", -5), "cmd -5");
+    }
+
+    #[test]
+    fn apply_initial_is_carried_into_the_slider() {
+        let s = SlideSettings {
+            apply_initial: true,
+            ..SlideSettings::default()
+        };
+        assert!(slider(s).apply_initial);
+        assert!(!slider(SlideSettings::default()).apply_initial);
     }
 
     #[test]

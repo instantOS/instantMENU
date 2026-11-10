@@ -8,7 +8,7 @@ instantmenu \- A dynamic menu for X11 and Wayland (instantMENU, Rust port)
 .SH DESCRIPTION
 instantmenu reads a newline\-separated list of items from stdin and displays them in a menu. Selecting an item and pressing Return prints it to stdout and exits; typing narrows the list to matching items.
 .PP
-The menu opens immediately and items stream in: the keyboard is grabbed before stdin is read, and the list grows as the input produces it (a fast producer collapses into a single refresh). With the `slide` subcommand it shows a value slider instead: Return prints the value and exits, every change runs \-\-command with the value appended.
+The menu opens immediately and items stream in: the keyboard is grabbed before stdin is read, and the list grows as the input produces it (a fast producer collapses into a single refresh). With the `slide` subcommand it shows a value slider instead: Return prints the value and exits; every change runs \-\-command, with `{}` replaced by the value or the value appended when no placeholder is given.
 .SH OPTIONS
 .TP
 \fB\-h\fR, \fB\-\-help\fR
@@ -277,7 +277,7 @@ As items arrive, the accumulated list is reordered best\-frecency first within e
 .SS instantmenu slide
 Slide mode: show a value slider instead of a menu.
 
-Return prints the current value to stdout and exits; Escape exits without printing. Every value change runs --command (if given) with the value appended as its last argument.
+Return prints the current value to stdout and exits; Escape exits without printing. Every value change runs --command (if given): `{}` is replaced by the value, or the value is appended as the last argument when the command contains no placeholder.
 .TP
 \fB\-\-min\fR \fI<N>\fR [default: 0]
 Minimum slider value
@@ -299,12 +299,14 @@ Large step for up/down.
 Defaults to a tenth of the range (at least 5).
 .TP
 \fB\-\-command\fR \fI<CMD>\fR
-Command run on every value change (flag form of `COMMAND`)
-.TP
-[\fICOMMAND\fR]
 Command run on every value change.
 
-Run through the shell with the current value appended as the last argument. Can be given as a positional argument or via \-\-command.
+A single shell command string, run with `sh \-c`. Every `{}` is replaced by the current value; if the command contains no `{}`, the value is appended as the last argument. Quote the whole command: `\-\-command \*(Aqbrightnessctl s {}%\*(Aq`.
+.TP
+\fB\-\-apply\-initial\fR
+Run the command once at startup with the initial value.
+
+By default the command only runs on changes, so opening the slider does not alter the target. Use this when the initial value should be applied even without user input, for example when restoring a saved value.
 
 .SS instantmenu icons
 Discover the Nerd Fonts icon names accepted by icon entries

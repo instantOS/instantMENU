@@ -31,8 +31,8 @@ const LONG_ABOUT: &str = concat!(
     "grabbed before stdin is read, and the list grows as the input ",
     "produces it (a fast producer collapses into a single refresh). With ",
     "the `slide` subcommand it shows a value slider instead: Return ",
-    "prints the value and exits, every change runs --command with the value ",
-    "appended.",
+    "prints the value and exits; every change runs --command, with `{}` ",
+    "replaced by the value or the value appended when no placeholder is given.",
 );
 
 /// Item format and keyboard bindings shown by `--help` and the generated man
@@ -520,8 +520,9 @@ pub enum Cmd {
     /// Slide mode: show a value slider instead of a menu.
     ///
     /// Return prints the current value to stdout and exits; Escape exits
-    /// without printing. Every value change runs --command (if given) with
-    /// the value appended as its last argument.
+    /// without printing. Every value change runs --command (if given):
+    /// `{}` is replaced by the value, or the value is appended as the last
+    /// argument when the command contains no placeholder.
     Slide(SlideArgs),
 
     /// Discover the Nerd Fonts icon names accepted by icon entries.
@@ -599,21 +600,21 @@ pub struct SlideArgs {
 
     /// Command run on every value change.
     ///
-    /// Run through the shell with the current value appended as the last
-    /// argument. Can be given as a positional argument or via --command.
-    #[arg(value_name = "COMMAND")]
+    /// A single shell command string, run with `sh -c`. Every `{}` is
+    /// replaced by the current value; if the command contains no `{}`, the
+    /// value is appended as the last argument. Quote the whole command:
+    /// `--command 'brightnessctl s {}%'`.
+    #[arg(long, value_name = "CMD")]
     pub command: Option<String>,
 
-    /// Command run on every value change (flag form of `COMMAND`).
-    #[arg(long = "command", value_name = "CMD", conflicts_with = "command")]
-    pub command_flag: Option<String>,
-}
-
-impl SlideArgs {
-    /// Return the command from either the positional argument or the `--command` flag.
-    pub fn resolved_command(&self) -> Option<String> {
-        self.command.clone().or_else(|| self.command_flag.clone())
-    }
+    /// Run the command once at startup with the initial value.
+    ///
+    /// By default the command only runs on changes, so opening the slider
+    /// does not alter the target. Use this when the initial value should
+    /// be applied even without user input, for example when restoring a
+    /// saved value.
+    #[arg(long)]
+    pub apply_initial: bool,
 }
 
 #[cfg(test)]
@@ -979,8 +980,10 @@ mod tests {
         assert_eq!(s.min, 0);
         assert_eq!(s.max, 100);
         assert_eq!(s.value, None);
+        assert_eq!(s.command, None);
+        assert!(!s.apply_initial);
 
-        /* positional command */
+        /* the command is one shell string, with a {} placeholder */
         let a = Args::try_parse_from([
             "instantmenu",
             "slide",
@@ -996,7 +999,8 @@ mod tests {
             "2",
             "--big-step",
             "10",
-            "brightnessctl set",
+            "--command",
+            "brightnessctl set {}%",
         ])
         .unwrap();
         assert_eq!(a.window.prompt.as_deref(), Some("Brightness"));
@@ -1008,22 +1012,19 @@ mod tests {
         assert_eq!(s.value, Some(-10));
         assert_eq!(s.step, Some(2));
         assert_eq!(s.big_step, Some(10));
-        assert_eq!(s.command.as_deref(), Some("brightnessctl set"));
-        assert_eq!(s.resolved_command().as_deref(), Some("brightnessctl set"));
+        assert_eq!(s.command.as_deref(), Some("brightnessctl set {}%"));
 
-        /* --command flag compatibility */
-        let a = Args::try_parse_from(["instantmenu", "slide", "--command", "brightnessctl set"])
-            .unwrap();
+        /* --apply-initial is opt-in */
+        let a = Args::try_parse_from(["instantmenu", "slide", "--apply-initial"]).unwrap();
         let Some(Cmd::Slide(s)) = a.subcommand.as_ref() else {
             panic!("expected the slide subcommand");
         };
-        assert_eq!(s.command_flag.as_deref(), Some("brightnessctl set"));
-        assert_eq!(s.resolved_command().as_deref(), Some("brightnessctl set"));
+        assert!(s.apply_initial);
 
-        /* positional and flag cannot both be passed */
-        assert!(
-            Args::try_parse_from(["instantmenu", "slide", "cmd1", "--command", "cmd2",]).is_err()
-        );
+        /* a bare positional is rejected: the command must be one quoted
+         * shell string passed to --command */
+        assert!(Args::try_parse_from(["instantmenu", "slide", "brightnessctl set"]).is_err());
+        assert!(Args::try_parse_from(["instantmenu", "slide", "brightnessctl", "s"]).is_err());
 
         /* flags after the subcommand also work */
         let a = Args::try_parse_from([
@@ -1037,6 +1038,7 @@ mod tests {
             "0",
             "--max",
             "100",
+            "--command",
             "pamixer --set-volume",
         ])
         .unwrap();
@@ -1047,10 +1049,7 @@ mod tests {
         };
         assert_eq!(s.min, 0);
         assert_eq!(s.max, 100);
-        assert_eq!(
-            s.resolved_command().as_deref(),
-            Some("pamixer --set-volume")
-        );
+        assert_eq!(s.command.as_deref(), Some("pamixer --set-volume"));
     }
 
     #[test]
@@ -1062,6 +1061,7 @@ mod tests {
             &["instantmenu", "--step", "1"][..],
             &["instantmenu", "--big-step", "5"][..],
             &["instantmenu", "--command", "true"][..],
+            &["instantmenu", "--apply-initial"][..],
         ] {
             assert!(
                 Args::try_parse_from(bad).is_err(),

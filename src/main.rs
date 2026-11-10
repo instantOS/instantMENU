@@ -442,7 +442,8 @@ fn apply_values(args: &cli::Args, cfg: &mut Config) {
             value: s.value,
             step: s.step,
             big_step: s.big_step,
-            command: s.resolved_command(),
+            command: s.command.clone(),
+            apply_initial: s.apply_initial,
         });
     }
 }
