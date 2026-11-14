@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.2.3](https://github.com/instantOS/instantMENU/compare/v5.2.2...v5.2.3) - 2026-11-14
+
+### Other
+
+- add flake support
+- Merge pull request #32 from Pebor/main
+- fix alt-tab bind stuff
+- Merge branch 'main' of github.com:instantOS/instantMENU into dev
+
 ## [5.2.2](https://github.com/instantOS/instantMENU/compare/v5.2.1...v5.2.2) - 2026-11-10
 
 ### Fixed
