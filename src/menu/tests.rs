@@ -939,22 +939,53 @@ fn alt_tab_other_key_releases_do_not_confirm() {
     );
 }
 
-/// Shift+Alt release does not confirm (C parity: the shift guard stays).
+/// Reverse cycling must still confirm if Alt is released before Shift. Shift's
+/// own release never confirms, regardless of the cached modifier state.
 #[test]
-fn alt_tab_shift_release_does_not_confirm() {
-    let cfg = Config {
-        alt_tab: true,
-        ..Config::default()
-    };
-    let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta", "gamma"]);
+fn alt_tab_release_confirms_while_shift_is_still_held() {
+    for mods in [
+        M_SHIFT,
+        Modifiers {
+            shift: true,
+            alt: true,
+            ..Modifiers::default()
+        },
+    ] {
+        let cfg = Config {
+            alt_tab: true,
+            ..Config::default()
+        };
+        let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta", "gamma"]);
+        assert_eq!(key(&mut menu, ks::KEY_Tab, M_ALT), Transition::Redraw);
+        assert_eq!(menu.key_release(ks::KEY_Tab, M_ALT), Transition::Nop);
+        assert_eq!(menu.key_release(ks::KEY_Shift_L, mods), Transition::Nop);
+        assert_eq!(
+            menu.key_release(ks::KEY_Alt_L, mods),
+            Transition::PrintAndExit("beta".into())
+        );
+    }
+}
 
-    assert_eq!(key(&mut menu, ks::KEY_Tab, M_ALT), Transition::Redraw);
-    assert_eq!(menu.key_release(ks::KEY_Tab, M_ALT), Transition::Nop);
-    assert_eq!(menu.key_release(ks::KEY_Alt_L, M_SHIFT), Transition::Nop);
-    assert_eq!(
-        menu.key_release(ks::KEY_Alt_L, M_NONE),
-        Transition::PrintAndExit("beta".into())
-    );
+#[test]
+fn alt_tab_escape_cancels_with_modifiers_held() {
+    for mods in [
+        M_ALT,
+        Modifiers {
+            alt: true,
+            shift: true,
+            ..Modifiers::default()
+        },
+    ] {
+        let cfg = Config {
+            alt_tab: true,
+            ..Config::default()
+        };
+        let (mut menu, _stub, _out) = menu_with(cfg, &["alpha", "beta"]);
+        assert_eq!(
+            key(&mut menu, ks::KEY_Escape, mods),
+            Transition::Exit(ExitStatus::Failure)
+        );
+    }
 }
 
 /// Alt+Space cancels the mode at runtime: the release no longer confirms,

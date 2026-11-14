@@ -141,6 +141,11 @@ impl Menu {
         text: &'a str,
     ) -> DecodedKey<'a> {
         use KeyAction::*;
+        // Alt is held throughout window switching, including when cancelling.
+        if self.alt_tab != AltTab::Off && sym == ks::KEY_Escape {
+            return DecodedKey::new(Cancel);
+        }
+
         let action = if mods.ctrl {
             match sym {
                 ks::KEY_a => self.decode_base(ks::KEY_Home, mods, text),

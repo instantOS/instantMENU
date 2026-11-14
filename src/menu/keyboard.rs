@@ -30,7 +30,7 @@ impl Menu {
                 Transition::Nop
             }
             AltTab::Armed => {
-                if !is_alt_key(sym) || mods.shift || self.selected_is_heading() {
+                if !is_alt_key(sym) || self.selected_is_heading() {
                     return Transition::Nop;
                 }
                 if self.search_pending() {
