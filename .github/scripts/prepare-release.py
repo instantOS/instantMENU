@@ -102,8 +102,19 @@ def update_primary_versions(version: str) -> None:
         rf'\1"{version}"',
     )
     for path in ("packaging/arch/PKGBUILD", "packaging/arch-bin/PKGBUILD"):
+        text = read(path)
+        if re.search(rf"^pkgver={re.escape(version)}$", text, flags=re.MULTILINE):
+            continue
         replace_once(path, r"^pkgver=.*", f"pkgver={version}")
         replace_once(path, r"^pkgrel=.*", "pkgrel=1")
+        # The next release assets are unavailable until the release workflow runs.
+        text = re.sub(
+            r"^sha256sums=\([^)]*\)",
+            lambda match: re.sub(r"'[0-9a-f]{64}'", "'SKIP'", match[0]),
+            read(path),
+            flags=re.MULTILINE,
+        )
+        write(path, text)
 
 
 def clean_subject(subject: str) -> tuple[str, str]:

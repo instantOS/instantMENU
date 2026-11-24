@@ -27,6 +27,20 @@ conventional commits to choose the next version. Merging that PR creates the
 matching `v*` tag and publishes the release artifacts. A patch, minor, or major
 bump can also be selected manually from the workflow dispatch form.
 
+### AUR publishing
+
+The release workflow prepares `instantmenu` (source) and `instantmenu-bin`
+(prebuilt x86_64), then installs and smoke-tests the binary package on Arch.
+The `aur-recipes` workflow artifact contains both checksummed recipes and their
+`.SRCINFO` files. GitHub release reruns preserve the binary archive checksum.
+
+For the first `instantmenu-bin` submission, push `PKGBUILD` and `.SRCINFO`
+from `packaging/arch-bin` for its pinned release, or from the workflow artifact,
+to the AUR package's `master` branch.
+Give the AUR account behind the CI SSH key push access to both packages, then
+set `AUR_SSH_PRIVATE_KEY` as a repository Actions secret. Eligible releases
+from `main` or protected tags publish to the AUR once the secret is set.
+
 ## Features
 
 - alt-tab switcher mode: cycle with Alt+Tab, release Alt to pick

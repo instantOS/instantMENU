@@ -178,55 +178,43 @@ jobs:
       - metadata
       - build
     if: ${{ needs.metadata.outputs.should_release == 'true' }}
+    defaults:
+      run:
+        shell: bash
     steps:
-      # actions/checkout falls back to a source archive when git is absent,
-      # and this job needs `git archive` below to build the source tarball.
-      # A bare archlinux:latest container has no git yet at checkout time, so
-      # bootstrap it first to get a real repository instead of a tarball.
-      - name: Bootstrap checkout dependencies
-        run: |
-          pacman-key --init
-          pacman-key --populate archlinux
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm --needed git
       - name: Checkout
         uses: actions/checkout@v7
       - name: Setup Arch container
         uses: ./.github/actions/setup-arch
         with:
-          packages: base-devel git
-          include-test-base: "false"
-      - name: Extract version
-        id: vars
-        run: bash scripts/ci/extract-version.sh "$GITHUB_REF_NAME"
+          packages: base-devel pacman-contrib
+          include-test-base: 'false'
       - name: Download native archive
         uses: actions/download-artifact@v8
         with:
-          name: instantmenu-${{ steps.vars.outputs.version }}-x86_64-unknown-linux-gnu
-          path: dist
-      - name: Create package inputs
-        env:
-          VERSION: ${{ steps.vars.outputs.version }}
-        run: |
-          git config --global --add safe.directory "$PWD"
-          git archive --format=tar.gz --prefix="instantMENU-${VERSION}/" -o "instantMENU-${VERSION}.tar.gz" HEAD
-          cp "dist/instantmenu-x86_64-unknown-linux-gnu-v${VERSION}.tgz" .
-          cp packaging/arch-bin/PKGBUILD .
-          useradd -m builder
-          chown -R builder:builder "$PWD"
+          name: instantmenu-${{ needs.metadata.outputs.version }}-x86_64-unknown-linux-gnu
+          path: arch-build
       - name: Build package
-        run: su builder -c "cd '$PWD' && makepkg --nodeps --noconfirm --skippgpcheck"
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          cp packaging/arch-bin/PKGBUILD arch-build/
+          useradd -m builder
+          chown -R builder:builder arch-build
+          cd arch-build
+          if ! grep -Fxq "pkgver=$VERSION" PKGBUILD; then
+            sed -i "s/^pkgver=.*/pkgver=$VERSION/; s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+          fi
+          runuser -u builder -- updpkgsums
+          runuser -u builder -- makepkg --nodeps --noconfirm
       - name: Collect package artifacts
         run: |
           mkdir -p artifacts
-          shopt -s nullglob
-          for package in ./*.pkg.tar.zst ./*.src.tar.zst; do
-            mv "$package" artifacts/
-          done
+          mv arch-build/*.pkg.tar.zst artifacts/
       - name: Upload Arch package
         uses: actions/upload-artifact@v7
         with:
-          name: instantmenu-${{ steps.vars.outputs.version }}-arch-package
+          name: instantmenu-${{ needs.metadata.outputs.version }}-arch-package
           path: artifacts/
   deb:
     name: Build Debian package
@@ -366,5 +354,114 @@ jobs:
           name: ${{ needs.metadata.outputs.tag }}
           body_path: release-notes.md
           files: dist/**/*
+          # The AUR pins the published archive checksum across reruns.
+          overwrite_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  aur-recipes:
+    name: Prepare AUR recipes
+    runs-on: ubuntu-26.04
+    container:
+      image: archlinux:latest
+    needs: [metadata, release]
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Setup Arch container
+        uses: ./.github/actions/setup-arch
+        with:
+          include-test-base: 'false'
+          packages: base-devel pacman-contrib
+      - name: Generate versioned recipes
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          useradd -m builder
+          chown -R builder:builder packaging/arch packaging/arch-bin
+          for directory in packaging/arch packaging/arch-bin; do
+            package=instantmenu${directory#packaging/arch}
+            (
+              cd "$directory"
+              if ! grep -Fxq "pkgver=$VERSION" PKGBUILD; then
+                sed -i "s/^pkgver=.*/pkgver=$VERSION/; s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+              fi
+              runuser -u builder -- updpkgsums
+              runuser -u builder -- makepkg --printsrcinfo > .SRCINFO
+            )
+            install -Dm644 "$directory/PKGBUILD" "aur-recipes/$package/PKGBUILD"
+            install -Dm644 "$directory/.SRCINFO" "aur-recipes/$package/.SRCINFO"
+          done
+      - name: Smoke test instantmenu-bin installation
+        run: |
+          cd packaging/arch-bin
+          runuser -u builder -- makepkg --nodeps --noconfirm
+          pacman -U --noconfirm ./*.pkg.tar.zst
+          instantmenu --version
+          instantmenu --help > /dev/null
+          itest -f /usr/bin/instantmenu
+          test -x /usr/bin/instantmenu_path
+          test -x /usr/bin/instantmenu_run
+          # The Arch container skips extracting man pages during installation.
+          pacman -Ql instantmenu-bin | grep -E ' /usr/share/man/man1/instantmenu\.1(\.gz)?$'
+      - name: Upload AUR recipes
+        uses: actions/upload-artifact@v7
+        with:
+          name: aur-recipes
+          path: aur-recipes/
+          include-hidden-files: true
+          if-no-files-found: error
+  aur:
+    name: Publish to the AUR
+    runs-on: ubuntu-26.04
+    container:
+      image: archlinux:latest
+    needs: aur-recipes
+    permissions:
+      contents: read
+    if: |-
+      github.repository == 'instantOS/instantMENU' &&
+      (github.ref == 'refs/heads/main' || (github.ref_type == 'tag' && github.ref_protected))
+    concurrency:
+      group: aur-publish
+      cancel-in-progress: false
+    steps:
+      - name: Check for AUR SSH key
+        id: aur-key
+        env:
+          KEY_CONFIGURED: ${{ secrets.AUR_SSH_PRIVATE_KEY != '' }}
+        run: |
+          echo "configured=$KEY_CONFIGURED" >> "$GITHUB_OUTPUT"
+          if [ "$KEY_CONFIGURED" != true ]; then
+            echo 'AUR_SSH_PRIVATE_KEY is unset. Skipping AUR publishing.'
+          fi
+      - name: Install publishing tools
+        if: steps.aur-key.outputs.configured == 'true'
+        run: |
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Syu --noconfirm --needed git openssh
+      - name: Checkout release commit
+        if: steps.aur-key.outputs.configured == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download AUR recipes
+        if: steps.aur-key.outputs.configured == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: aur-recipes
+          path: aur-recipes
+      - name: Push recipes to the AUR
+        if: steps.aur-key.outputs.configured == 'true'
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: bash scripts/ci/publish-aur.sh aur-recipes

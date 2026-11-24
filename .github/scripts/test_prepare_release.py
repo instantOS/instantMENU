@@ -59,8 +59,12 @@ class ReleaseFilesTests(unittest.TestCase):
     def test_primary_versions_change_but_generated_files_do_not(self) -> None:
         self.write("Cargo.toml", '[package]\nname = "instantmenu"\nversion = "1.2.3"\n')
         self.write('Cargo.lock', '[[package]]\nname = "instantmenu"\nversion = "1.2.3"\n')
+        checksum = "a" * 64
         for directory in ("packaging/arch", "packaging/arch-bin"):
-            self.write(f"{directory}/PKGBUILD", "pkgver=1.2.3\npkgrel=7\n")
+            self.write(
+                f"{directory}/PKGBUILD",
+                f"pkgver=1.2.3\npkgrel=7\nepoch=1\nsha256sums=('{checksum}')\n",
+            )
             self.write(f"{directory}/.SRCINFO", "generated 1.2.3\n")
         self.write("instantmenu.1", "generated 1.2.3\n")
 
@@ -69,7 +73,10 @@ class ReleaseFilesTests(unittest.TestCase):
         self.assertIn('version = "1.2.4"', release.read("Cargo.toml"))
         self.assertIn('version = "1.2.4"', release.read("Cargo.lock"))
         for directory in ("packaging/arch", "packaging/arch-bin"):
-            self.assertEqual(release.read(f"{directory}/PKGBUILD"), "pkgver=1.2.4\npkgrel=1\n")
+            self.assertEqual(
+                release.read(f"{directory}/PKGBUILD"),
+                "pkgver=1.2.4\npkgrel=1\nepoch=1\nsha256sums=('SKIP')\n",
+            )
             self.assertEqual(release.read(f"{directory}/.SRCINFO"), "generated 1.2.3\n")
         self.assertEqual(release.read("instantmenu.1"), "generated 1.2.3\n")
 
