@@ -2885,7 +2885,7 @@ fn icon_item_measurement_uses_label_plus_gutter() {
     let label_width = menu.cell_width("Label");
     let gutter_width = menu.renderer.font_height * 3;
 
-    assert_eq!(menu.max_cell_width(), label_width + gutter_width);
+    assert_eq!(menu.max_cell_width(i32::MAX), label_width + gutter_width);
 
     menu.match_counter_text.clear();
     menu.paging.next = None;
@@ -2905,10 +2905,10 @@ fn single_key_max_cell_width_is_the_bar_height() {
         cfg.clone(),
         &["{key=a} Alpha", "a very long item without a key"],
     );
-    assert_eq!(menu.max_cell_width(), menu.layout.bar_height);
+    assert_eq!(menu.max_cell_width(i32::MAX), menu.layout.bar_height);
 
     let (mut menu, _stub, _out) = menu_with(cfg, &["no key here at all"]);
-    assert_eq!(menu.max_cell_width(), 0);
+    assert_eq!(menu.max_cell_width(i32::MAX), 0);
 }
 
 /// Slide mode does not read items from stdin even when some are provided.
@@ -3039,24 +3039,21 @@ fn fully_preloaded_stream_is_finalized_without_another_frame() {
     );
 }
 
-/// `--width auto` samples very large corpora but stays exact below the
-/// sampling threshold, including a long label in the last position.
 #[test]
-fn auto_width_samples_only_above_the_threshold() {
+fn auto_width_includes_the_widest_item_in_large_corpora() {
     let long = "a label that is deliberately much wider than the others";
-
-    let mut small: Vec<String> = (0..199).map(|i| format!("x{i}")).collect();
-    small.push(long.into());
-    let refs: Vec<&str> = small.iter().map(String::as_str).collect();
-    let (mut menu, _, _) = menu_with(Config::default(), &refs);
-    let expected = menu.cell_width(long);
-    assert_eq!(menu.max_cell_width(), expected);
-
-    let mut large: Vec<String> = vec![long.into()];
-    large.extend((0..299).map(|i| format!("x{i}")));
-    let refs: Vec<&str> = large.iter().map(String::as_str).collect();
-    let (mut menu, _, _) = menu_with(Config::default(), &refs);
-    assert_eq!(menu.max_cell_width(), expected);
+    for count in [256, 257, 1024] {
+        let mut labels = vec!["x"; count];
+        labels[1] = long;
+        let cfg = Config {
+            width: Width::Auto,
+            ..Config::default()
+        };
+        let (mut menu, _, _) = menu_with(cfg, &labels);
+        let expected = (f64::from(menu.cell_width(long)) * 1.3) as i32;
+        assert!(menu.setup().is_none());
+        assert_eq!(menu.layout.menu_width, expected, "{count} items");
+    }
 }
 
 /// The command gutter only exists when a left/right command is configured;

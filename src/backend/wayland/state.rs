@@ -124,12 +124,13 @@ pub struct EventState {
     pub(super) xkb: Option<Xkb>,
     /// Keymap text received from the compositor, compiled after the first
     /// frame (or on the first key event) instead of during startup.
-    pub(super) pending_keymap: Option<String>,
+    pub(super) pending_keymap: Option<Result<String, &'static str>>,
+    pub(super) keymap_error: Option<&'static str>,
     /// Raw pressed-key set from the last `wl_keyboard.enter`, replayed when
     /// the deferred keymap is compiled.
     pub(super) pending_enter: Option<Vec<u8>>,
     /// Last modifier mask seen before the keymap was compiled.
-    pub(super) pending_mods: (u32, u32, u32),
+    pub(super) pending_mods: Option<(u32, u32, u32, u32)>,
     pub(super) key_repeat: KeyboardRepeat,
     /// True only after wl_keyboard.enter names the menu surface. Mapping a
     /// layer buffer is not by itself proof that the seat has switched focus.
@@ -190,23 +191,28 @@ impl EventState {
     /// replay the focus/modifier snapshot that arrived while it was pending.
     /// Cheap after the first call.
     pub(super) fn ensure_xkb(&mut self) {
-        if self.xkb.is_some() && self.pending_keymap.is_none() {
-            return;
-        }
-        let Some(text) = self.pending_keymap.take() else {
+        let Some(keymap) = self.pending_keymap.take() else {
             return;
         };
-        let Some(mut xkb) = compile_keymap(text) else {
-            return;
+        let mut xkb = match keymap
+            .and_then(|text| compile_keymap(text).ok_or("cannot compile the Wayland keyboard map"))
+        {
+            Ok(xkb) => xkb,
+            Err(error) => {
+                if self.xkb.is_none() {
+                    self.keymap_error = Some(error);
+                }
+                return;
+            }
         };
         if let Some(keys) = self.pending_enter.take() {
             xkb.enter(&keys);
         }
-        let (depressed, latched, locked) = self.pending_mods;
-        if depressed | latched | locked != 0 {
-            xkb.state.update_mask(depressed, latched, locked, 0, 0, 0);
-            xkb.mods = xkb.indices.modifiers(depressed | latched | locked);
+        if let Some((depressed, latched, locked, group)) = self.pending_mods {
+            xkb.update_modifiers(depressed, latched, locked, group);
         }
+        self.key_repeat.cancel();
+        self.keymap_error = None;
         self.xkb = Some(xkb);
     }
     pub(super) fn new(
@@ -250,8 +256,9 @@ impl EventState {
             probe_answer: None,
             xkb: None,
             pending_keymap: None,
+            keymap_error: None,
             pending_enter: None,
-            pending_mods: (0, 0, 0),
+            pending_mods: None,
             key_repeat: KeyboardRepeat::new(),
             keyboard_focused: false,
             surface: None,

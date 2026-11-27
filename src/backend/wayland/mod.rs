@@ -383,15 +383,6 @@ impl Backend for WaylandBackend {
     }
 
     fn acquire_keyboard(&mut self, output: Option<usize>, layer_menu: bool) -> Result<(), String> {
-        self.begin_acquire_keyboard(output, layer_menu)?;
-        self.finish_acquire_keyboard()
-    }
-
-    fn begin_acquire_keyboard(
-        &mut self,
-        output: Option<usize>,
-        layer_menu: bool,
-    ) -> Result<(), String> {
         /* xdg-toplevel has no protocol mechanism equivalent to layer-shell's
          * exclusive keyboard interactivity. Do not create a second surface
          * that cannot be cleanly transformed into the requested window. */
@@ -444,13 +435,7 @@ impl Backend for WaylandBackend {
             .flush()
             .map_err(|error| format!("Wayland bootstrap flush failed: {error}"))?;
         crate::trace::mark("wayland: bootstrap commit");
-        Ok(())
-    }
 
-    fn finish_acquire_keyboard(&mut self) -> Result<(), String> {
-        if !self.state.bootstrap {
-            return Ok(());
-        }
         /* A layer surface is not mapped until configure has been acknowledged
          * and a buffer attached. Dispatch here but leave input events in the
          * state's queue; Menu::run consumes them after the final surface is
@@ -503,6 +488,13 @@ impl Backend for WaylandBackend {
 
     fn finish_startup(&mut self) -> Result<(), String> {
         self.state.ensure_xkb();
+        if let Some(error) = self
+            .state
+            .keymap_error
+            .filter(|_| self.state.keyboard_focused)
+        {
+            return Err(error.to_string());
+        }
         Ok(())
     }
 
@@ -580,6 +572,15 @@ impl Backend for WaylandBackend {
     fn poll_event(&mut self, timeout: Option<std::time::Duration>, extra: &[RawFd]) -> EventPoll {
         let start = Instant::now();
         loop {
+            self.state.ensure_xkb();
+            if let Some(error) = self
+                .state
+                .keymap_error
+                .filter(|_| self.state.keyboard_focused)
+            {
+                eprintln!("instantmenu: {error}");
+                return EventPoll::Closed;
+            }
             if let Some(ev) = self.state.events.pop_front() {
                 return EventPoll::Event(ev);
             }

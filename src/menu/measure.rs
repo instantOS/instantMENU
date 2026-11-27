@@ -80,34 +80,6 @@ impl<'a> TextMeasurer<'a> {
     }
 }
 
-impl TextMeasurer<'_> {
-    /// Cheap variant used only for sizing (`--width auto` and the single-key
-    /// prompt): Basic shaping for ASCII labels, which skips harfbuzz and is
-    /// an order of magnitude faster when measuring a whole corpus. Widths
-    /// can differ by kerning, which the auto-width margin absorbs.
-    pub(super) fn approx_cell_width(&mut self, s: &str) -> i32 {
-        if self.single_key {
-            self.bar_height
-        } else {
-            self.renderer.text_width_approx(s) + self.renderer.horizontal_padding
-        }
-    }
-
-    pub(super) fn approx_item_cell_width(&mut self, item: &Item) -> i32 {
-        self.approx_cell_width(item.label())
-            + item
-                .entry
-                .shortcut
-                .map(|key| self.approx_cell_width(&key.hint()) + self.renderer.cell_inset())
-                .unwrap_or(0)
-            + if item.entry.icon.is_some() {
-                self.icon_gutter_width()
-            } else {
-                0
-            }
-    }
-}
-
 impl Measure for TextMeasurer<'_> {
     fn cell_width(&mut self, s: &str) -> i32 {
         if self.single_key {

@@ -355,29 +355,25 @@ impl Menu {
         .cell_width(s)
     }
 
-    /// Widest item cell width, measured through the same seam as paging and
-    /// layout so the single-key square-cell rule lives in one place.
-    pub(in crate::menu) fn max_cell_width(&mut self) -> i32 {
-        /* `--width auto` only needs the widest label, but shaping every
-         * label in a 10k-item corpus costs tens of milliseconds before the
-         * first frame. Menus above the bound are sampled evenly: a menu that
-         * large is scrollable and truncated to the monitor anyway, so the
-         * visible page matters more than an exact global maximum. Lists at
-         * or below the bound keep the exact behavior. */
-        const MAX_MEASURED_ITEMS: usize = 256;
+    /// Widest item cell width, stopping when an item reaches the width cap.
+    pub(in crate::menu) fn max_cell_width(&mut self, cap: i32) -> i32 {
+        if cap <= 0 {
+            return 0;
+        }
         let mut m = TextMeasurer::new(
             &mut self.renderer,
             self.cfg.single_key,
             self.layout.bar_height,
         );
         let mut len = 0;
-        let count = self.matcher.items.len();
-        let step = count.div_ceil(MAX_MEASURED_ITEMS).max(1);
-        for item in self.matcher.items.iter().step_by(step) {
+        for item in &self.matcher.items {
             if self.cfg.single_key && item.entry.key.is_none() {
                 continue;
             }
-            len = len.max(m.approx_item_cell_width(item));
+            len = len.max(m.item_cell_width(item));
+            if len >= cap {
+                break;
+            }
         }
         len
     }

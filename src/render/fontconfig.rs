@@ -514,14 +514,9 @@ fn load_file(db: &mut fontdb::Database, loaded: &mut HashSet<PathBuf>, path: Pat
     if loaded.contains(&path) {
         return false;
     }
-    // Map the font once and retain the mapping: the kernel faults in only the
-    // tables shaping actually touches (instead of copying the whole file up
-    // front), while SharedFile keeps the path for deduplication and keeps the
-    // mapping valid even if the file disappears afterwards.
-    let Ok(file) = std::fs::File::open(&path) else {
-        return false;
-    };
-    let Ok(data) = (unsafe { memmap2::MmapOptions::new().map(&file) }) else {
+    // Keep owned bytes for the renderer's lifetime. This also keeps the
+    // faces usable if the original file is overwritten or removed.
+    let Ok(data) = std::fs::read(&path) else {
         return false;
     };
     let ids = db.load_font_source(fontdb::Source::SharedFile(path.clone(), Arc::new(data)));
@@ -691,7 +686,7 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn loaded_fonts_keep_shared_bytes_without_reopening_the_backing_file() {
+    fn loaded_fonts_keep_owned_bytes_if_the_backing_file_is_overwritten() {
         let Some(config) = Config::new() else { return };
         let Some(source) = config.match_family("sans-serif") else {
             return;
@@ -707,6 +702,7 @@ mod tests {
         let faces = db.len();
         assert!(!super::load_file(&mut db, &mut loaded, path.clone()));
         assert_eq!(db.len(), faces);
+        std::fs::write(&path, b"replacement font bytes").unwrap();
         std::fs::remove_file(&path).unwrap();
         let face = db.faces().next().unwrap();
         assert!(matches!(&face.source, fontdb::Source::SharedFile(_, _)));

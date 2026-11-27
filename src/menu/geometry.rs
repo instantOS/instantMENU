@@ -57,9 +57,6 @@ impl Menu {
             hint_rows: i32::from(!self.cfg.bindings.is_empty()),
             ..Layout::default()
         };
-        let width = self.resolve_auto_width(layout.columns);
-        crate::trace::mark("layout: auto width");
-
         /* make a menu line AT LEAST 'line_height' tall */
         layout.bar_height = (self.renderer.font_height + 12).max(self.cfg.line_height.pixels());
         let prompt = self.cfg.prompt.clone();
@@ -72,7 +69,7 @@ impl Menu {
                 .items
                 .iter()
                 .filter(|item| item.is_selectable() && item.entry.key.is_some())
-                .map(|item| self.renderer.text_width_approx(item.label()))
+                .map(|item| self.renderer.text_width(item.label()))
                 .max()
                 .unwrap_or_else(|| {
                     prompt
@@ -114,7 +111,7 @@ impl Menu {
         let root = self.backend.root_size();
 
         if monitors.is_empty() {
-            self.embed_geometry(root, width, &mut layout)?;
+            self.embed_geometry(root, &mut layout)?;
         } else {
             /* Follow-cursor needs the pointer for both monitor selection and
              * placement. Fetch it once: on X11 this avoids a second request;
@@ -134,7 +131,7 @@ impl Menu {
             );
             crate::trace::mark("layout: monitor selected");
             let monitor = monitors[i].rect;
-            self.monitor_geometry(monitor, width, follow_pointer, &mut layout);
+            self.monitor_geometry(monitor, follow_pointer, &mut layout);
             self.adjust_geometry(monitor, &mut layout);
         }
         /* Every Layout leaving this function is complete. Keeping this out of
@@ -151,10 +148,9 @@ impl Menu {
 
     /// `--width auto`: measure the items and use the computed width; a
     /// fixed `--width` passes through, an unset one yields 0 ("pick a
-    /// default downstream"). Runs before the bar height exists, so
-    /// single-key measurement sees a zero bar height exactly like the
-    /// C version (which resolved this in main() before setup()).
-    fn resolve_auto_width(&mut self, columns: i32) -> i32 {
+    /// default downstream"). Once the result fills the available space,
+    /// measuring wider items cannot affect the geometry.
+    fn resolve_width(&mut self, columns: i32, available: i32) -> i32 {
         match self.cfg.width {
             Width::Fixed(w) => return w,
             Width::Default => return 0,
@@ -165,8 +161,12 @@ impl Menu {
             Some(p) => self.cell_width(p),
             None => 0,
         };
-        let item_width = (self.max_cell_width() as f64 * 1.3 * columns.max(1) as f64
-            + prompt_width as f64) as i32;
+        let columns = f64::from(columns.max(1));
+        let cap =
+            ((f64::from(available) - f64::from(prompt_width)) / (1.3 * columns)).ceil() as i32;
+        let item_width =
+            (f64::from(self.max_cell_width(cap)) * 1.3 * columns + f64::from(prompt_width)) as i32;
+        crate::trace::mark("layout: auto width");
         item_width.max(self.hint_min_width())
     }
 
@@ -185,7 +185,7 @@ impl Menu {
     /// Content-based width: widest item text plus the prompt, floored at
     /// [`Config::min_width`] and capped at `cap` (root or parent width).
     fn content_width(&mut self, prompt_width: i32, cap: i32) -> i32 {
-        (self.max_cell_width() + prompt_width)
+        (self.max_cell_width(cap.saturating_sub(prompt_width)) + prompt_width)
             .max(self.hint_min_width())
             .max(self.cfg.min_width)
             .min(cap)
@@ -196,10 +196,15 @@ impl Menu {
     fn monitor_geometry(
         &mut self,
         monitor: Rect,
-        width: i32,
         follow_pointer: Option<Point>,
         layout: &mut Layout,
     ) {
+        let available = if !self.cfg.follow_cursor && self.cfg.position == Position::Center {
+            (monitor.w - 100).max(1)
+        } else {
+            monitor.w
+        };
+        let width = self.resolve_width(layout.columns, available);
         if self.cfg.follow_cursor {
             if self.cfg.width == Width::Auto {
                 layout.menu_width = if width > 0 {
@@ -231,7 +236,6 @@ impl Menu {
             if self.cfg.width == Width::Auto {
                 // Auto should fit content, not be near-full-width. Use the
                 // measured auto width when available, otherwise content width.
-                let available = (monitor.w - 100).max(1);
                 if width > 0 {
                     layout.menu_width = width.min(available);
                 } else {
@@ -282,12 +286,7 @@ impl Menu {
     }
 
     /// Geometry when embedding into a parent window (`-W`, no monitor info).
-    fn embed_geometry(
-        &mut self,
-        root: Size,
-        width: i32,
-        layout: &mut Layout,
-    ) -> Result<(), ExitStatus> {
+    fn embed_geometry(&mut self, root: Size, layout: &mut Layout) -> Result<(), ExitStatus> {
         let Some(parent) = self.backend.embed_parent_size() else {
             return Err(ExitStatus::Failure);
         };
@@ -312,6 +311,7 @@ impl Menu {
             return Ok(());
         }
 
+        let width = self.resolve_width(layout.columns, parent.w);
         if self.cfg.width == Width::Auto {
             if width > 0 {
                 layout.menu_width = width.min(parent.w);
@@ -427,21 +427,17 @@ impl Menu {
             && !self.cfg.no_grab
             && self.cfg.toast.is_none()
             && self.cfg.outside_close;
-        if self
-            .backend
-            .create_window(
-                rect,
-                self.cfg.border_width,
-                managed,
-                !self.cfg.no_grab && self.cfg.toast.is_none(),
-                outside_close,
-                class,
-                bg,
-                border_color,
-            )
-            .is_err()
-        {
-            eprintln!("instantmenu: cannot create window");
+        if let Err(error) = self.backend.create_window(
+            rect,
+            self.cfg.border_width,
+            managed,
+            !self.cfg.no_grab && self.cfg.toast.is_none(),
+            outside_close,
+            class,
+            bg,
+            border_color,
+        ) {
+            eprintln!("instantmenu: cannot create window: {error}");
             return Some(ExitStatus::Failure);
         }
 

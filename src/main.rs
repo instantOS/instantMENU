@@ -67,9 +67,8 @@ fn main() {
 
     let grab = cfg.toast.is_none() && !cfg.no_grab;
     if can_acquire_early && grab {
-        begin_acquire_keyboard(&mut backend, &cfg);
+        acquire_keyboard(&mut backend, &cfg);
     }
-    instantmenu::trace::mark("keyboard acquisition started");
 
     /* Appearance is intentionally resolved after input acquisition. On
      * Wayland the backend has already mapped a transparent 1x1 exclusive
@@ -112,7 +111,6 @@ fn main() {
     if !can_acquire_early && grab {
         acquire_keyboard(&mut backend, &cfg);
     }
-
     let mut required_chars = std::collections::HashSet::new();
     for item in preloaded.iter().flatten() {
         required_chars.extend(item.text.chars());
@@ -141,14 +139,6 @@ fn main() {
     /* drw_fontset_create + lrpad = drw->fonts->h */
     let renderer = Renderer::new(&cfg.fonts, cfg.palette, &required_chars);
     instantmenu::trace::mark("renderer created");
-
-    /* The Wayland bootstrap surface was committed before this slow work;
-     * now wait for the compositor to configure and focus it. X11 completes
-     * its grab in `begin_acquire_keyboard`, so this is a no-op there. */
-    if can_acquire_early && grab {
-        finish_acquire_keyboard(&mut backend, &cfg);
-    }
-    instantmenu::trace::mark("keyboard acquired");
 
     if cfg.full_height || cfg.line_height == LineHeight::FromFont {
         cfg.line_height = LineHeight::Pixels((renderer.font_height as f32 * 2.5) as i32);
@@ -262,7 +252,7 @@ impl Drop for NonBlockingStdin {
 /// Start grabbing the keyboard or die: the C version exited from inside
 /// grabkeyboard() on failure, and without the grab the menu would leak
 /// keystrokes to whatever had focus.
-fn begin_acquire_keyboard(backend: &mut Box<dyn backend::Backend>, cfg: &Config) {
+fn acquire_keyboard(backend: &mut Box<dyn backend::Backend>, cfg: &Config) {
     let monitor_rects: Vec<_> = backend
         .monitors()
         .iter()
@@ -277,6 +267,7 @@ fn begin_acquire_keyboard(backend: &mut Box<dyn backend::Backend>, cfg: &Config)
             Some(index as usize)
         }
         MonitorChoice::Index(_) => Some(0),
+        MonitorChoice::Auto if monitor_rects.len() == 1 => Some(0),
         MonitorChoice::Auto if cfg.follow_cursor => backend.pointer_position().and_then(|point| {
             monitor_rects
                 .iter()
@@ -289,25 +280,11 @@ fn begin_acquire_keyboard(backend: &mut Box<dyn backend::Backend>, cfg: &Config)
     /* --embed is X11-only and Wayland intentionally ignores it; only an
      * xdg-shell managed window prevents layer-surface reuse. */
     let layer_menu = !cfg.managed;
-    if let Err(e) = backend.begin_acquire_keyboard(output, layer_menu) {
+    if let Err(e) = backend.acquire_keyboard(output, layer_menu) {
         eprintln!("instantmenu: {e}");
         ExitStatus::Failure.exit();
     }
-}
-
-/// Wait for the input surface to actually receive focus/configure.
-fn finish_acquire_keyboard(backend: &mut Box<dyn backend::Backend>, _cfg: &Config) {
-    if let Err(e) = backend.finish_acquire_keyboard() {
-        eprintln!("instantmenu: {e}");
-        ExitStatus::Failure.exit();
-    }
-}
-
-/// Non-streaming startup reads all input first, then takes the keyboard in
-/// one blocking step (a tty producer must not be locked out mid-typing).
-fn acquire_keyboard(backend: &mut Box<dyn backend::Backend>, cfg: &Config) {
-    begin_acquire_keyboard(backend, cfg);
-    finish_acquire_keyboard(backend, cfg);
+    instantmenu::trace::mark("keyboard acquired");
 }
 
 /// How stdin feeds the menu.

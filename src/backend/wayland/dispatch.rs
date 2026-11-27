@@ -235,6 +235,11 @@ impl Dispatch<wl_seat::WlSeat, ()> for EventState {
                     }
                 }
                 state.xkb = None;
+                state.pending_keymap = None;
+                state.keymap_error = None;
+                state.pending_enter = None;
+                state.pending_mods = None;
+                state.keyboard_focused = false;
                 state.key_repeat.cancel();
             }
             if caps.contains(wl_seat::Capability::Pointer) && state.pointer.is_none() {
@@ -272,12 +277,17 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for EventState {
         _qh: &QueueHandle<Self>,
     ) {
         match event {
-            wl_keyboard::Event::Keymap {
-                format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1),
-                fd,
-                size,
-            } => {
-                state.pending_keymap = read_keymap(fd.as_raw_fd(), size as usize);
+            wl_keyboard::Event::Keymap { format, fd, size } => {
+                state.pending_keymap = Some(match format {
+                    WEnum::Value(wl_keyboard::KeymapFormat::XkbV1) => {
+                        read_keymap(fd.as_raw_fd(), size as usize)
+                            .ok_or("cannot read the Wayland keyboard map")
+                    }
+                    _ => Err("unsupported Wayland keyboard map format"),
+                });
+                if state.xkb.is_some() {
+                    state.ensure_xkb();
+                }
                 /* fd is an OwnedFd and closes on drop */
             }
             wl_keyboard::Event::Key {
@@ -326,10 +336,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for EventState {
             wl_keyboard::Event::Enter { surface, keys, .. } => {
                 state.key_repeat.cancel();
                 state.keyboard_focused = state.surface.as_ref() == Some(&surface);
-                /* Replayed when a deferred or replaced keymap is compiled. */
-                state.pending_enter = Some(keys.clone());
                 if let Some(xkb) = state.xkb.as_mut() {
                     xkb.enter(&keys);
+                } else {
+                    state.pending_enter = Some(keys);
                 }
             }
             wl_keyboard::Event::Leave { surface, .. } => {
@@ -339,6 +349,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for EventState {
                     state.events.push_back(BackendEvent::KeyboardLeft);
                 }
                 state.pending_enter = None;
+                state.pending_mods = None;
                 if let Some(xkb) = state.xkb.as_mut() {
                     xkb.leave();
                 }
@@ -350,16 +361,13 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for EventState {
                 mods_depressed,
                 mods_latched,
                 mods_locked,
+                group,
                 ..
             } => {
-                state.pending_mods = (mods_depressed, mods_latched, mods_locked);
-                let Some(x) = state.xkb.as_mut() else {
-                    return;
-                };
-                x.state
-                    .update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, 0);
-                let mask = mods_depressed | mods_latched | mods_locked;
-                x.mods = x.indices.modifiers(mask);
+                state.pending_mods = Some((mods_depressed, mods_latched, mods_locked, group));
+                if let Some(x) = state.xkb.as_mut() {
+                    x.update_modifiers(mods_depressed, mods_latched, mods_locked, group);
+                }
             }
             _ => {}
         }

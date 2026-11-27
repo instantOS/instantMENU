@@ -76,6 +76,18 @@ impl Xkb {
         self.keymap.key_repeats(xkb::Keycode::new(code))
     }
 
+    pub(super) fn update_modifiers(
+        &mut self,
+        depressed: u32,
+        latched: u32,
+        locked: u32,
+        group: u32,
+    ) {
+        self.state
+            .update_mask(depressed, latched, locked, 0, 0, group);
+        self.mods = self.indices.modifiers(depressed | latched | locked);
+    }
+
     /// `wl_keyboard.enter` is a state snapshot, not a series of presses.
     /// Rebuild xkb's physical state from it without emitting menu events.
     pub(super) fn enter(&mut self, raw_keys: &[u8]) {

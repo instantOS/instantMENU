@@ -6,6 +6,7 @@ Requires sway and wtype. Run after `cargo build --bin instantmenu`:
 """
 
 import argparse
+import errno
 import os
 from pathlib import Path
 import re
@@ -61,6 +62,47 @@ def wait_for(predicate, process, label):
         if time.monotonic() >= deadline:
             raise TimeoutError(f"{label} did not become ready within 10 seconds")
         time.sleep(.01)
+
+
+def exercise_early_input(binary, env, root):
+    config = root / "slow-appearance.toml"
+    log_path = root / "early-input.log"
+    os.mkfifo(config)
+    with log_path.open("w") as log:
+        menu = subprocess.Popen(
+            [str(binary), "--input-only", "--backend", "wayland", "--config", str(config)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=log,
+            env={**env, "INSTANTMENU_TRACE": "1"},
+        )
+        try:
+            # The config reader blocks until the writer connects. Verify that
+            # the menu already has focus and can receive input in that interval.
+            wait_for(lambda: "wayland: acquire done" in log_path.read_text(), menu, "keyboard")
+            subprocess.run(
+                ["wtype", "-s", "50", "early keystrokes", "-k", "Return"],
+                env=env, check=True, timeout=3,
+            )
+
+            def release_config_reader():
+                try:
+                    fd = os.open(config, os.O_WRONLY | os.O_NONBLOCK)
+                except OSError as error:
+                    if error.errno == errno.ENXIO:
+                        return False
+                    raise
+                os.close(fd)
+                return True
+
+            wait_for(release_config_reader, menu, "config reader")
+            output, _ = menu.communicate(timeout=3)
+            assert menu.returncode == 0, menu.returncode
+            assert output == b"early keystrokes\n", output
+            print("PASS early keystrokes during blocked appearance read")
+        except Exception:
+            print(log_path.read_text(), file=sys.stderr)
+            raise
+        finally:
+            stop(menu)
 
 
 def exercise(binary, env, root, label, text, key):
@@ -162,6 +204,7 @@ def main():
                 # A headless seat has no keyboard until a virtual one exists.
                 # Keep one alive so normal early keyboard acquisition works.
                 keyboard = subprocess.Popen(["wtype", "-s", "60000"], env=env)
+                exercise_early_input(binary, env, root)
                 for label, text, key in (
                     ("slow", "", "Return"),
                     ("busy-select", "", "Return"),
