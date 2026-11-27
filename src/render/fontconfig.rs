@@ -267,17 +267,24 @@ fn needs_coverage(ch: char) -> bool {
 pub(super) fn database_for(
     specs: &[FontSpec],
     required_chars: &HashSet<char>,
-) -> Option<fontdb::Database> {
+    defer_emoji: bool,
+) -> Option<(fontdb::Database, Option<PathBuf>)> {
     let mut cache = FontCache::load();
     let mut db = fontdb::Database::new();
     let mut loaded = HashSet::new();
     let mut missing_families = Vec::new();
+    let mut deferred_emoji = None;
 
-    for spec in specs {
+    for (index, spec) in specs.iter().enumerate() {
+        let defer = defer_emoji && index == 2;
         if let Some(path) = cache.family(&spec.family) {
-            load_file(&mut db, &mut loaded, path);
+            if defer {
+                deferred_emoji = Some(path);
+            } else {
+                load_file(&mut db, &mut loaded, path);
+            }
         } else {
-            missing_families.push(spec.family.clone());
+            missing_families.push((&spec.family, defer));
         }
     }
     let mut uncovered: HashSet<char> = required_chars
@@ -297,10 +304,14 @@ pub(super) fn database_for(
     uncovered.retain(|ch| !cache.missing.contains(ch));
     if !missing_families.is_empty() || !uncovered.is_empty() {
         let config = Config::new()?;
-        for family in missing_families {
-            let path = config.match_family(&family)?;
-            load_file(&mut db, &mut loaded, path.clone());
-            cache.set_family(family, path);
+        for (family, defer) in missing_families {
+            let path = config.match_family(family)?;
+            cache.set_family(family.clone(), path.clone());
+            if defer {
+                deferred_emoji = Some(path);
+            } else {
+                load_file(&mut db, &mut loaded, path);
+            }
         }
         remove_covered(&db, &mut uncovered);
         let unavailable = config.visit_fallbacks(&mut uncovered, |path, uncovered| {
@@ -321,7 +332,7 @@ pub(super) fn database_for(
         }
         cache.save();
     }
-    (!db.is_empty()).then_some(db)
+    (!db.is_empty()).then_some((db, deferred_emoji))
 }
 
 /// Extend an existing small database when interactive input introduces
@@ -338,13 +349,7 @@ pub(super) fn add_fallbacks(db: &mut fontdb::Database, required_chars: &HashSet<
     }
 
     let mut cache = FontCache::load();
-    let mut loaded: HashSet<PathBuf> = db
-        .faces()
-        .filter_map(|face| match &face.source {
-            fontdb::Source::File(path) | fontdb::Source::SharedFile(path, _) => Some(path.clone()),
-            fontdb::Source::Binary(_) => None,
-        })
-        .collect();
+    let mut loaded = loaded_paths(db);
     // Like database_for: fallbacks that covered something before, and
     // codepoints known to be unavailable, are settled without starting
     // fontconfig, whose initialization walks every font directory.
@@ -375,6 +380,20 @@ pub(super) fn add_fallbacks(db: &mut fontdb::Database, required_chars: &HashSet<
         cache.add_missing(ch);
     }
     cache.save();
+}
+
+pub(super) fn load_deferred_font(db: &mut fontdb::Database, path: PathBuf) {
+    let mut loaded = loaded_paths(db);
+    load_file(db, &mut loaded, path);
+}
+
+fn loaded_paths(db: &fontdb::Database) -> HashSet<PathBuf> {
+    db.faces()
+        .filter_map(|face| match &face.source {
+            fontdb::Source::File(path) | fontdb::Source::SharedFile(path, _) => Some(path.clone()),
+            fontdb::Source::Binary(_) => None,
+        })
+        .collect()
 }
 
 fn load_file(db: &mut fontdb::Database, loaded: &mut HashSet<PathBuf>, path: PathBuf) -> bool {

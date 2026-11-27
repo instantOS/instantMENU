@@ -4,6 +4,7 @@
 
 use std::collections::HashSet;
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 
 use lru::LruCache;
 
@@ -38,6 +39,7 @@ pub struct Renderer {
     pub fonts: Vec<FontSpec>,
     /// Resolved cosmic-text family names in fontset order.
     families: Vec<String>,
+    deferred_emoji: Option<PathBuf>,
     /// Height of the primary font (ascent + descent).
     pub font_height: i32,
     /// Sum of the left and right text padding inside a cell.
@@ -65,10 +67,15 @@ impl Renderer {
     /// seed the fallback set for the required characters.
     pub fn new(fonts: &[String], palette: Palette, required_chars: &HashSet<char>) -> Self {
         let specs: Vec<FontSpec> = fonts.iter().map(|f| parse_font_name(f)).collect();
-        let mut font_system = match fontconfig::database_for(&specs, required_chars) {
-            Some(db) => FontSystem::new_with_locale_and_db(detect_locale(), db),
-            None => FontSystem::new(),
-        };
+        let defer_emoji = !may_need_emoji_font(required_chars);
+        let (mut font_system, deferred_emoji) =
+            match fontconfig::database_for(&specs, required_chars, defer_emoji) {
+                Some((db, deferred)) => (
+                    FontSystem::new_with_locale_and_db(detect_locale(), db),
+                    deferred,
+                ),
+                None => (FontSystem::new(), None),
+            };
 
         // Resolve each family against the system font database, loosely
         // (fontconfig-style), falling back to the raw name.
@@ -88,6 +95,7 @@ impl Renderer {
             font_system,
             fonts: specs,
             families,
+            deferred_emoji,
             font_height,
             horizontal_padding: font_height,
             scheme: palette.normal,
@@ -164,6 +172,11 @@ impl Renderer {
     /// the startup database was seeded from a corpus that did not exist
     /// yet. Chars already checked are skipped.
     pub fn add_fallbacks(&mut self, chars: &HashSet<char>) {
+        if self.deferred_emoji.is_some() && may_need_emoji_font(chars) {
+            let path = self.deferred_emoji.take().unwrap();
+            fontconfig::load_deferred_font(self.font_system.db_mut(), path);
+            self.families[2] = resolve_family(&self.font_system, &self.fonts[2].family);
+        }
         let new_chars: HashSet<char> = chars
             .iter()
             .copied()
@@ -357,20 +370,32 @@ fn grapheme_class(grapheme: &str) -> FontClass {
     let keycap = matches!(base, '#' | '*' | '0'..='9') && grapheme.ends_with('\u{20e3}');
     let emoji_sequence =
         base.is_emoji_char() && (grapheme.contains('\u{fe0f}') || grapheme.contains('\u{200d}'));
-    let emoji_presentation = grapheme.chars().any(|ch| {
-        matches!(
-            ch.emoji_status(),
-            EmojiStatus::EmojiPresentation
-                | EmojiStatus::EmojiPresentationAndModifierBase
-                | EmojiStatus::EmojiPresentationAndEmojiComponent
-                | EmojiStatus::EmojiPresentationAndModifierAndEmojiComponent
-        )
-    });
+    let emoji_presentation = grapheme.chars().any(has_emoji_presentation);
     if keycap || emoji_sequence || emoji_presentation {
         FontClass::Emoji
     } else {
         FontClass::Normal
     }
+}
+
+fn has_emoji_presentation(ch: char) -> bool {
+    matches!(
+        ch.emoji_status(),
+        EmojiStatus::EmojiPresentation
+            | EmojiStatus::EmojiPresentationAndModifierBase
+            | EmojiStatus::EmojiPresentationAndEmojiComponent
+            | EmojiStatus::EmojiPresentationAndModifierAndEmojiComponent
+    )
+}
+
+/// Batch fallback discovery sees unordered characters. Include sequence
+/// markers so the configured emoji face is available before fallback matching
+/// and shaping of keycaps, variation sequences and joined emoji.
+fn may_need_emoji_font(chars: &HashSet<char>) -> bool {
+    chars.iter().any(|&ch| {
+        !ch.is_ascii()
+            && (has_emoji_presentation(ch) || matches!(ch, '\u{fe0f}' | '\u{200d}' | '\u{20e3}'))
+    })
 }
 
 fn font_runs(text: &str) -> Vec<(&str, FontClass)> {
@@ -402,6 +427,21 @@ fn font_runs(text: &str) -> Vec<(&str, FontClass)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn emoji_font_is_deferred_until_emoji_text_is_measured() {
+        let fonts = ["sans-serif:size=12", "monospace", "emoji"].map(str::to_owned);
+        let palette = make_test_renderer().palette;
+        for text in ["😀", "1\u{20e3}", "☀\u{fe0f}"] {
+            let mut renderer = Renderer::new(&fonts, palette, &"Choose layout".chars().collect());
+            assert!(renderer.deferred_emoji.is_some());
+            renderer.text_width("Choose layout");
+            assert!(renderer.deferred_emoji.is_some());
+
+            assert!(renderer.text_width(text) > 0);
+            assert!(renderer.deferred_emoji.is_none());
+        }
+    }
 
     #[test]
     fn layout_cache_preserves_labels_across_the_old_clear_threshold() {
