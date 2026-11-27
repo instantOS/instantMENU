@@ -763,8 +763,13 @@ impl Backend for X11Backend {
         self.grab_focus_inner(Some(title))
     }
 
-    fn finish_startup(&mut self) {
+    fn finish_startup(&mut self) -> Result<(), String> {
         self.ensure_xkb();
+        if self.xkb_state.is_some() {
+            Ok(())
+        } else {
+            Err("cannot compile the keyboard map".to_string())
+        }
     }
 
     fn set_title(&mut self, title: &str) {

@@ -501,8 +501,9 @@ impl Backend for WaylandBackend {
         }
     }
 
-    fn finish_startup(&mut self) {
+    fn finish_startup(&mut self) -> Result<(), String> {
         self.state.ensure_xkb();
+        Ok(())
     }
 
     fn grab_focus(&mut self, title: &str) -> Result<(), String> {

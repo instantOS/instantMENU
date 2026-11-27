@@ -311,8 +311,12 @@ pub trait Backend {
     /// when focus could not be taken.
     fn grab_focus(&mut self, title: &str) -> Result<(), String>;
     /// One-time work that may run after the first frame is visible but
-    /// before the event loop starts (X11 compiles the keymap here).
-    fn finish_startup(&mut self) {}
+    /// before the event loop starts (X11 compiles the keymap here). An error
+    /// aborts the menu rather than leaving it visible but unable to read
+    /// input, which would hold the grab with no way to dismiss it.
+    fn finish_startup(&mut self) -> Result<(), String> {
+        Ok(())
+    }
     /// Set the window title (WM_NAME / _NET_WM_NAME).
     fn set_title(&mut self, title: &str);
 

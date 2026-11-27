@@ -2997,6 +2997,25 @@ fn stream_preload_leaves_a_large_remainder_for_the_event_loop() {
     assert_eq!(menu.matcher.items.len(), item_count);
 }
 
+/// A backend that cannot create its window must fail setup instead of
+/// continuing into the event loop with no surface.
+#[test]
+fn setup_propagates_window_creation_failure() {
+    let cfg = Config::default();
+    let renderer = Renderer::new(&cfg.fonts, cfg.palette, &HashSet::new());
+    let backend = TestBackend {
+        monitors: vec![MonitorInfo {
+            rect: Rect::new(0, 0, 1920, 1080),
+            name: "stub".into(),
+        }],
+        fail_create: true,
+        ..TestBackend::new()
+    };
+    let mut menu = Menu::new(cfg, renderer, Box::new(backend));
+    menu.add_items(vec![Item::new("alpha")]);
+    assert_eq!(menu.setup(), Some(ExitStatus::Failure));
+}
+
 /// A producer that finished before `setup()` laid the entire corpus out and
 /// drew it. Finalization must apply the deferred conclusions without
 /// recomputing the layout or presenting an identical second frame.

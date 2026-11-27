@@ -31,8 +31,13 @@ impl Menu {
         if let Some(status) = self.apply_pre_match() {
             return Some(status);
         }
-        self.create_window();
-        self.backend.finish_startup();
+        if let Some(status) = self.create_window() {
+            return Some(status);
+        }
+        if let Err(error) = self.backend.finish_startup() {
+            eprintln!("instantmenu: {error}");
+            return Some(ExitStatus::Failure);
+        }
         crate::trace::mark("setup: window");
         None
     }
