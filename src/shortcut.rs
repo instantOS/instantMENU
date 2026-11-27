@@ -5,6 +5,7 @@ use xkbcommon::xkb::{self, keysyms as ks};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Shortcut {
+    //BOZO: should this use an u32 or another type? What is a sym?
     sym: u32,
     mods: Modifiers,
 }

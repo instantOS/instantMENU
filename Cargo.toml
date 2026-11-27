@@ -47,6 +47,16 @@ unicode-segmentation = "1.13.3"
 unicode-properties = { version = "0.1.4", features = ["emoji"], default-features = false }
 lru = "0.16"
 
+# Keep glyph rasterization and TrueType hinting fast in local debug installs.
+[profile.dev.package.read-fonts]
+opt-level = 2
+
+[profile.dev.package.skrifa]
+opt-level = 2
+
+[profile.dev.package.swash]
+opt-level = 2
+
 [profile.release]
 opt-level = 3
 lto = true
