@@ -53,6 +53,7 @@ impl Menu {
     }
 
     pub(super) fn key_press(&mut self, sym: u32, mods: Modifiers, text: &str) -> Transition {
+        crate::trace::mark("key: press");
         let key = self.decode_key(sym, mods, text);
         let serial_edit = self.cfg.reject_no_match && self.stream_complete();
         if self.search_pending()

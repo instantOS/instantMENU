@@ -59,9 +59,11 @@ impl WaylandBackend {
     pub fn new(track_focused_monitor: bool, layer: MenuLayer) -> Result<WaylandBackend, String> {
         let connection =
             Connection::connect_to_env().map_err(|e| format!("cannot connect: {e}"))?;
+        crate::trace::mark("wayland: connected");
         let mut queue: EventQueue<EventState> = connection.new_event_queue();
         let queue_handle = queue.handle();
         let mut state = EventState::new(queue_handle.clone(), track_focused_monitor, layer);
+        crate::trace::mark("wayland: state created");
         let _ = connection.display().get_registry(&state.queue_handle, ());
         /* The first sync discovers globals. Create derived xdg-output
          * objects before the second sync so wl_output, logical-output and
@@ -69,6 +71,7 @@ impl WaylandBackend {
         queue
             .roundtrip(&mut state)
             .map_err(|error| format!("registry roundtrip failed: {error}"))?;
+        crate::trace::mark("wayland: globals ready");
         if let Some(manager) = state.xdg_output_manager.clone() {
             for (i, output) in state.outputs.iter().enumerate() {
                 state.xdg_outputs.push(manager.get_xdg_output(
@@ -78,9 +81,11 @@ impl WaylandBackend {
                 ));
             }
         }
+        crate::trace::mark("wayland: xdg outputs requested");
         queue
             .roundtrip(&mut state)
             .map_err(|error| format!("initial-state roundtrip failed: {error}"))?;
+        crate::trace::mark("wayland: initial state ready");
         if state.shm.is_none() {
             return Err("compositor has no wl_shm".to_string());
         }
@@ -356,6 +361,7 @@ impl Backend for WaylandBackend {
             if let Some(surface) = &self.state.surface {
                 surface.commit();
             }
+            crate::trace::mark("wayland: final-size commit");
             if outside_close {
                 self.state.create_shields(full);
             }
@@ -377,6 +383,15 @@ impl Backend for WaylandBackend {
     }
 
     fn acquire_keyboard(&mut self, output: Option<usize>, layer_menu: bool) -> Result<(), String> {
+        self.begin_acquire_keyboard(output, layer_menu)?;
+        self.finish_acquire_keyboard()
+    }
+
+    fn begin_acquire_keyboard(
+        &mut self,
+        output: Option<usize>,
+        layer_menu: bool,
+    ) -> Result<(), String> {
         /* xdg-toplevel has no protocol mechanism equivalent to layer-shell's
          * exclusive keyboard interactivity. Do not create a second surface
          * that cannot be cleanly transformed into the requested window. */
@@ -428,15 +443,32 @@ impl Backend for WaylandBackend {
         self.connection
             .flush()
             .map_err(|error| format!("Wayland bootstrap flush failed: {error}"))?;
+        crate::trace::mark("wayland: bootstrap commit");
+        Ok(())
+    }
 
+    fn finish_acquire_keyboard(&mut self) -> Result<(), String> {
+        if !self.state.bootstrap {
+            return Ok(());
+        }
         /* A layer surface is not mapped until configure has been acknowledged
          * and a buffer attached. Dispatch here but leave input events in the
          * state's queue; Menu::run consumes them after the final surface is
          * drawn, so typing during startup is retained. */
         let started = Instant::now();
+        let mut saw_mapped = false;
+        let mut saw_focus = false;
         while !(self.state.bootstrap_mapped && self.state.keyboard_focused) && !self.state.dead {
             if started.elapsed() >= Duration::from_secs(1) {
                 return Err("Wayland compositor did not focus the input surface".to_string());
+            }
+            if self.state.bootstrap_mapped && !saw_mapped {
+                saw_mapped = true;
+                crate::trace::mark("wayland: bootstrap mapped");
+            }
+            if self.state.keyboard_focused && !saw_focus {
+                saw_focus = true;
+                crate::trace::mark("wayland: keyboard focused");
             }
             let Some(guard) = self.queue.prepare_read() else {
                 if self.queue.dispatch_pending(&mut self.state).is_err() {
@@ -461,11 +493,16 @@ impl Backend for WaylandBackend {
             }
             let _ = self.connection.flush();
         }
+        crate::trace::mark("wayland: acquire done");
         if self.state.bootstrap_mapped && self.state.keyboard_focused {
             Ok(())
         } else {
             Err("Wayland compositor did not focus the input surface".to_string())
         }
+    }
+
+    fn finish_startup(&mut self) {
+        self.state.ensure_xkb();
     }
 
     fn grab_focus(&mut self, title: &str) -> Result<(), String> {
@@ -492,8 +529,11 @@ impl Backend for WaylandBackend {
     }
 
     fn present(&mut self, canvas: &Canvas) {
+        crate::trace::mark("wayland: present enter");
         self.pump_pending();
+        crate::trace::mark("wayland: present pumped");
         self.state.draw(&canvas.data, canvas.width, canvas.height);
+        crate::trace::mark("wayland: present draw returned");
         let _ = self.connection.flush();
     }
 

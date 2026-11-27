@@ -23,7 +23,7 @@ use wayland_protocols_wlr::foreign_toplevel::v1::client::{
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
-use super::keyboard::{KeyboardRepeat, Xkb};
+use super::keyboard::{compile_keymap, KeyboardRepeat, Xkb};
 use super::probe::Probe;
 use super::selection::OfferTracker;
 use super::shield::Shield;
@@ -122,6 +122,14 @@ pub struct EventState {
 
     /* keyboard */
     pub(super) xkb: Option<Xkb>,
+    /// Keymap text received from the compositor, compiled after the first
+    /// frame (or on the first key event) instead of during startup.
+    pub(super) pending_keymap: Option<String>,
+    /// Raw pressed-key set from the last `wl_keyboard.enter`, replayed when
+    /// the deferred keymap is compiled.
+    pub(super) pending_enter: Option<Vec<u8>>,
+    /// Last modifier mask seen before the keymap was compiled.
+    pub(super) pending_mods: (u32, u32, u32),
     pub(super) key_repeat: KeyboardRepeat,
     /// True only after wl_keyboard.enter names the menu surface. Mapping a
     /// layer buffer is not by itself proof that the seat has switched focus.
@@ -178,6 +186,29 @@ pub struct EventState {
 }
 
 impl EventState {
+    /// Compile the compositor's keymap if it has not been compiled yet, and
+    /// replay the focus/modifier snapshot that arrived while it was pending.
+    /// Cheap after the first call.
+    pub(super) fn ensure_xkb(&mut self) {
+        if self.xkb.is_some() && self.pending_keymap.is_none() {
+            return;
+        }
+        let Some(text) = self.pending_keymap.take() else {
+            return;
+        };
+        let Some(mut xkb) = compile_keymap(text) else {
+            return;
+        };
+        if let Some(keys) = self.pending_enter.take() {
+            xkb.enter(&keys);
+        }
+        let (depressed, latched, locked) = self.pending_mods;
+        if depressed | latched | locked != 0 {
+            xkb.state.update_mask(depressed, latched, locked, 0, 0, 0);
+            xkb.mods = xkb.indices.modifiers(depressed | latched | locked);
+        }
+        self.xkb = Some(xkb);
+    }
     pub(super) fn new(
         queue_handle: QueueHandle<Self>,
         track_focused_monitor: bool,
@@ -218,6 +249,9 @@ impl EventState {
             probe_pool: None,
             probe_answer: None,
             xkb: None,
+            pending_keymap: None,
+            pending_enter: None,
+            pending_mods: (0, 0, 0),
             key_repeat: KeyboardRepeat::new(),
             keyboard_focused: false,
             surface: None,
@@ -272,6 +306,7 @@ impl EventState {
     /// coalesce).
     pub(super) fn draw(&mut self, bgra: &[u8], w: i32, h: i32) {
         if !self.configured || self.surface.is_none() {
+            crate::trace::mark("wayland: draw queued (unconfigured)");
             self.pending_frame = Some((bgra.to_vec(), w, h));
             return;
         }
@@ -316,6 +351,7 @@ impl EventState {
 
         let buffer = pool.slot_buffer(idx).clone();
         if let Some(surface) = &self.surface {
+            crate::trace::mark("wayland: draw attached");
             surface.attach(Some(&buffer), 0, 0);
             surface.damage_buffer(0, 0, width, height);
             /* Register a frame callback so wait_frame() can block until this

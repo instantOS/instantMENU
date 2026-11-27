@@ -350,6 +350,7 @@ dependencies = [
  "frizbee",
  "libc",
  "lru",
+ "memmap2",
  "serde",
  "toml",
  "ttf-parser",

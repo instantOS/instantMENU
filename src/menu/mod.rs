@@ -143,8 +143,6 @@ pub struct Menu {
     /// The -it seed, for the deferred pre-match "text is still the seed"
     /// check.
     initial_seed: Option<String>,
-    /// resolve_auto_width warned about measuring a large corpus already.
-    auto_width_warned: bool,
 
     /* runtime flags */
     /// --alt-tab state machine: see [`AltTab`].
@@ -201,7 +199,6 @@ impl Menu {
             pending_chars: HashSet::new(),
             pre_match_applied: false,
             initial_seed: None,
-            auto_width_warned: false,
             cfg,
             renderer,
             backend,
@@ -361,17 +358,26 @@ impl Menu {
     /// Widest item cell width, measured through the same seam as paging and
     /// layout so the single-key square-cell rule lives in one place.
     pub(in crate::menu) fn max_cell_width(&mut self) -> i32 {
+        /* `--width auto` only needs the widest label, but shaping every
+         * label in a 10k-item corpus costs tens of milliseconds before the
+         * first frame. Menus above the bound are sampled evenly: a menu that
+         * large is scrollable and truncated to the monitor anyway, so the
+         * visible page matters more than an exact global maximum. Lists at
+         * or below the bound keep the exact behavior. */
+        const MAX_MEASURED_ITEMS: usize = 256;
         let mut m = TextMeasurer::new(
             &mut self.renderer,
             self.cfg.single_key,
             self.layout.bar_height,
         );
         let mut len = 0;
-        for item in &self.matcher.items {
+        let count = self.matcher.items.len();
+        let step = count.div_ceil(MAX_MEASURED_ITEMS).max(1);
+        for item in self.matcher.items.iter().step_by(step) {
             if self.cfg.single_key && item.entry.key.is_none() {
                 continue;
             }
-            len = len.max(m.item_cell_width(item));
+            len = len.max(m.approx_item_cell_width(item));
         }
         len
     }

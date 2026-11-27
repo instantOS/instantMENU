@@ -2,10 +2,12 @@
 
 use std::cell::OnceCell;
 use std::collections::VecDeque;
+use std::os::fd::FromRawFd;
 use std::os::fd::{AsRawFd, RawFd};
 use std::time::Duration;
 
 use x11rb::connection::Connection;
+use x11rb::protocol::shm::{self, ConnectionExt as ShmExt};
 use x11rb::protocol::xinerama;
 use x11rb::protocol::xproto::{
     AtomEnum, ChangeWindowAttributesAux, ConfigureWindowAux, ConnectionExt as _, CreateGCAux,
@@ -33,6 +35,12 @@ pub struct X11Backend {
     parent: Window,
     pub embed: Option<Window>,
     graphics_context: Option<u32>,
+    /// Client-owned shared-memory image for blits (memfd passed to the
+    /// server). `None` until the second frame, or permanently when MIT-SHM
+    /// is unavailable.
+    shm: Option<ShmCanvas>,
+    shm_disabled: bool,
+    present_count: u64,
     created: bool,
     managed: bool,
     pointer_grabbed: bool,
@@ -55,11 +63,13 @@ pub struct X11Backend {
 
     /* keyboard (ctx/keymap keep the C-level keymap alive for the state; only
      * the state is read from) */
-    #[allow(dead_code)]
+    #[allow(dead_code)] // owns the C context the keymap and state point into
     xkb_context: xkb::Context,
-    #[allow(dead_code)]
-    xkb_keymap: xkb::Keymap,
-    xkb_state: xkb::State,
+    /// Compiled lazily, after the first frame is visible: the keymap costs
+    /// ~0.9 ms to fetch and compile and nothing before the first key event
+    /// needs it. `lookup_key` initializes on demand as a safety net.
+    xkb_keymap: Option<xkb::Keymap>,
+    xkb_state: Option<xkb::State>,
 
     monitors: Vec<MonitorInfo>,
     startup_monitor: OnceCell<Option<usize>>,
@@ -86,8 +96,10 @@ struct Atoms {
 
 impl X11Backend {
     pub fn new(embed: Option<u32>) -> Result<X11Backend, String> {
+        crate::trace::mark("x11: connect start");
         let (connection, screen_number) =
             XCBConnection::connect(None).map_err(|e| format!("cannot open display: {e}"))?;
+        crate::trace::mark("x11: connected");
         let screen = connection
             .setup()
             .roots
@@ -96,9 +108,11 @@ impl X11Backend {
             .ok_or("no screen")?;
         let root = screen.root;
 
-        let (xkb_context, xkb_keymap, xkb_state) = xkb_setup(&connection)?;
+        let xkb_context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
         let atoms = intern_atoms(&connection)?;
+        crate::trace::mark("x11: atoms ready");
         let monitors = query_monitors(&connection);
+        crate::trace::mark("x11: monitors ready");
         let (root_width, root_height) = (
             screen.width_in_pixels as i32,
             screen.height_in_pixels as i32,
@@ -112,6 +126,9 @@ impl X11Backend {
             parent: embed.unwrap_or(root),
             embed,
             graphics_context: None,
+            shm: None,
+            shm_disabled: false,
+            present_count: 0,
             created: false,
             managed: false,
             pointer_grabbed: false,
@@ -120,8 +137,8 @@ impl X11Backend {
             current_cursor: x11rb::NONE,
             window_rect: Rect::default(),
             xkb_context,
-            xkb_keymap,
-            xkb_state,
+            xkb_keymap: None,
+            xkb_state: None,
             monitors,
             startup_monitor: OnceCell::new(),
             root_width,
@@ -129,6 +146,24 @@ impl X11Backend {
             pending: VecDeque::new(),
             atoms,
         })
+    }
+
+    /// Compile the keymap on first use (normally right after the first frame
+    /// is on screen, so it never delays visibility).
+    fn ensure_xkb(&mut self) {
+        if self.xkb_state.is_some() {
+            return;
+        }
+        crate::trace::mark("x11: xkb compile start");
+        if let Ok((context, keymap, state)) = xkb_setup(&self.connection) {
+            /* The keymap and state borrow the context they were compiled
+             * from; keep that exact context, not the placeholder created in
+             * `new`. */
+            self.xkb_context = context;
+            self.xkb_keymap = Some(keymap);
+            self.xkb_state = Some(state);
+        }
+        crate::trace::mark("x11: xkb compile done");
     }
 
     /// keysym + utf8 text for a raw X11 keycode, keeping the xkb state fresh.
@@ -151,12 +186,15 @@ impl X11Backend {
     /// effective layout (group) is the one thing the mask cannot carry; it
     /// is carried through from the state itself.
     fn lookup_key(&mut self, keycode: u8, state_mask: u16, pressed: bool) -> (u32, String) {
+        self.ensure_xkb();
+        let Some(state) = self.xkb_state.as_mut() else {
+            return (0, String::new());
+        };
         /* X11 keycodes are already xkb keycodes (the 8-key offset over raw
          * evdev is included); only Wayland's raw evdev codes need a shift. */
-        let group = self.xkb_state.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE);
-        self.xkb_state
-            .update_mask(u32::from(state_mask), 0, 0, 0, 0, group);
-        translate_key(&mut self.xkb_state, Keycode::new(keycode as u32), pressed)
+        let group = state.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE);
+        state.update_mask(u32::from(state_mask), 0, 0, 0, 0, group);
+        translate_key(state, Keycode::new(keycode as u32), pressed)
     }
 
     fn flush(&self) {
@@ -478,6 +516,81 @@ impl X11Backend {
         let prop = reply.reply().ok()?;
         Some(String::from_utf8_lossy(&prop.value).into_owned())
     }
+
+    /// Ensure a shared-memory image of `size` exists, creating and attaching
+    /// it lazily. Called from `present` on the frame after the first.
+    fn prepare_present(&mut self, size: Size) {
+        if self.shm_disabled {
+            return;
+        }
+        let len = (size.w.max(1) as usize) * (size.h.max(1) as usize) * 4;
+        if self.shm.as_ref().is_some_and(|shm| shm.len == len) {
+            return;
+        }
+        self.detach_shm();
+        match ShmCanvas::new(&self.connection, len) {
+            Ok(shm) => {
+                crate::trace::mark("x11: shm image ready");
+                self.shm = Some(shm);
+            }
+            Err(_) => self.shm_disabled = true,
+        }
+    }
+
+    /// Blit through MIT-SHM when a prepared segment exists. Returns false
+    /// when the caller should fall back to `put_image`.
+    fn present_shm(&mut self, gc: u32, canvas: &Canvas, width: usize, height: usize) -> bool {
+        let Some(shm) = self.shm.as_ref() else {
+            return false;
+        };
+        if shm.len != canvas.data.len() {
+            self.detach_shm();
+            return false;
+        }
+        let seg = shm.seg;
+        let failed = {
+            let shm = self.shm.as_mut().expect("checked above");
+            shm.copy(&canvas.data);
+            let cookie = self.connection.shm_put_image(
+                self.window,
+                gc,
+                width as u16,
+                height as u16,
+                0,
+                0,
+                width as u16,
+                height as u16,
+                0,
+                0,
+                self.root_depth,
+                u8::from(x11rb::protocol::xproto::ImageFormat::Z_PIXMAP),
+                false,
+                seg,
+                0,
+            );
+            match cookie {
+                Ok(cookie) => {
+                    cookie.ignore_error();
+                    false
+                }
+                Err(_) => true,
+            }
+        };
+        if failed {
+            self.detach_shm();
+            return false;
+        }
+        self.flush();
+        true
+    }
+
+    /// Release the server's mapping before dropping a segment, so streamed
+    /// reflows do not accumulate one server-side attachment per resize.
+    fn detach_shm(&mut self) {
+        if let Some(shm) = self.shm.take() {
+            let _ = self.connection.shm_detach(shm.seg);
+        }
+    }
 }
 
 impl Backend for X11Backend {
@@ -650,6 +763,10 @@ impl Backend for X11Backend {
         self.grab_focus_inner(Some(title))
     }
 
+    fn finish_startup(&mut self) {
+        self.ensure_xkb();
+    }
+
     fn set_title(&mut self, title: &str) {
         let window = self.window;
         let _ = self.connection.change_property(
@@ -729,20 +846,38 @@ impl Backend for X11Backend {
             }
         }
         if let Some(gc) = self.graphics_context {
-            let _ = self.connection.put_image(
-                x11rb::protocol::xproto::ImageFormat::Z_PIXMAP,
-                self.window,
-                gc,
-                width as u16,
-                height as u16,
-                0,
-                0,
-                0,
-                self.root_depth,
-                &canvas.data,
-            );
+            crate::trace::mark("x11: put_image begin");
+            self.present_count += 1;
+            /* The first frame uses the socket: a fresh shared-memory image
+             * must be faulted in page by page (~2 ms for a full-width menu),
+             * which costs more than the one-off transfer. From the second
+             * frame on, the segment exists and every blit is a cheap copy. */
+            let mut use_shm = self.present_count > 1 && !self.shm_disabled;
+            if use_shm && self.shm.is_none() {
+                self.prepare_present(Size::new(width as i32, height as i32));
+                use_shm = self.shm.is_some();
+            }
+            if use_shm && self.present_shm(gc, canvas, width, height) {
+                crate::trace::mark("x11: put_image flushed");
+            } else {
+                let _ = self.connection.put_image(
+                    x11rb::protocol::xproto::ImageFormat::Z_PIXMAP,
+                    self.window,
+                    gc,
+                    width as u16,
+                    height as u16,
+                    0,
+                    0,
+                    0,
+                    self.root_depth,
+                    &canvas.data,
+                );
+                self.flush();
+                crate::trace::mark("x11: put_image flushed");
+            }
+        } else {
+            self.flush();
         }
-        self.flush();
     }
 
     fn raise(&mut self) {
@@ -1156,5 +1291,71 @@ mod monitor_tests {
             monitor_for_window(&monitors, Rect::new(4000, 0, 100, 100)),
             None
         );
+    }
+}
+
+/// A shared-memory image the X server maps directly. The segment is a
+/// client-created memfd (not `ShmCreateSegment`): allocating it costs a
+/// syscall instead of a server round trip, so it is cheap enough to use for
+/// the very first frame, where the socket path blocks on the server draining
+/// several hundred kilobytes.
+struct ShmCanvas {
+    seg: shm::Seg,
+    ptr: *mut u8,
+    len: usize,
+}
+
+impl ShmCanvas {
+    fn new(
+        connection: &XCBConnection,
+        len: usize,
+    ) -> Result<ShmCanvas, Box<dyn std::error::Error>> {
+        let _ = connection.shm_query_version()?.reply()?;
+        let fd = unsafe { libc::memfd_create(c"instantmenu-shm".as_ptr(), libc::MFD_CLOEXEC) };
+        if fd < 0 {
+            return Err("memfd_create failed".into());
+        }
+        let owned = unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) };
+        if unsafe { libc::ftruncate(fd, len as i64) } != 0 {
+            return Err("ftruncate failed".into());
+        }
+        let ptr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                fd,
+                0,
+            )
+        };
+        if ptr == libc::MAP_FAILED {
+            return Err("mmap failed".into());
+        }
+        let seg = connection.generate_id()?;
+        /* `check` is a round trip: it both verifies that this server accepts
+         * FD-passing SHM and makes sure the segment is attached before the
+         * first blit. A failure here falls back to ordinary PutImage. */
+        connection.shm_attach_fd(seg, owned, false)?.check()?;
+        Ok(ShmCanvas {
+            seg,
+            ptr: ptr.cast(),
+            len,
+        })
+    }
+
+    fn copy(&mut self, data: &[u8]) {
+        let len = data.len().min(self.len);
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr(), self.ptr, len);
+        }
+    }
+}
+
+impl Drop for ShmCanvas {
+    fn drop(&mut self) {
+        unsafe {
+            libc::munmap(self.ptr.cast(), self.len);
+        }
     }
 }
