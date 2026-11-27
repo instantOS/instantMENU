@@ -203,8 +203,9 @@ impl KeyboardRepeat {
     }
 }
 
-/// Load the xkb keymap from the compositor's keymap fd.
-pub(super) fn load_keymap(fd: RawFd, size: usize) -> Option<Xkb> {
+/// Read the compositor's keymap text from its fd. Compilation is separate so
+/// callers can defer it until after the first frame.
+pub(super) fn read_keymap(fd: RawFd, size: usize) -> Option<String> {
     let map = unsafe {
         libc::mmap(
             std::ptr::null_mut(),
@@ -221,7 +222,13 @@ pub(super) fn load_keymap(fd: RawFd, size: usize) -> Option<Xkb> {
     let bytes = unsafe { std::slice::from_raw_parts(map.cast::<u8>(), size) };
     let text = String::from_utf8_lossy(bytes).into_owned();
     unsafe { libc::munmap(map, size) };
+    Some(text)
+}
 
+/// Compile a keymap string into the keymap/state pair. This is the expensive
+/// part (a few milliseconds for a full layout), so it runs after the first
+/// frame or on the first key event.
+pub(super) fn compile_keymap(text: String) -> Option<Xkb> {
     let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
     let keymap = xkb::Keymap::new_from_string(
         &ctx,

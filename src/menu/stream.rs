@@ -174,11 +174,11 @@ impl Menu {
         if !self.pending_chars.is_empty() {
             let chars = std::mem::take(&mut self.pending_chars);
             self.renderer.add_fallbacks(&chars);
-            // Those items are now part of the baseline corpus for setup(),
-            // not a pending dirty batch that needs a later settle/reflow.
-            self.gate.reset();
-            self.stream_dirty = false;
         }
+        // Everything drained here is part of the baseline corpus for setup(),
+        // not a pending dirty batch that needs a later settle/reflow.
+        self.gate.reset();
+        self.stream_dirty = false;
     }
 
     /// Consume one bounded turn of nonblocking stdin, parse complete lines,
@@ -294,16 +294,27 @@ impl Menu {
         self.renderer.add_fallbacks(&chars);
         /* Layout precedes every consumer derived from it. In particular,
          * do_match calculates page boundaries and deferred preselection may
-         * cross them; neither may run against the initial empty layout. */
-        self.reflow();
+         * cross them; neither may run against the initial empty layout.
+         * When the producer already EOF'd before setup(), setup() laid out
+         * and matched the complete corpus, so repeating both here would
+         * just redraw an identical frame. */
+        let dirty = self.stream_dirty;
+        if dirty {
+            self.reflow();
+        }
         let t = self.do_match();
         if let Some(status) = self.perform(t) {
             return Some(status);
         }
+        let selection_before = (self.selection.selected, self.selection.page_start);
         if let Some(status) = self.finish_corpus() {
             return Some(status);
         }
-        self.draw_menu();
+        let selection_moved =
+            (self.selection.selected, self.selection.page_start) != selection_before;
+        if dirty || selection_moved {
+            self.draw_menu();
+        }
         self.stream_dirty = false;
         None
     }

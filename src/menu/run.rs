@@ -89,6 +89,7 @@ impl Menu {
                 EventPoll::Closed => return ExitStatus::Failure,
             };
 
+            crate::trace::mark("run: event");
             let t = match ev {
                 /* Wheel detents and pointer motion both only ever ask for a
                  * repaint, and a fast flick arrives with them interleaved

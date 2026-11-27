@@ -20,53 +20,138 @@ struct FcFontSet {
     fonts: *mut *mut FcPattern,
 }
 
-#[link(name = "fontconfig")]
-unsafe extern "C" {
-    fn FcInitLoadConfigAndFonts() -> *mut FcConfig;
-    fn FcConfigDestroy(config: *mut FcConfig);
-    fn FcPatternCreate() -> *mut FcPattern;
-    fn FcPatternDestroy(pattern: *mut FcPattern);
-    fn FcPatternAddString(
-        pattern: *mut FcPattern,
-        object: *const c_char,
-        value: *const c_uchar,
-    ) -> c_int;
-    fn FcPatternAddCharSet(
-        pattern: *mut FcPattern,
-        object: *const c_char,
-        charset: *const FcCharSet,
-    ) -> c_int;
-    fn FcPatternGetString(
-        pattern: *const FcPattern,
-        object: *const c_char,
-        index: c_int,
-        value: *mut *mut c_uchar,
-    ) -> c_int;
-    fn FcPatternGetCharSet(
-        pattern: *const FcPattern,
-        object: *const c_char,
-        index: c_int,
-        charset: *mut *mut FcCharSet,
-    ) -> c_int;
-    fn FcCharSetCreate() -> *mut FcCharSet;
-    fn FcCharSetDestroy(charset: *mut FcCharSet);
-    fn FcCharSetAddChar(charset: *mut FcCharSet, codepoint: u32) -> c_int;
-    fn FcCharSetHasChar(charset: *const FcCharSet, codepoint: u32) -> c_int;
-    fn FcConfigSubstitute(config: *mut FcConfig, pattern: *mut FcPattern, kind: c_int) -> c_int;
-    fn FcDefaultSubstitute(pattern: *mut FcPattern);
-    fn FcFontMatch(
-        config: *mut FcConfig,
-        pattern: *mut FcPattern,
-        result: *mut c_int,
-    ) -> *mut FcPattern;
-    fn FcFontSort(
-        config: *mut FcConfig,
-        pattern: *mut FcPattern,
-        trim: c_int,
-        charset: *mut *mut FcCharSet,
-        result: *mut c_int,
-    ) -> *mut FcFontSet;
-    fn FcFontSetDestroy(font_set: *mut FcFontSet);
+/// Fontconfig entry points, resolved once on first use. The library is
+/// `dlopen`ed lazily: on the warm path (configured font and charset already
+/// in instantmenu's own cache) fontconfig is never needed, and linking it
+/// eagerly made the dynamic loader pull in freetype, expat, png, brotli and
+/// friends — ~0.8 ms of process startup for a menu that draws before it
+/// ever asks fontconfig anything.
+struct FcApi {
+    init_load_config_and_fonts: unsafe extern "C" fn() -> *mut FcConfig,
+    config_destroy: unsafe extern "C" fn(*mut FcConfig),
+    pattern_create: unsafe extern "C" fn() -> *mut FcPattern,
+    pattern_destroy: unsafe extern "C" fn(*mut FcPattern),
+    pattern_add_string:
+        unsafe extern "C" fn(*mut FcPattern, *const c_char, *const c_uchar) -> c_int,
+    pattern_add_charset:
+        unsafe extern "C" fn(*mut FcPattern, *const c_char, *const FcCharSet) -> c_int,
+    pattern_get_string:
+        unsafe extern "C" fn(*const FcPattern, *const c_char, c_int, *mut *mut c_uchar) -> c_int,
+    pattern_get_charset:
+        unsafe extern "C" fn(*const FcPattern, *const c_char, c_int, *mut *mut FcCharSet) -> c_int,
+    charset_create: unsafe extern "C" fn() -> *mut FcCharSet,
+    charset_destroy: unsafe extern "C" fn(*mut FcCharSet),
+    charset_add_char: unsafe extern "C" fn(*mut FcCharSet, u32) -> c_int,
+    charset_has_char: unsafe extern "C" fn(*const FcCharSet, u32) -> c_int,
+    config_substitute: unsafe extern "C" fn(*mut FcConfig, *mut FcPattern, c_int) -> c_int,
+    default_substitute: unsafe extern "C" fn(*mut FcPattern),
+    font_match: unsafe extern "C" fn(*mut FcConfig, *mut FcPattern, *mut c_int) -> *mut FcPattern,
+    font_sort: unsafe extern "C" fn(
+        *mut FcConfig,
+        *mut FcPattern,
+        c_int,
+        *mut *mut FcCharSet,
+        *mut c_int,
+    ) -> *mut FcFontSet,
+    font_set_destroy: unsafe extern "C" fn(*mut FcFontSet),
+}
+
+fn api() -> Option<&'static FcApi> {
+    static API: OnceLock<Option<FcApi>> = OnceLock::new();
+    API.get_or_init(load_api).as_ref()
+}
+
+fn load_api() -> Option<FcApi> {
+    unsafe {
+        let mut handle = libc::dlopen(
+            c"libfontconfig.so.1".as_ptr(),
+            libc::RTLD_LAZY | libc::RTLD_LOCAL,
+        );
+        if handle.is_null() {
+            handle = libc::dlopen(
+                c"libfontconfig.so".as_ptr(),
+                libc::RTLD_LAZY | libc::RTLD_LOCAL,
+            );
+        }
+        if handle.is_null() {
+            return None;
+        }
+        /* symbol() returns None instead of a dangling null fn pointer */
+        macro_rules! sym {
+            ($name:literal, $ty:ty) => {{
+                let symbol = libc::dlsym(handle, concat!($name, "\0").as_ptr().cast());
+                if symbol.is_null() {
+                    return None;
+                }
+                std::mem::transmute::<*mut libc::c_void, $ty>(symbol)
+            }};
+        }
+        Some(FcApi {
+            init_load_config_and_fonts: sym!(
+                "FcInitLoadConfigAndFonts",
+                unsafe extern "C" fn() -> *mut FcConfig
+            ),
+            config_destroy: sym!("FcConfigDestroy", unsafe extern "C" fn(*mut FcConfig)),
+            pattern_create: sym!("FcPatternCreate", unsafe extern "C" fn() -> *mut FcPattern),
+            pattern_destroy: sym!("FcPatternDestroy", unsafe extern "C" fn(*mut FcPattern)),
+            pattern_add_string: sym!(
+                "FcPatternAddString",
+                unsafe extern "C" fn(*mut FcPattern, *const c_char, *const c_uchar) -> c_int
+            ),
+            pattern_add_charset: sym!(
+                "FcPatternAddCharSet",
+                unsafe extern "C" fn(*mut FcPattern, *const c_char, *const FcCharSet) -> c_int
+            ),
+            pattern_get_string: sym!(
+                "FcPatternGetString",
+                unsafe extern "C" fn(
+                    *const FcPattern,
+                    *const c_char,
+                    c_int,
+                    *mut *mut c_uchar,
+                ) -> c_int
+            ),
+            pattern_get_charset: sym!(
+                "FcPatternGetCharSet",
+                unsafe extern "C" fn(
+                    *const FcPattern,
+                    *const c_char,
+                    c_int,
+                    *mut *mut FcCharSet,
+                ) -> c_int
+            ),
+            charset_create: sym!("FcCharSetCreate", unsafe extern "C" fn() -> *mut FcCharSet),
+            charset_destroy: sym!("FcCharSetDestroy", unsafe extern "C" fn(*mut FcCharSet)),
+            charset_add_char: sym!(
+                "FcCharSetAddChar",
+                unsafe extern "C" fn(*mut FcCharSet, u32) -> c_int
+            ),
+            charset_has_char: sym!(
+                "FcCharSetHasChar",
+                unsafe extern "C" fn(*const FcCharSet, u32) -> c_int
+            ),
+            config_substitute: sym!(
+                "FcConfigSubstitute",
+                unsafe extern "C" fn(*mut FcConfig, *mut FcPattern, c_int) -> c_int
+            ),
+            default_substitute: sym!("FcDefaultSubstitute", unsafe extern "C" fn(*mut FcPattern)),
+            font_match: sym!(
+                "FcFontMatch",
+                unsafe extern "C" fn(*mut FcConfig, *mut FcPattern, *mut c_int) -> *mut FcPattern
+            ),
+            font_sort: sym!(
+                "FcFontSort",
+                unsafe extern "C" fn(
+                    *mut FcConfig,
+                    *mut FcPattern,
+                    c_int,
+                    *mut *mut FcCharSet,
+                    *mut c_int,
+                ) -> *mut FcFontSet
+            ),
+            font_set_destroy: sym!("FcFontSetDestroy", unsafe extern "C" fn(*mut FcFontSet)),
+        })
+    }
 }
 
 const MATCH_PATTERN: c_int = 0;
@@ -88,32 +173,34 @@ struct Config(*mut FcConfig);
 
 impl Config {
     fn new() -> Option<Self> {
-        let config = unsafe { FcInitLoadConfigAndFonts() };
+        let api = api()?;
+        let config = unsafe { (api.init_load_config_and_fonts)() };
         (!config.is_null()).then_some(Self(config))
     }
 
     fn match_family(&self, family: &str) -> Option<PathBuf> {
+        let api = api()?;
         let family = CString::new(family).ok()?;
-        let pattern = unsafe { FcPatternCreate() };
+        let pattern = unsafe { (api.pattern_create)() };
         if pattern.is_null() {
             return None;
         }
         unsafe {
-            FcPatternAddString(pattern, FAMILY.as_ptr().cast(), family.as_ptr().cast());
-            prepare(self.0, pattern);
+            (api.pattern_add_string)(pattern, FAMILY.as_ptr().cast(), family.as_ptr().cast());
+            prepare(api, self.0, pattern);
         }
         let mut result = 0;
-        let matched = unsafe { FcFontMatch(self.0, pattern, &mut result) };
+        let matched = unsafe { (api.font_match)(self.0, pattern, &mut result) };
         let path = if result == RESULT_MATCH {
-            pattern_file(matched)
+            pattern_file(api, matched)
         } else {
             None
         };
         unsafe {
             if !matched.is_null() {
-                FcPatternDestroy(matched);
+                (api.pattern_destroy)(matched);
             }
-            FcPatternDestroy(pattern);
+            (api.pattern_destroy)(pattern);
         }
         path
     }
@@ -126,28 +213,31 @@ impl Config {
         chars: &mut HashSet<char>,
         mut try_font: impl FnMut(PathBuf, &mut HashSet<char>),
     ) -> HashSet<char> {
-        let pattern = unsafe { FcPatternCreate() };
-        let charset = unsafe { FcCharSetCreate() };
+        let Some(api) = api() else {
+            return HashSet::new();
+        };
+        let pattern = unsafe { (api.pattern_create)() };
+        let charset = unsafe { (api.charset_create)() };
         if pattern.is_null() || charset.is_null() {
             unsafe {
                 if !pattern.is_null() {
-                    FcPatternDestroy(pattern)
+                    (api.pattern_destroy)(pattern)
                 };
                 if !charset.is_null() {
-                    FcCharSetDestroy(charset)
+                    (api.charset_destroy)(charset)
                 };
             }
             return HashSet::new();
         }
         unsafe {
             for &ch in chars.iter() {
-                FcCharSetAddChar(charset, ch as u32);
+                (api.charset_add_char)(charset, ch as u32);
             }
-            FcPatternAddCharSet(pattern, CHARSET.as_ptr().cast(), charset);
-            prepare(self.0, pattern);
+            (api.pattern_add_charset)(pattern, CHARSET.as_ptr().cast(), charset);
+            prepare(api, self.0, pattern);
         }
         let mut result = 0;
-        let set = unsafe { FcFontSort(self.0, pattern, 0, std::ptr::null_mut(), &mut result) };
+        let set = unsafe { (api.font_sort)(self.0, pattern, 0, std::ptr::null_mut(), &mut result) };
         // FcFontSort returns every installed font. Consult its cached
         // charsets before loading files, but only remove a character once
         // the callback has verified coverage in the loaded database.
@@ -160,13 +250,14 @@ impl Config {
                     break;
                 }
                 let font = unsafe { *set_ref.fonts.add(index) };
-                if !pattern_string(font, FONTFORMAT).is_some_and(|f| loadable_format(f.to_bytes()))
+                if !pattern_string(api, font, FONTFORMAT)
+                    .is_some_and(|f| loadable_format(f.to_bytes()))
                 {
                     continue;
                 }
                 let mut font_chars = std::ptr::null_mut();
                 let found = unsafe {
-                    FcPatternGetCharSet(font, CHARSET.as_ptr().cast(), 0, &mut font_chars)
+                    (api.pattern_get_charset)(font, CHARSET.as_ptr().cast(), 0, &mut font_chars)
                 };
                 if found != RESULT_MATCH || font_chars.is_null() {
                     continue;
@@ -174,13 +265,14 @@ impl Config {
                 // font_chars is owned by the pattern; it is not destroyed here
                 let mut relevant = false;
                 for &ch in chars.iter() {
-                    if unsafe { FcCharSetHasChar(font_chars, ch as u32) } != 0 {
+                    if unsafe { (api.charset_has_char)(font_chars, ch as u32) } != 0 {
                         claimed.insert(ch);
                         relevant = true;
                     }
                 }
                 if relevant {
-                    if let Some(path) = pattern_file(font).filter(|path| seen.insert(path.clone()))
+                    if let Some(path) =
+                        pattern_file(api, font).filter(|path| seen.insert(path.clone()))
                     {
                         try_font(path, chars);
                     }
@@ -190,10 +282,10 @@ impl Config {
         let unavailable = chars.difference(&claimed).copied().collect();
         unsafe {
             if !set.is_null() {
-                FcFontSetDestroy(set)
+                (api.font_set_destroy)(set)
             };
-            FcPatternDestroy(pattern);
-            FcCharSetDestroy(charset);
+            (api.pattern_destroy)(pattern);
+            (api.charset_destroy)(charset);
         }
         unavailable
     }
@@ -201,30 +293,33 @@ impl Config {
 
 impl Drop for Config {
     fn drop(&mut self) {
-        unsafe { FcConfigDestroy(self.0) };
+        if let Some(api) = api() {
+            unsafe { (api.config_destroy)(self.0) };
+        }
     }
 }
 
-unsafe fn prepare(config: *mut FcConfig, pattern: *mut FcPattern) {
-    FcConfigSubstitute(config, pattern, MATCH_PATTERN);
-    FcDefaultSubstitute(pattern);
+unsafe fn prepare(api: &FcApi, config: *mut FcConfig, pattern: *mut FcPattern) {
+    unsafe { (api.config_substitute)(config, pattern, MATCH_PATTERN) };
+    unsafe { (api.default_substitute)(pattern) };
 }
 
 /// A string property of `pattern`, copied so it cannot outlive the pattern.
-fn pattern_string(pattern: *mut FcPattern, object: &[u8]) -> Option<CString> {
+fn pattern_string(api: &FcApi, pattern: *mut FcPattern, object: &[u8]) -> Option<CString> {
     if pattern.is_null() {
         return None;
     }
     let mut value = std::ptr::null_mut();
-    let result = unsafe { FcPatternGetString(pattern, object.as_ptr().cast(), 0, &mut value) };
+    let result =
+        unsafe { (api.pattern_get_string)(pattern, object.as_ptr().cast(), 0, &mut value) };
     if result != RESULT_MATCH || value.is_null() {
         return None;
     }
     Some(unsafe { CStr::from_ptr(value.cast()) }.to_owned())
 }
 
-fn pattern_file(pattern: *mut FcPattern) -> Option<PathBuf> {
-    let value = pattern_string(pattern, FILE)?;
+fn pattern_file(api: &FcApi, pattern: *mut FcPattern) -> Option<PathBuf> {
+    let value = pattern_string(api, pattern, FILE)?;
     let path = value.to_string_lossy();
     Some(PathBuf::from(path.as_ref()))
 }
@@ -267,24 +362,33 @@ fn needs_coverage(ch: char) -> bool {
 pub(super) fn database_for(
     specs: &[FontSpec],
     required_chars: &HashSet<char>,
+    defer_secondary: bool,
     defer_emoji: bool,
-) -> Option<(fontdb::Database, Option<PathBuf>)> {
+) -> Option<(fontdb::Database, DeferredFonts)> {
+    crate::trace::mark("fontconfig: enter");
     let mut cache = FontCache::load();
+    crate::trace::mark("fontconfig: cache loaded");
     let mut db = fontdb::Database::new();
     let mut loaded = HashSet::new();
     let mut missing_families = Vec::new();
-    let mut deferred_emoji = None;
+    let mut deferred = DeferredFonts::default();
 
     for (index, spec) in specs.iter().enumerate() {
-        let defer = defer_emoji && index == 2;
+        let deferred_path = match index {
+            1 if defer_secondary => Some(&mut deferred.secondary),
+            2 if defer_emoji => Some(&mut deferred.emoji),
+            _ => None,
+        };
         if let Some(path) = cache.family(&spec.family) {
-            if defer {
-                deferred_emoji = Some(path);
+            if let Some(slot) = deferred_path {
+                *slot = Some(path);
             } else {
+                crate::trace::mark("fontconfig: load family start");
                 load_file(&mut db, &mut loaded, path);
+                crate::trace::mark("fontconfig: load family done");
             }
         } else {
-            missing_families.push((&spec.family, defer));
+            missing_families.push((&spec.family, index));
         }
     }
     let mut uncovered: HashSet<char> = required_chars
@@ -304,13 +408,17 @@ pub(super) fn database_for(
     uncovered.retain(|ch| !cache.missing.contains(ch));
     if !missing_families.is_empty() || !uncovered.is_empty() {
         let config = Config::new()?;
-        for (family, defer) in missing_families {
+        for (family, index) in missing_families {
             let path = config.match_family(family)?;
             cache.set_family(family.clone(), path.clone());
-            if defer {
-                deferred_emoji = Some(path);
-            } else {
-                load_file(&mut db, &mut loaded, path);
+            match index {
+                1 if defer_secondary => deferred.secondary = Some(path),
+                2 if defer_emoji => deferred.emoji = Some(path),
+                _ => {
+                    crate::trace::mark("fontconfig: load family start");
+                    load_file(&mut db, &mut loaded, path);
+                    crate::trace::mark("fontconfig: load family done");
+                }
             }
         }
         remove_covered(&db, &mut uncovered);
@@ -332,7 +440,13 @@ pub(super) fn database_for(
         }
         cache.save();
     }
-    (!db.is_empty()).then_some((db, deferred_emoji))
+    (!db.is_empty()).then_some((db, deferred))
+}
+
+#[derive(Default)]
+pub(super) struct DeferredFonts {
+    pub(super) secondary: Option<PathBuf>,
+    pub(super) emoji: Option<PathBuf>,
 }
 
 /// Extend an existing small database when interactive input introduces
@@ -400,13 +514,16 @@ fn load_file(db: &mut fontdb::Database, loaded: &mut HashSet<PathBuf>, path: Pat
     if loaded.contains(&path) {
         return false;
     }
-    let Ok(data) = std::fs::read(&path) else {
+    // Map the font once and retain the mapping: the kernel faults in only the
+    // tables shaping actually touches (instead of copying the whole file up
+    // front), while SharedFile keeps the path for deduplication and keeps the
+    // mapping valid even if the file disappears afterwards.
+    let Ok(file) = std::fs::File::open(&path) else {
         return false;
     };
-    // Retain the bytes for the renderer's lifetime. Source::File reopens and
-    // maps the font on every coverage/metrics query; it also makes cosmic-text
-    // reopen it again when shaping. SharedFile preserves path deduplication
-    // while sharing one safe, owned buffer across every face and consumer.
+    let Ok(data) = (unsafe { memmap2::MmapOptions::new().map(&file) }) else {
+        return false;
+    };
     let ids = db.load_font_source(fontdb::Source::SharedFile(path.clone(), Arc::new(data)));
     if ids.is_empty() {
         return false;
@@ -547,6 +664,11 @@ fn fontconfig_stamp() -> u128 {
 }
 
 fn read_fontconfig_stamp() -> u128 {
+    /* Only directory mtimes: installing or removing a font makes fontconfig
+     * write/add cache files, which updates the directory entry. Restatting
+     * every cache file on each menu launch cost ~0.6 ms for no extra
+     * correctness — an in-place font replacement keeps its path valid, and
+     * cached family paths are existence-checked when loaded. */
     let mut roots = vec![PathBuf::from("/var/cache/fontconfig")];
     if let Some(path) = std::env::var_os("XDG_CACHE_HOME") {
         roots.push(PathBuf::from(path).join("fontconfig"));
@@ -556,15 +678,6 @@ fn read_fontconfig_stamp() -> u128 {
     }
     roots
         .into_iter()
-        .flat_map(|root| {
-            std::iter::once(root.clone()).chain(
-                std::fs::read_dir(root)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Result::ok)
-                    .map(|entry| entry.path()),
-            )
-        })
         .filter_map(|path| std::fs::metadata(path).ok()?.modified().ok())
         .filter_map(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|duration| duration.as_nanos())

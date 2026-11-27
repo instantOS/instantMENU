@@ -196,6 +196,7 @@ impl Menu {
     }
 
     pub(super) fn draw_menu(&mut self) {
+        crate::trace::mark("draw: start");
         if self.slider.is_some() {
             self.draw_slide();
             return;
@@ -208,6 +209,7 @@ impl Menu {
         let mut p = self.painter();
         p.set_scheme(Scheme::Normal);
         p.clear(scheme_norm.bg);
+        crate::trace::mark("draw: cleared");
 
         /* the item counter feeds the header (the ">" sits left of it), so
          * the header geometry is resolved after it is up to date */
@@ -216,6 +218,7 @@ impl Menu {
 
         self.draw_prompt(&header);
         self.draw_input_field(&header, font_height);
+        crate::trace::mark("draw: header");
 
         if self.layout.lines > 0 {
             self.draw_grid(header.content_x);
@@ -223,6 +226,7 @@ impl Menu {
             self.draw_horizontal_list(&header);
         }
 
+        crate::trace::mark("draw: list");
         self.draw_footer(&header);
         for index in 0..self.layout.hint_lines.len() {
             let text = self.layout.hint_lines[index].clone();
@@ -238,7 +242,9 @@ impl Menu {
             painter.set_scheme(Scheme::Fade);
             painter.draw_text(rect, inset, &text);
         }
+        crate::trace::mark("draw: canvas ready");
         self.backend.present(&self.canvas);
+        crate::trace::mark("draw: presented");
     }
 
     /// Single-key mode: the prompt follows the selected item's full label.

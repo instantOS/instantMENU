@@ -25,7 +25,7 @@ use wayland_protocols_wlr::foreign_toplevel::v1::client::{
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 use xkbcommon::xkb::Keycode;
 
-use super::keyboard::load_keymap;
+use super::keyboard::read_keymap;
 use super::probe::ProbeTag;
 use super::selection::OfferTracker;
 use super::shield::ShieldTag;
@@ -277,10 +277,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for EventState {
                 fd,
                 size,
             } => {
-                if let Some(xkb) = load_keymap(fd.as_raw_fd(), size as usize) {
-                    state.key_repeat.cancel();
-                    state.xkb = Some(xkb);
-                }
+                state.pending_keymap = read_keymap(fd.as_raw_fd(), size as usize);
                 /* fd is an OwnedFd and closes on drop */
             }
             wl_keyboard::Event::Key {
@@ -288,6 +285,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for EventState {
                 state: key_state,
                 ..
             } => {
+                state.ensure_xkb();
                 let code = key + XKB_OFFSET;
                 match key_state {
                     WEnum::Value(wl_keyboard::KeyState::Pressed) => {
@@ -328,6 +326,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for EventState {
             wl_keyboard::Event::Enter { surface, keys, .. } => {
                 state.key_repeat.cancel();
                 state.keyboard_focused = state.surface.as_ref() == Some(&surface);
+                /* Replayed when a deferred or replaced keymap is compiled. */
+                state.pending_enter = Some(keys.clone());
                 if let Some(xkb) = state.xkb.as_mut() {
                     xkb.enter(&keys);
                 }
@@ -338,6 +338,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for EventState {
                     state.keyboard_focused = false;
                     state.events.push_back(BackendEvent::KeyboardLeft);
                 }
+                state.pending_enter = None;
                 if let Some(xkb) = state.xkb.as_mut() {
                     xkb.leave();
                 }
@@ -351,7 +352,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for EventState {
                 mods_locked,
                 ..
             } => {
-                let Some(x) = state.xkb.as_mut() else { return };
+                state.pending_mods = (mods_depressed, mods_latched, mods_locked);
+                let Some(x) = state.xkb.as_mut() else {
+                    return;
+                };
                 x.state
                     .update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, 0);
                 let mask = mods_depressed | mods_latched | mods_locked;
@@ -529,6 +533,7 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for EventState {
             } => {
                 surface.ack_configure(serial);
                 let was_configured = state.configured;
+                crate::trace::mark("wayland: configure ack");
                 state.configured = true;
                 state.map_bootstrap();
                 if !was_configured {

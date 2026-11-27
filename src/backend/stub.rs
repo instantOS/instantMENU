@@ -42,6 +42,8 @@ pub(crate) struct TestBackend {
     pub(crate) pointer: Option<Point>,
     /// Output the backend pretends the menu surface was placed on.
     pub(crate) placed: Option<usize>,
+    /// Make `create_window` fail, for startup error-path tests.
+    pub(crate) fail_create: bool,
     /// The live event queue; tests may also reach it through a handle.
     pub(crate) feed: Arc<Mutex<VecDeque<BackendEvent>>>,
     pub(crate) state: Arc<Mutex<TestState>>,
@@ -55,6 +57,7 @@ impl Default for TestBackend {
             focused: None,
             pointer: None,
             placed: None,
+            fail_create: false,
             feed: Arc::new(Mutex::new(VecDeque::new())),
             state: Arc::new(Mutex::new(TestState::default())),
         }
@@ -117,6 +120,9 @@ impl Backend for TestBackend {
         _bg: Color,
         _border_color: Color,
     ) -> Result<(), String> {
+        if self.fail_create {
+            return Err("test create failure".to_string());
+        }
         Ok(())
     }
 

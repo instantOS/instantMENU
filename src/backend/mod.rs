@@ -282,6 +282,24 @@ pub trait Backend {
     ) -> Result<(), String> {
         self.grab_keyboard()
     }
+
+    /// Start input acquisition and return as soon as the grab is requested.
+    /// Wayland commits its bootstrap surface here so the compositor can
+    /// configure and focus it while the menu loads fonts and configuration;
+    /// `finish_acquire_keyboard` then waits for that to complete. The default
+    /// is a complete acquire, which is correct for X11 (a local grab).
+    fn begin_acquire_keyboard(
+        &mut self,
+        output: Option<usize>,
+        layer_menu: bool,
+    ) -> Result<(), String> {
+        self.acquire_keyboard(output, layer_menu)
+    }
+
+    /// Complete a [`Backend::begin_acquire_keyboard`] that returned early.
+    fn finish_acquire_keyboard(&mut self) -> Result<(), String> {
+        Ok(())
+    }
     /// Monitor the backend has actually committed the menu to, if any
     /// (Wayland: the output the compositor chose for a NULL bootstrap
     /// binding, learned from `wl_surface.enter`). Once set, geometry must
@@ -292,6 +310,13 @@ pub trait Backend {
     /// Focus grab loop; `title` is set as WM_NAME in managed mode. `Err`
     /// when focus could not be taken.
     fn grab_focus(&mut self, title: &str) -> Result<(), String>;
+    /// One-time work that may run after the first frame is visible but
+    /// before the event loop starts (X11 compiles the keymap here). An error
+    /// aborts the menu rather than leaving it visible but unable to read
+    /// input, which would hold the grab with no way to dismiss it.
+    fn finish_startup(&mut self) -> Result<(), String> {
+        Ok(())
+    }
     /// Set the window title (WM_NAME / _NET_WM_NAME).
     fn set_title(&mut self, title: &str);
 

@@ -2997,6 +2997,85 @@ fn stream_preload_leaves_a_large_remainder_for_the_event_loop() {
     assert_eq!(menu.matcher.items.len(), item_count);
 }
 
+/// A backend that cannot create its window must fail setup instead of
+/// continuing into the event loop with no surface.
+#[test]
+fn setup_propagates_window_creation_failure() {
+    let cfg = Config::default();
+    let renderer = Renderer::new(&cfg.fonts, cfg.palette, &HashSet::new());
+    let backend = TestBackend {
+        monitors: vec![MonitorInfo {
+            rect: Rect::new(0, 0, 1920, 1080),
+            name: "stub".into(),
+        }],
+        fail_create: true,
+        ..TestBackend::new()
+    };
+    let mut menu = Menu::new(cfg, renderer, Box::new(backend));
+    menu.add_items(vec![Item::new("alpha")]);
+    assert_eq!(menu.setup(), Some(ExitStatus::Failure));
+}
+
+/// A producer that finished before `setup()` laid the entire corpus out and
+/// drew it. Finalization must apply the deferred conclusions without
+/// recomputing the layout or presenting an identical second frame.
+#[test]
+fn fully_preloaded_stream_is_finalized_without_another_frame() {
+    let file = stream_file(b"one\ntwo\nthree\n");
+    let (mut menu, stub, _out) = menu_with(Config::default(), &[]);
+    menu.begin_stream(file.as_raw_fd());
+    menu.preload_available();
+    assert!(menu.stream_eof);
+    assert!(!menu.stream_dirty, "preload adopted the batch");
+
+    assert!(menu.setup().is_none());
+    let frames = stub.state().presents;
+    assert!(frames >= 1, "setup drew the menu");
+    assert!(menu.finalize_stream().is_none());
+    assert_eq!(
+        stub.state().presents,
+        frames,
+        "finalize must not redraw an unchanged, already final frame"
+    );
+}
+
+/// `--width auto` samples very large corpora but stays exact below the
+/// sampling threshold, including a long label in the last position.
+#[test]
+fn auto_width_samples_only_above_the_threshold() {
+    let long = "a label that is deliberately much wider than the others";
+
+    let mut small: Vec<String> = (0..199).map(|i| format!("x{i}")).collect();
+    small.push(long.into());
+    let refs: Vec<&str> = small.iter().map(String::as_str).collect();
+    let (mut menu, _, _) = menu_with(Config::default(), &refs);
+    let expected = menu.cell_width(long);
+    assert_eq!(menu.max_cell_width(), expected);
+
+    let mut large: Vec<String> = vec![long.into()];
+    large.extend((0..299).map(|i| format!("x{i}")));
+    let refs: Vec<&str> = large.iter().map(String::as_str).collect();
+    let (mut menu, _, _) = menu_with(Config::default(), &refs);
+    assert_eq!(menu.max_cell_width(), expected);
+}
+
+/// The command gutter only exists when a left/right command is configured;
+/// measuring its icon glyph otherwise used to force the icon-font load.
+#[test]
+fn command_cell_width_is_only_measured_when_configured() {
+    let (mut menu, _stub, _out) = menu_with(Config::default(), &["alpha"]);
+    assert!(menu.setup().is_none());
+    assert_eq!(menu.layout.command_width, 0);
+
+    let cfg = Config {
+        left_command: Some("true".to_string()),
+        ..Config::default()
+    };
+    let (mut menu, _stub, _out) = menu_with(cfg, &["alpha"]);
+    assert!(menu.setup().is_none());
+    assert!(menu.layout.command_width > 0);
+}
+
 /// The event loop has the same bounded-input contract as startup. Include
 /// incomplete lines: buffering an unterminated item must yield too.
 #[test]

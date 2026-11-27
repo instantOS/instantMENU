@@ -15,20 +15,31 @@ impl Menu {
     /// Returns Some(status) when the menu cannot start, or an early
     /// auto-confirm/single-key pick already ended it.
     pub fn setup(&mut self) -> Option<ExitStatus> {
+        crate::trace::mark("setup: enter");
         let layout = match self.compute_layout() {
             Ok(layout) => layout,
             Err(status) => return Some(status),
         };
         self.layout = layout;
+        crate::trace::mark("setup: layout");
 
         let t = self.do_match();
+        crate::trace::mark("setup: match");
         if let Some(status) = self.settle(t) {
             return Some(status);
         }
         if let Some(status) = self.apply_pre_match() {
             return Some(status);
         }
-        self.create_window()
+        if let Some(status) = self.create_window() {
+            return Some(status);
+        }
+        if let Err(error) = self.backend.finish_startup() {
+            eprintln!("instantmenu: {error}");
+            return Some(ExitStatus::Failure);
+        }
+        crate::trace::mark("setup: window");
+        None
     }
 
     /// Compute the whole layout: bar height, prompt width, monitor choice
@@ -39,6 +50,7 @@ impl Menu {
         let count = self.matcher.layout_item_count() as i32;
         let grid = super::layout::adjusted_grid(self.cfg.lines, self.cfg.columns, count);
         self.stdin_grid = grid;
+        crate::trace::mark("layout: grid");
         let mut layout = Layout {
             lines: grid.lines.max(0),
             columns: grid.columns,
@@ -46,6 +58,7 @@ impl Menu {
             ..Layout::default()
         };
         let width = self.resolve_auto_width(layout.columns);
+        crate::trace::mark("layout: auto width");
 
         /* make a menu line AT LEAST 'line_height' tall */
         layout.bar_height = (self.renderer.font_height + 12).max(self.cfg.line_height.pixels());
@@ -59,7 +72,7 @@ impl Menu {
                 .items
                 .iter()
                 .filter(|item| item.is_selectable() && item.entry.key.is_some())
-                .map(|item| self.renderer.text_width(item.label()))
+                .map(|item| self.renderer.text_width_approx(item.label()))
                 .max()
                 .unwrap_or_else(|| {
                     prompt
@@ -75,16 +88,28 @@ impl Menu {
         } else {
             match prompt.as_deref() {
                 Some(p) if !p.is_empty() => {
-                    self.cell_width(p) - self.renderer.horizontal_padding / 4
+                    crate::trace::mark("layout: prompt measure start");
+                    let width = self.cell_width(p) - self.renderer.horizontal_padding / 4;
+                    crate::trace::mark("layout: prompt measure done");
+                    width
                 }
                 _ => 0,
             }
         };
         /* the command-cell width (C's `arrowwidth`), measured once here so
-         * header geometry never re-measures it */
-        layout.command_width = self.cell_width(super::RIGHT_GLYPH);
+         * header geometry never re-measures it. Only menus with a configured
+         * left/right command ever draw the glyph; measuring it otherwise
+         * forces the icon font load (2-3 ms) for nothing. */
+        if self.cfg.left_command.is_some() || self.cfg.right_command.is_some() {
+            crate::trace::mark("layout: command measure start");
+            layout.command_width = self.cell_width(super::RIGHT_GLYPH);
+            crate::trace::mark("layout: command measure done");
+        } else {
+            layout.command_width = 0;
+        }
         layout.menu_height = (layout.lines + 1 + layout.hint_rows) * layout.bar_height;
 
+        crate::trace::mark("layout: prompt/commands measured");
         let monitors: Vec<MonitorInfo> = self.backend.monitors().to_vec();
         let root = self.backend.root_size();
 
@@ -107,6 +132,7 @@ impl Menu {
                 self.cfg.follow_cursor,
                 follow_pointer,
             );
+            crate::trace::mark("layout: monitor selected");
             let monitor = monitors[i].rect;
             self.monitor_geometry(monitor, width, follow_pointer, &mut layout);
             self.adjust_geometry(monitor, &mut layout);
@@ -133,14 +159,6 @@ impl Menu {
             Width::Fixed(w) => return w,
             Width::Default => return 0,
             Width::Auto => {}
-        }
-        const AUTO_WIDTH_WARNING_ITEMS: usize = 256;
-        if !self.auto_width_warned && self.matcher.items.len() >= AUTO_WIDTH_WARNING_ITEMS {
-            self.auto_width_warned = true;
-            eprintln!(
-                "instantmenu: warning: --width auto requires measuring all {} items; use a fixed width for large lists",
-                self.matcher.items.len()
-            );
         }
         let prompt = self.cfg.prompt.clone();
         let prompt_width = match &prompt {
@@ -445,7 +463,9 @@ impl Menu {
         }
         self.canvas
             .resize(Size::new(self.layout.menu_width, self.layout.menu_height));
+        crate::trace::mark("create_window: before first draw");
         self.draw_menu();
+        crate::trace::mark("create_window: first draw done");
         None
     }
 
@@ -558,6 +578,11 @@ fn select_monitor(
     preferred_pointer: Option<Point>,
 ) -> usize {
     let n = monitors.len();
+    /* With one output every branch below resolves to the same answer, so
+     * skip the focus/pointer round trips entirely. */
+    if n <= 1 {
+        return 0;
+    }
     if let MonitorChoice::Index(idx) = choice {
         if (idx as usize) < n {
             return idx as usize;
@@ -627,6 +652,30 @@ mod tests {
         backend.focused = focused;
         backend.pointer = pointer;
         backend
+    }
+
+    #[test]
+    fn a_single_monitor_never_queries_focus_or_pointer() {
+        let one = &monitors()[..1];
+        for (choice, pointer_first) in [
+            (MonitorChoice::Auto, false),
+            (MonitorChoice::Auto, true),
+            (MonitorChoice::Index(77), false),
+        ] {
+            let mut backend = backend(Some(0), Some(Point::new(150, 50)));
+            assert_eq!(
+                select_monitor(
+                    one,
+                    choice,
+                    &mut backend,
+                    pointer_first,
+                    Some(Point::new(150, 50))
+                ),
+                0
+            );
+            assert_eq!(backend.focus_calls(), 0);
+            assert_eq!(backend.pointer_calls(), 0);
+        }
     }
 
     #[test]

@@ -24,7 +24,7 @@ toml = "0.9"
 
 # X11 backend (allow-unsafe-code enables xcb_ffi::XCBConnection, needed for
 # AsRawXcbConnection → xkbcommon-x11); cursor loads themed font cursors
-x11rb = { version = "0.13", features = ["xinerama", "allow-unsafe-code", "cursor"] }
+x11rb = { version = "0.13", features = ["xinerama", "allow-unsafe-code", "cursor", "shm"] }
 
 # Wayland backend (unstable is also required by the staged cursor-shape
 # protocol's tablet dependency)
@@ -42,6 +42,7 @@ frizbee = { version = "0.13", features = ["safe_read"] }
 csscolorparser = "0.7"
 cosmic-text = "0.19"
 fontdb = "0.23"
+memmap2 = "0.9"
 ttf-parser = "0.25"
 unicode-segmentation = "1.13.3"
 unicode-properties = { version = "0.1.4", features = ["emoji"], default-features = false }
@@ -61,3 +62,10 @@ opt-level = 2
 opt-level = 3
 lto = true
 strip = true
+panic = "abort"
+
+# Release-speed build with symbols for profiling (not shipped).
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false

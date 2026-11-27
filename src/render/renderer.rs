@@ -4,7 +4,6 @@
 
 use std::collections::HashSet;
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
 
 use lru::LruCache;
 
@@ -39,7 +38,7 @@ pub struct Renderer {
     pub fonts: Vec<FontSpec>,
     /// Resolved cosmic-text family names in fontset order.
     families: Vec<String>,
-    deferred_emoji: Option<PathBuf>,
+    deferred_fonts: fontconfig::DeferredFonts,
     /// Height of the primary font (ascent + descent).
     pub font_height: i32,
     /// Sum of the left and right text padding inside a cell.
@@ -52,6 +51,7 @@ pub struct Renderer {
     // Shaped text is reusable for both measurement and drawing.
     layout_cache: LruCache<String, TextLayout>,
     widths: LruCache<String, i32>,
+    approx_widths: LruCache<String, i32>,
     // Characters whose fallback coverage has already been checked. This lets
     // pasted text extend the small startup database without repeated queries.
     checked_chars: HashSet<char>,
@@ -66,16 +66,19 @@ impl Renderer {
     /// Create the renderer: resolve the font families, load the schemes and
     /// seed the fallback set for the required characters.
     pub fn new(fonts: &[String], palette: Palette, required_chars: &HashSet<char>) -> Self {
+        crate::trace::mark("renderer: enter");
         let specs: Vec<FontSpec> = fonts.iter().map(|f| parse_font_name(f)).collect();
+        let defer_secondary = required_chars.iter().all(char::is_ascii);
         let defer_emoji = !may_need_emoji_font(required_chars);
-        let (mut font_system, deferred_emoji) =
-            match fontconfig::database_for(&specs, required_chars, defer_emoji) {
+        let (mut font_system, deferred_fonts) =
+            match fontconfig::database_for(&specs, required_chars, defer_secondary, defer_emoji) {
                 Some((db, deferred)) => (
                     FontSystem::new_with_locale_and_db(detect_locale(), db),
                     deferred,
                 ),
-                None => (FontSystem::new(), None),
+                None => (FontSystem::new(), fontconfig::DeferredFonts::default()),
             };
+        crate::trace::mark("renderer: db loaded");
 
         // Resolve each family against the system font database, loosely
         // (fontconfig-style), falling back to the raw name.
@@ -85,7 +88,9 @@ impl Renderer {
             families.push(resolved);
         }
 
+        crate::trace::mark("renderer: families resolved");
         let font_height = primary_font_height(&mut font_system, &families, specs[0].pixel_size);
+        crate::trace::mark("renderer: font height");
 
         let mut checked_chars = required_chars.clone();
         checked_chars.extend(' '..='~');
@@ -95,12 +100,13 @@ impl Renderer {
             font_system,
             fonts: specs,
             families,
-            deferred_emoji,
+            deferred_fonts,
             font_height,
             horizontal_padding: font_height,
             scheme: palette.normal,
             layout_cache: LruCache::new(NonZeroUsize::new(LAYOUT_CACHE_CAPACITY).unwrap()),
             widths: LruCache::new(NonZeroUsize::new(WIDTH_CACHE_CAPACITY).unwrap()),
+            approx_widths: LruCache::new(NonZeroUsize::new(WIDTH_CACHE_CAPACITY).unwrap()),
             checked_chars,
         }
     }
@@ -172,8 +178,13 @@ impl Renderer {
     /// the startup database was seeded from a corpus that did not exist
     /// yet. Chars already checked are skipped.
     pub fn add_fallbacks(&mut self, chars: &HashSet<char>) {
-        if self.deferred_emoji.is_some() && may_need_emoji_font(chars) {
-            let path = self.deferred_emoji.take().unwrap();
+        if self.deferred_fonts.secondary.is_some() && chars.iter().any(|ch| !ch.is_ascii()) {
+            let path = self.deferred_fonts.secondary.take().unwrap();
+            fontconfig::load_deferred_font(self.font_system.db_mut(), path);
+            self.families[1] = resolve_family(&self.font_system, &self.fonts[1].family);
+        }
+        if self.deferred_fonts.emoji.is_some() && may_need_emoji_font(chars) {
+            let path = self.deferred_fonts.emoji.take().unwrap();
             fontconfig::load_deferred_font(self.font_system.db_mut(), path);
             self.families[2] = resolve_family(&self.font_system, &self.fonts[2].family);
         }
@@ -190,6 +201,15 @@ impl Renderer {
     }
 
     fn make_buffer(&mut self, text: &str, max_width: Option<f32>) -> Buffer {
+        self.make_buffer_with_shaping(text, max_width, Shaping::Advanced)
+    }
+
+    fn make_buffer_with_shaping(
+        &mut self,
+        text: &str,
+        max_width: Option<f32>,
+        shaping: Shaping,
+    ) -> Buffer {
         let chars: HashSet<char> = text.chars().collect();
         self.add_fallbacks(&chars);
         let pixel_size = self.fonts[0].pixel_size;
@@ -201,15 +221,47 @@ impl Renderer {
         } else {
             buffer.set_size(None, None);
         }
-        self.set_buffer_text(&mut buffer, text);
+        self.set_buffer_text(&mut buffer, text, shaping);
         buffer.shape_until_scroll(&mut self.font_system, false);
         buffer
+    }
+
+    /// Cheap width estimate for ASCII labels, used only to size `--width
+    /// auto` menus. Basic shaping skips harfbuzz, which is what makes
+    /// measuring a large corpus expensive; the width can differ from the
+    /// drawn (Advanced) width by kerning, which the 1.3x auto-width margin
+    /// absorbs. Non-ASCII text falls back to the exact path.
+    pub fn text_width_approx(&mut self, text: &str) -> i32 {
+        if text.is_empty() {
+            return 0;
+        }
+        if !text.is_ascii() {
+            let width = self.text_width(text);
+            self.approx_widths.put(text.to_owned(), width);
+            return width;
+        }
+        if let Some(&width) = self.approx_widths.get(text) {
+            return width;
+        }
+        if let Some(&width) = self.widths.get(text) {
+            self.approx_widths.put(text.to_owned(), width);
+            return width;
+        }
+        if let Some(layout) = self.layout_cache.get(text) {
+            let width = layout.width;
+            self.approx_widths.put(text.to_owned(), width);
+            return width;
+        }
+        let buffer = self.make_buffer_with_shaping(text, None, Shaping::Basic);
+        let width = Renderer::buffer_width(&buffer);
+        self.approx_widths.put(text.to_owned(), width);
+        width
     }
 
     /// Assign a font to each extended grapheme, never separating a base from
     /// its marks, selectors or joiners. Adjacent graphemes with the same font
     /// role remain in one run so normal text can still shape across them.
-    fn set_buffer_text(&self, buffer: &mut Buffer, text: &str) {
+    fn set_buffer_text(&self, buffer: &mut Buffer, text: &str, shaping: Shaping) {
         let primary = self.families.first().map(String::as_str).unwrap_or("");
         let secondary = self.families.get(1).map(String::as_str).unwrap_or(primary);
         let emoji = self
@@ -227,7 +279,7 @@ impl Renderer {
             };
             (text, Attrs::new().family(Family::Name(family)))
         });
-        buffer.set_rich_text(spans, &default_attrs, Shaping::Advanced, None);
+        buffer.set_rich_text(spans, &default_attrs, shaping, None);
     }
 
     fn buffer_width(buffer: &Buffer) -> i32 {
@@ -429,17 +481,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn emoji_font_is_deferred_until_emoji_text_is_measured() {
+    fn configured_fonts_load_when_matching_text_is_measured() {
         let fonts = ["sans-serif:size=12", "monospace", "emoji"].map(str::to_owned);
         let palette = make_test_renderer().palette;
         for text in ["😀", "1\u{20e3}", "☀\u{fe0f}"] {
             let mut renderer = Renderer::new(&fonts, palette, &"Choose layout".chars().collect());
-            assert!(renderer.deferred_emoji.is_some());
+            assert!(renderer.deferred_fonts.secondary.is_some());
+            assert!(renderer.deferred_fonts.emoji.is_some());
             renderer.text_width("Choose layout");
-            assert!(renderer.deferred_emoji.is_some());
+            assert!(renderer.deferred_fonts.secondary.is_some());
+            assert!(renderer.deferred_fonts.emoji.is_some());
+
+            assert!(renderer.text_width("é") > 0);
+            assert!(renderer.deferred_fonts.secondary.is_none());
+            assert!(renderer.deferred_fonts.emoji.is_some());
 
             assert!(renderer.text_width(text) > 0);
-            assert!(renderer.deferred_emoji.is_none());
+            assert!(renderer.deferred_fonts.emoji.is_none());
         }
     }
 
