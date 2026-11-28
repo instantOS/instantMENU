@@ -1,6 +1,6 @@
 pkgbase = instantmenu
 	pkgdesc = A dynamic menu for X11 and Wayland
-	pkgver = 5.2.3
+	pkgver = 5.2.4
 	pkgrel = 1
 	epoch = 1
 	url = https://github.com/instantOS/instantMENU
@@ -15,7 +15,7 @@ pkgbase = instantmenu
 	depends = libxcb
 	depends = libxkbcommon-x11
 	options = !lto
-	source = instantmenu-5.2.3.tar.gz::https://github.com/instantOS/instantMENU/archive/refs/tags/v5.2.3.tar.gz
-	sha256sums = 5821c450be175f45c156d61980ee090e1294ffb03d98b43c6139b9215caedc29
+	source = instantmenu-5.2.4.tar.gz::https://github.com/instantOS/instantMENU/archive/refs/tags/v5.2.4.tar.gz
+	sha256sums = SKIP
 
 pkgname = instantmenu

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.2.4](https://github.com/instantOS/instantMENU/compare/v5.2.3...v5.2.4) - 2026-11-28
+
+### Changed
+
+- defer loading the emoji font
+- cut menu startup latency by 2-6x
+
+### Fixed
+
+- fail cleanly when the menu cannot be created or read input
+- preserve input and rendering correctness at startup
+
+### Other
+
+- publish instantmenu packages to the AUR
+- optimize debug builds partially
+- Merge branch 'dev' of ufr:~/stuff/instantMENU into dev
+- bump stuff
+
 ## [5.2.3](https://github.com/instantOS/instantMENU/compare/v5.2.2...v5.2.3) - 2026-11-16
 
 ### Other
